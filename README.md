@@ -1,6 +1,6 @@
 # TeXoria
 
-An elegant, fast LaTeX editor inspired by Texifier, written in Rust with
+An elegant, fast LaTeX editor written in Rust with
 [GPUI](https://www.gpui.rs) (Zed's GPU-accelerated UI framework) for macOS, Windows and Linux.
 
 - **Live preview**: the document recompiles as you type, without blocking the UI.
@@ -56,27 +56,3 @@ The editor typeface is IBM Plex Mono (SIL Open Font License), bundled in `crates
 cargo install cargo-packager --locked
 cargo packager --release -p texoria   # .app/.dmg, NSIS, .deb, AppImage in target/dist
 ```
-
-## Shortcuts
-
-| | |
-|---|---|
-| ⌘O / ⌘S | Open / save |
-| ⌘R | Typeset now |
-| ⌘J | Show in PDF (SyncTeX) |
-| ⌘-click or double-click in PDF | Jump to source |
-| ⌘= / ⌘- / ⌘0 | Zoom in / out / fit width (also ⌘+scroll or pinch) |
-| ⌘1 | Toggle outline |
-| ⇧⌘M | Toggle problems |
-| ⇧⌘P | Toggle live preview |
-| ⌥Z | Toggle soft wrap |
-| ⇧⌘L | Light/dark theme |
-
-On Windows and Linux, ⌘ is Ctrl.
-
-## Notes
-
-- Live preview **saves the file to disk** before each compile: the TeX engine compiles from disk.
-- Build artifacts go to `.texoria/build/` next to the root file.
-- A file with `% !TEX root = ../main.tex` in its first lines is compiled starting from that root.
-- Soft wrap is turned off automatically for files over 4000 lines, where it dominates memory use.
