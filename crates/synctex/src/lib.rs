@@ -11,12 +11,20 @@ use std::path::{Component, Path, PathBuf};
 
 use flate2::read::GzDecoder;
 
+/// Upper bound on the (decompressed) file: real ones are a few MB, and a
+/// `.synctex.gz` may come with an untrusted project (a gzip bomb).
+const MAX_BYTES: u64 = 256 << 20;
+/// Largest gap tolerated between consecutive page numbers.
+const MAX_PAGE_GAP: usize = 10_000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
     #[error("not a SyncTeX file")]
     BadHeader,
+    #[error("SyncTeX file too large")]
+    TooLarge,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -97,14 +105,21 @@ impl SyncTex {
     /// Load a `.synctex.gz` or plain `.synctex` file. Relative input paths are
     /// resolved against the directory of the synctex file.
     pub fn open(path: &Path) -> Result<Self, Error> {
-        let bytes = std::fs::read(path)?;
-        let text = if bytes.starts_with(&[0x1f, 0x8b]) {
-            let mut s = String::new();
-            GzDecoder::new(&bytes[..]).read_to_string(&mut s)?;
-            s
-        } else {
-            String::from_utf8_lossy(&bytes).into_owned()
-        };
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)?
+            .take(MAX_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.starts_with(&[0x1f, 0x8b]) {
+            let mut out = Vec::new();
+            GzDecoder::new(&bytes[..])
+                .take(MAX_BYTES + 1)
+                .read_to_end(&mut out)?;
+            bytes = out;
+        }
+        if bytes.len() as u64 > MAX_BYTES {
+            return Err(Error::TooLarge);
+        }
+        let text = String::from_utf8_lossy(&bytes);
         let base = path.parent().unwrap_or(Path::new("."));
         Self::parse(&text, base)
     }
@@ -169,8 +184,15 @@ impl SyncTex {
             };
             match first {
                 b'{' => {
-                    let n: usize = line[1..].trim().parse().unwrap_or(st.pages.len() + 1);
-                    // Pages are 1-based and normally sequential; tolerate gaps.
+                    let next = st.pages.len() + 1;
+                    let n = line[1..]
+                        .trim()
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|n| n.saturating_sub(next) <= MAX_PAGE_GAP)
+                        .unwrap_or(next);
+                    // Pages are 1-based and normally sequential; tolerate
+                    // (bounded) gaps.
                     while st.pages.len() + 1 < n {
                         st.pages.push(Vec::new());
                     }
@@ -463,6 +485,28 @@ Count:10
             .unwrap();
         assert_eq!(back.file, methods);
         assert!((3..=4).contains(&back.line), "{back:?}");
+    }
+
+    #[test]
+    fn huge_page_number_is_bounded() {
+        let text = SAMPLE.replace("{2\n", "{4000000000\n");
+        let st = SyncTex::parse(&text, Path::new("/proj")).unwrap();
+        assert_eq!(st.page_count(), 2);
+    }
+
+    #[test]
+    fn rejects_gzip_bomb() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.synctex.gz");
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        enc.write_all(SAMPLE.as_bytes()).unwrap();
+        let zeros = vec![0u8; 1 << 20];
+        for _ in 0..=(MAX_BYTES >> 20) {
+            enc.write_all(&zeros).unwrap();
+        }
+        std::fs::write(&path, enc.finish().unwrap()).unwrap();
+        assert!(matches!(SyncTex::open(&path), Err(Error::TooLarge)));
     }
 
     #[test]
