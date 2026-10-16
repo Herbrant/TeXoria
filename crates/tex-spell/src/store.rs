@@ -171,6 +171,7 @@ fn decode(bytes: &[u8], aff: &[u8]) -> Result<String> {
 
 /// Hunspell's usual locations (`DICPATH` first).
 fn system_dirs() -> Vec<PathBuf> {
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut dirs: Vec<PathBuf> = std::env::var_os("DICPATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
