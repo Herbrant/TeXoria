@@ -17,7 +17,6 @@ A fast, native LaTeX editor for macOS, Windows and Linux, written in Rust on
 [**Download**](https://github.com/Herbrant/TeXoria/releases/latest) ·
 [Features](#features) ·
 [Install](#install) ·
-[Shortcuts](#keyboard-shortcuts) ·
 [Build from source](#building-from-source)
 
 <br>
@@ -127,21 +126,6 @@ texoria path/to/thesis/          # or path/to/document.tex
 
 Build output goes to a `.texoria/build` directory next to the root file, which is ignored by Git
 automatically, so your project stays clean.
-
-## Keyboard shortcuts
-
-On Windows and Linux, read ⌘ as Ctrl.
-
-| Action | Shortcut | | Action | Shortcut |
-|---|---|---|---|---|
-| Open file or folder | ⌘O | | Toggle outline | ⌘1 |
-| Save | ⌘S | | Source Control | ⇧⌘G |
-| Typeset | ⌘R | | Problems panel | ⇧⌘M |
-| Stop typesetting | ⌘. | | Toggle live preview | ⇧⌘P |
-| Jump to PDF (SyncTeX) | ⌘J | | Light / dark theme | ⇧⌘L |
-| Jump to source | ⌘-click or double-click in the PDF | | Soft wrap | ⌥Z (Alt+Z) |
-| Zoom in / out | ⌘= / ⌘- | | Commit (in the message box) | ⌘↵ |
-| Fit width | ⌘0 | | Close tab | ⌘W |
 
 ## Configuration
 
