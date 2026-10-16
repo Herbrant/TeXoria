@@ -302,14 +302,16 @@ mod tests {
             },
             extra_path: vec![],
         };
-        let cmd = engine.command(&Job::for_root("/p/main.tex"));
+        let job = Job::for_root("/p/main.tex");
+        let cmd = engine.command(&job);
         let args: Vec<_> = cmd
             .get_args()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert_eq!(args[0], "-xelatex");
         assert!(args.contains(&"-synctex=1".to_string()));
-        assert!(args.contains(&"-outdir=/p/.texoria/build".to_string()));
+        // `job_paths` checks the directory itself; joining uses `\` on Windows.
+        assert!(args.contains(&format!("-outdir={}", job.out_dir.display())));
         assert_eq!(args.last().unwrap(), "main.tex");
         assert_eq!(cmd.get_current_dir(), Some(Path::new("/p")));
     }

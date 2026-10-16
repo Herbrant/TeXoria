@@ -436,15 +436,16 @@ Count:10
 
     #[test]
     fn real_pdflatex_output() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/fixtures/synctex/sample.synctex.gz");
-        let st = SyncTex::open(&path).unwrap();
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/synctex");
+        let st = SyncTex::open(&dir.join("sample.synctex.gz")).unwrap();
         assert_eq!(st.page_count(), 2);
+        // The fixture was written on Unix: on Windows `/proj/...` has no drive
+        // letter, so it resolves onto the fixture's drive.
+        let main = normalize(&dir, "/proj/main.tex");
 
         // A paragraph is attributed to the line where it ends; asking for an
         // earlier line of it must still land on page 1.
-        let main = Path::new("/proj/main.tex");
-        let loc = st.forward(main, 17).unwrap();
+        let loc = st.forward(&main, 17).unwrap();
         assert_eq!(loc.page, 0);
         let r = loc.rects[0];
         let back = st
@@ -454,8 +455,8 @@ Count:10
         assert!((17..=19).contains(&back.line), "{back:?}");
 
         // `./` components in `Input:` lines are normalized away.
-        let methods = Path::new("/proj/chapters/methods.tex");
-        let loc = st.forward(methods, 3).unwrap();
+        let methods = normalize(&dir, "/proj/chapters/methods.tex");
+        let loc = st.forward(&methods, 3).unwrap();
         let r = loc.rects[0];
         let back = st
             .inverse(loc.page, r.x + 1.0, r.y + r.height / 2.0)
