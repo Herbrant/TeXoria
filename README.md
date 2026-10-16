@@ -35,12 +35,20 @@ TeX Live (or MacTeX/MiKTeX) and `git` to use latexmk and source control.
 
 | Platform | |
 |---|---|
-| macOS (Apple silicon, Intel) | `brew install --cask herbrant/tap/texoria` |
+| macOS (Apple silicon, Intel) | Homebrew (below), or the `.dmg` |
 | Arch Linux (x86_64, aarch64) | `yay -S texoria-bin` (or any AUR helper) |
 | Debian, Ubuntu ≥ 22.04 | `sudo apt install ./texoria_<version>_amd64.deb` (or `_arm64`) |
 | Fedora, openSUSE | `sudo dnf install ./texoria-<version>-1.x86_64.rpm` (or `.aarch64`) |
 | Other Linux | `texoria-<version>-linux-<arch>.AppImage`, or the `.tar.gz` (a `/usr` tree) |
 | Windows (x64) | `texoria-<version>-windows-x86_64-setup.exe` |
+
+On macOS, Homebrew (≥ 7) only loads casks from third-party taps you trust:
+
+```sh
+brew tap herbrant/tap
+brew trust --cask herbrant/tap/texoria
+brew install --cask texoria
+```
 
 The packages are on the [releases page](https://github.com/Herbrant/TeXoria/releases), with a
 `SHA256SUMS` file.
