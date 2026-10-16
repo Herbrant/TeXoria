@@ -23,11 +23,16 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use tex_git::{
-    Branch, Cancel, Change, Commit, CommitOptions, Entry, Error, Git, Operation, Repo, Status,
+    Branch, Cancel, Change, Commit, CommitOptions, Credential, Entry, Error, Git, Operation, Repo,
+    Status, SyncOutcome,
 };
 
 use crate::assets::Glyph;
 use crate::diff_view::DiffSource;
+use crate::overleaf;
+
+/// The message of the commit a Sync makes.
+const SYNC_MESSAGE: &str = "Update from TeXoria";
 
 const HISTORY_PAGE: usize = 200;
 /// Rows rendered per section; a repository full of untracked files would
@@ -52,6 +57,8 @@ pub enum GitOp {
     Fetch,
     Pull,
     Push,
+    /// Commit everything, pull with rebase and push (Overleaf projects).
+    Sync,
     Abort(Operation),
     ContinueRebase,
     Switch(Branch),
@@ -78,6 +85,7 @@ impl GitOp {
             GitOp::Fetch => "Fetch",
             GitOp::Pull => "Pull",
             GitOp::Push => "Push",
+            GitOp::Sync => "Sync",
             GitOp::Abort(_) => "Abort",
             GitOp::ContinueRebase => "Continue rebase",
             GitOp::Switch(_) => "Switch branch",
@@ -89,7 +97,7 @@ impl GitOp {
     }
 
     fn is_network(&self) -> bool {
-        matches!(self, GitOp::Fetch | GitOp::Pull | GitOp::Push)
+        matches!(self, GitOp::Fetch | GitOp::Pull | GitOp::Push | GitOp::Sync)
     }
 
     /// git may rewrite files on disk, so open buffers must be reloaded.
@@ -98,6 +106,7 @@ impl GitOp {
             self,
             GitOp::Discard { .. }
                 | GitOp::Pull
+                | GitOp::Sync
                 | GitOp::Abort(_)
                 | GitOp::ContinueRebase
                 | GitOp::Switch(_)
@@ -164,8 +173,13 @@ pub struct GitPanel {
     amend: bool,
     busy: Option<&'static str>,
     cancel: Option<Cancel>,
-    /// An operation to retry once the user's identity is set.
+    /// An operation to retry once the user's identity (or a token) is set.
     pending: Option<GitOp>,
+    /// The server, when the remote is an Overleaf project.
+    overleaf: Option<String>,
+    /// The token for `overleaf`, once read from the keychain.
+    credential: Option<Credential>,
+    overleaf_servers: Vec<String>,
     pull_rebase: bool,
     timeout: Option<Duration>,
     /// Bumped on project change: results for another project are dropped.
@@ -211,6 +225,9 @@ impl GitPanel {
             busy: None,
             cancel: None,
             pending: None,
+            overleaf: None,
+            credential: None,
+            overleaf_servers: Vec::new(),
             pull_rebase: false,
             timeout: None,
             generation: 0,
@@ -219,9 +236,15 @@ impl GitPanel {
         }
     }
 
-    pub fn configure(&mut self, pull_rebase: bool, timeout: Option<Duration>) {
+    pub fn configure(
+        &mut self,
+        pull_rebase: bool,
+        timeout: Option<Duration>,
+        overleaf_servers: Vec<String>,
+    ) {
         self.pull_rebase = pull_rebase;
         self.timeout = timeout;
+        self.overleaf_servers = overleaf_servers;
     }
 
     pub fn repo(&self) -> Option<&Repo> {
@@ -261,6 +284,8 @@ impl GitPanel {
         self.history.clear();
         self.history_loaded = false;
         self.error = None;
+        self.overleaf = None;
+        self.credential = None;
         self.generation += 1;
         let generation = self.generation;
         cx.notify();
@@ -320,6 +345,7 @@ impl GitPanel {
         let (generation, refresh) = (self.generation, self.refresh_generation);
         let head = self.status.oid.clone();
         let history_loaded = self.history_loaded;
+        let servers = self.overleaf_servers.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
@@ -329,7 +355,11 @@ impl GitPanel {
                     let history = (!history_loaded || status.oid != head)
                         .then(|| repo.log(0, HISTORY_PAGE, None).unwrap_or_default());
                     let merge_message = repo.merge_message();
-                    Ok::<_, Error>((status, branches, remotes, history, merge_message))
+                    let overleaf = main_remote(&status, &remotes)
+                        .and_then(|r| repo.remote_url(r).ok().flatten())
+                        .and_then(|url| tex_git::overleaf::remote(&url, &servers))
+                        .map(|p| p.server);
+                    Ok::<_, Error>((status, branches, remotes, history, merge_message, overleaf))
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -337,7 +367,8 @@ impl GitPanel {
                     return;
                 }
                 match result {
-                    Ok((status, branches, remotes, history, merge_message)) => {
+                    Ok((status, branches, remotes, history, merge_message, overleaf)) => {
+                        this.set_overleaf(overleaf, cx);
                         // Offer git's merge message when a merge stops.
                         if status.operation == Operation::Merge
                             && this.status.operation != Operation::Merge
@@ -362,6 +393,89 @@ impl GitPanel {
             .ok();
         })
         .detach();
+    }
+
+    /// Track the Overleaf server of the remote, and read its token.
+    fn set_overleaf(&mut self, server: Option<String>, cx: &mut Context<Self>) {
+        if self.overleaf == server {
+            return;
+        }
+        self.overleaf = server.clone();
+        self.credential = None;
+        let Some(server) = server else {
+            return;
+        };
+        let token = overleaf::load_token(&server, cx);
+        cx.spawn(async move |this, cx| {
+            let token = token.await;
+            this.update(cx, |this, cx| {
+                if this.overleaf.as_ref() == Some(&server) {
+                    this.credential = token.map(|t| overleaf::credential(&server, t));
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Overleaf has a single branch: the one the project was cloned with.
+    fn check_overleaf_branch(&self) -> Result<(), &'static str> {
+        if self.overleaf.is_none() {
+            return Ok(());
+        }
+        let on_overleaf = self.status.upstream.as_deref().is_some_and(|u| {
+            u.rsplit_once('/')
+                .is_some_and(|(_, b)| b == "main" || b == "master")
+        });
+        if on_overleaf {
+            Ok(())
+        } else {
+            Err("Overleaf projects have a single branch: switch back to it to sync.")
+        }
+    }
+
+    pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.repo().is_none() || self.overleaf.is_none() {
+            return;
+        }
+        match self.check_overleaf_branch() {
+            Ok(()) => self.request(GitOp::Sync, cx),
+            Err(msg) => window.push_notification(Notification::info(msg), cx),
+        }
+    }
+
+    /// Ask for a new token, then retry `op` with it.
+    fn prompt_overleaf_token(&mut self, op: GitOp, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(server) = self.overleaf.clone() else {
+            return;
+        };
+        let reason = if let Some(old) = self.credential.take() {
+            overleaf::forget_token(&old.url, cx);
+            overleaf::TOKEN_REJECTED
+        } else {
+            overleaf::TOKEN_NEEDED
+        };
+        self.pending = Some(op);
+        let weak = cx.entity().downgrade();
+        let for_token = server.clone();
+        overleaf::prompt_token(
+            &server,
+            reason,
+            move |token, window, cx| {
+                overleaf::save_token(&for_token, &token, window, cx);
+                let credential = overleaf::credential(&for_token, token);
+                weak.update(cx, |this, cx| {
+                    this.credential = Some(credential);
+                    if let Some(op) = this.pending.take() {
+                        this.request(op, cx);
+                    }
+                })
+                .ok();
+            },
+            window,
+            cx,
+        );
     }
 
     fn load_more_history(&mut self, cx: &mut Context<Self>) {
@@ -413,6 +527,7 @@ impl GitPanel {
             git: self.git.clone().flatten(),
             dir: self.project_dir.clone(),
             status: self.status.clone(),
+            credential: self.credential.clone(),
             rebase: self.pull_rebase,
             timeout: self.timeout,
             cancel,
@@ -464,9 +579,29 @@ impl GitPanel {
                 GitOp::Pull => window.push_notification(Notification::success("Up to date"), cx),
                 _ => {}
             },
+            Ok(Outcome::Synced(done)) => {
+                let note = if done == SyncOutcome::default() {
+                    Notification::info("Already up to date")
+                } else {
+                    Notification::success("Synced with Overleaf")
+                };
+                window.push_notification(note, cx);
+            }
             Err(Error::NoIdentity) => {
                 self.pending = Some(op);
                 self.prompt_identity(window, cx);
+            }
+            Err(Error::Auth { .. }) if self.overleaf.is_some() && op.is_network() => {
+                self.prompt_overleaf_token(op, window, cx);
+            }
+            Err(Error::Unreachable { .. } | Error::TimedOut(_)) if matches!(op, GitOp::Sync) => {
+                window.push_notification(
+                    Notification::warning(
+                        "Your changes are committed here: sync again when you are back online.",
+                    )
+                    .title("Overleaf is out of reach"),
+                    cx,
+                );
             }
             Err(Error::Cancelled) => {}
             Err(e) => {
@@ -475,7 +610,7 @@ impl GitPanel {
                     .map(|r| r.operation())
                     .filter(|o| *o != Operation::None);
                 match (&op, stopped) {
-                    (GitOp::Pull, Some(o)) => window.push_notification(
+                    (GitOp::Pull | GitOp::Sync, Some(o)) => window.push_notification(
                         Notification::warning(
                             "Resolve the conflicts below, then commit to finish.",
                         )
@@ -569,6 +704,8 @@ impl GitPanel {
         }
         if self.remotes.is_empty() {
             self.prompt_remote(window, cx);
+        } else if let Err(msg) = self.check_overleaf_branch() {
+            window.push_notification(Notification::info(msg), cx);
         } else {
             self.request(GitOp::Push, cx);
         }
@@ -578,6 +715,13 @@ impl GitPanel {
 
     pub fn prompt_new_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.repo().is_none() {
+            return;
+        }
+        if self.overleaf.is_some() {
+            window.push_notification(
+                Notification::info("Overleaf projects have a single branch"),
+                cx,
+            );
             return;
         }
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("draft-2"));
@@ -806,6 +950,7 @@ impl GitPanel {
             .unwrap_or_else(|| "No branch".into())
             .into();
         let branches = self.branches.clone();
+        let overleaf = self.overleaf.is_some();
         let weak = cx.entity().downgrade();
         let menu = Button::new("git-branch-menu")
             .ghost()
@@ -846,6 +991,9 @@ impl GitPanel {
                             },
                         ));
                     }
+                }
+                if overleaf {
+                    return menu;
                 }
                 let (new_branch, add_remote) = (weak.clone(), weak.clone());
                 menu.separator()
@@ -895,6 +1043,21 @@ impl GitPanel {
                                 c.cancel();
                             }
                         })),
+                )
+            })
+            .when(overleaf && !network_busy, |d| {
+                d.child(
+                    Button::new("git-sync")
+                        .primary()
+                        .xsmall()
+                        .icon(Glyph::Refresh)
+                        .label("Sync")
+                        .tooltip("Commit all changes, then pull from and push to Overleaf")
+                        .disabled(
+                            busy || st.operation != Operation::None
+                                || st.conflicts().next().is_some(),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| this.sync(window, cx))),
                 )
             })
             .when(!network_busy, |d| {
@@ -1583,6 +1746,7 @@ struct OpContext {
     git: Option<Git>,
     dir: Option<PathBuf>,
     status: Status,
+    credential: Option<Credential>,
     rebase: bool,
     timeout: Option<Duration>,
     cancel: Cancel,
@@ -1591,6 +1755,7 @@ struct OpContext {
 enum Outcome {
     Done,
     Initialized(Repo),
+    Synced(SyncOutcome),
 }
 
 fn run_op(op: GitOp, ctx: OpContext) -> tex_git::Result<Outcome> {
@@ -1607,7 +1772,8 @@ fn run_op(op: GitOp, ctx: OpContext) -> tex_git::Result<Outcome> {
     }
     let repo = ctx
         .repo
-        .ok_or_else(|| Error::Invalid("No repository".into()))?;
+        .ok_or_else(|| Error::Invalid("No repository".into()))?
+        .with_credential(ctx.credential);
     match op {
         GitOp::Stage(paths) => repo.stage(&paths)?,
         GitOp::Unstage(paths) => repo.unstage(&paths, ctx.status.oid.is_some())?,
@@ -1630,6 +1796,7 @@ fn run_op(op: GitOp, ctx: OpContext) -> tex_git::Result<Outcome> {
         GitOp::Fetch => repo.fetch(&ctx.cancel)?,
         GitOp::Pull => repo.pull(ctx.rebase, &ctx.cancel)?,
         GitOp::Push => repo.push(&ctx.status, &ctx.cancel)?,
+        GitOp::Sync => return Ok(Outcome::Synced(repo.sync(SYNC_MESSAGE, &ctx.cancel)?)),
         GitOp::Abort(op) => repo.abort(op)?,
         GitOp::ContinueRebase => repo.continue_rebase()?,
         GitOp::Switch(branch) => repo.switch(&branch)?,
@@ -1643,6 +1810,23 @@ fn run_op(op: GitOp, ctx: OpContext) -> tex_git::Result<Outcome> {
         GitOp::Init => unreachable!(),
     }
     Ok(Outcome::Done)
+}
+
+/// The remote the branch tracks, else `origin`, else the only one.
+fn main_remote<'a>(status: &Status, remotes: &'a [String]) -> Option<&'a str> {
+    let tracked = status.upstream.as_deref().and_then(|u| {
+        remotes
+            .iter()
+            .filter(|r| {
+                u.strip_prefix(r.as_str())
+                    .is_some_and(|b| b.starts_with('/'))
+            })
+            .max_by_key(|r| r.len())
+    });
+    tracked
+        .or_else(|| remotes.iter().find(|r| *r == "origin"))
+        .or_else(|| (remotes.len() == 1).then(|| &remotes[0]))
+        .map(String::as_str)
 }
 
 /// Whether `dir` or a parent has a `.git` (directory, or file for worktrees
@@ -1769,7 +1953,27 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{civil_from_days, inside_repo};
+    use super::{civil_from_days, inside_repo, main_remote};
+    use tex_git::Status;
+
+    #[test]
+    fn picks_the_tracked_remote() {
+        let remotes = |r: &[&str]| r.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let tracking = |u: &str| Status {
+            upstream: Some(u.into()),
+            ..Default::default()
+        };
+        let rs = remotes(&["origin", "overleaf", "over"]);
+        assert_eq!(
+            main_remote(&tracking("overleaf/main"), &rs),
+            Some("overleaf")
+        );
+        assert_eq!(main_remote(&Status::default(), &rs), Some("origin"));
+        let rs = remotes(&["overleaf"]);
+        assert_eq!(main_remote(&Status::default(), &rs), Some("overleaf"));
+        let rs = remotes(&["a", "b"]);
+        assert_eq!(main_remote(&Status::default(), &rs), None);
+    }
 
     #[test]
     fn dates() {

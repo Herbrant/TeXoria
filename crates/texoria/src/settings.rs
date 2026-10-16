@@ -31,6 +31,8 @@ pub struct Settings {
     pub pull_rebase: bool,
     /// Stop a fetch, pull or push after this many seconds (0: never).
     pub git_timeout_secs: u64,
+    /// Overleaf Server Pro instances (`https://latex.example.org`).
+    pub overleaf_servers: Vec<String>,
 }
 
 impl Default for Settings {
@@ -47,6 +49,7 @@ impl Default for Settings {
             diff_split: false,
             pull_rebase: false,
             git_timeout_secs: 120,
+            overleaf_servers: Vec::new(),
         }
     }
 }

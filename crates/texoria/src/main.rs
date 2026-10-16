@@ -5,6 +5,7 @@ mod atomic;
 mod diff_view;
 mod git_panel;
 mod latex;
+mod overleaf;
 mod pdf_pane;
 mod settings;
 mod theme;
@@ -40,6 +41,8 @@ actions!(
         Push,
         NewBranch,
         CloneRepository,
+        OpenFromOverleaf,
+        SyncOverleaf,
         Quit,
     ]
 );
@@ -73,6 +76,7 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Open…", Open),
             MenuItem::action("Save", Save),
             MenuItem::action("Clone Repository…", CloneRepository),
+            MenuItem::action("Open from Overleaf…", OpenFromOverleaf),
             MenuItem::separator(),
             MenuItem::action("Close Tab", CloseTab),
         ]),
@@ -100,9 +104,11 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Pull", Pull),
             MenuItem::action("Push", Push),
             MenuItem::action("Fetch", Fetch),
+            MenuItem::action("Sync with Overleaf", SyncOverleaf),
             MenuItem::separator(),
             MenuItem::action("New Branch…", NewBranch),
             MenuItem::action("Clone Repository…", CloneRepository),
+            MenuItem::action("Open from Overleaf…", OpenFromOverleaf),
         ]),
     ]);
 }

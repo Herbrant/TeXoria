@@ -59,6 +59,12 @@ impl Repo {
         Repo { git, root, git_dir }
     }
 
+    /// The same repository with [`Git::credential`] set.
+    pub fn with_credential(mut self, credential: Option<crate::Credential>) -> Repo {
+        self.git = self.git.credential(credential);
+        self
+    }
+
     /// The git executable this repository is driven with.
     pub fn git(&self) -> &Git {
         &self.git
