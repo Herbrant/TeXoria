@@ -4,10 +4,11 @@
 //! requests arriving during a run are coalesced into a single follow-up run.
 //! The running job is not killed by new edits: under continuous typing that
 //! would starve the preview, while coalescing keeps the PDF updating at the
-//! natural pace of the engine. Explicit [`Compiler::cancel`] or an engine
-//! change kill the process tree.
+//! natural pace of the engine. Explicit [`Compiler::cancel`], an engine
+//! change or the run exceeding its timeout kill the process tree.
 
 use std::fs::File;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -19,6 +20,8 @@ use tex_log::{Diagnostic, Severity};
 use crate::engine::{Engine, Job};
 
 const POLL: Duration = Duration::from_millis(25);
+/// A runaway engine can write gigabytes of log; only this much is parsed.
+const MAX_LOG_BYTES: u64 = 32 << 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -59,6 +62,7 @@ enum Cmd {
     Request { job: Job, immediate: bool },
     SetEngine(Engine),
     SetDebounce(Duration),
+    SetTimeout(Option<Duration>),
     Cancel,
 }
 
@@ -108,6 +112,11 @@ impl Compiler {
         let _ = self.tx.send(Cmd::SetDebounce(d));
     }
 
+    /// Kill runs that take longer than `timeout` (`None`: never).
+    pub fn set_timeout(&self, timeout: Option<Duration>) {
+        let _ = self.tx.send(Cmd::SetTimeout(timeout));
+    }
+
     pub fn cancel(&self) {
         let _ = self.tx.send(Cmd::Cancel);
     }
@@ -134,6 +143,7 @@ struct Running {
 struct Worker {
     engine: Engine,
     debounce: Duration,
+    timeout: Option<Duration>,
     on_event: Box<dyn Fn(Event) + Send>,
     next_id: u64,
     pending: Option<(Job, Instant)>,
@@ -145,6 +155,7 @@ impl Worker {
         Worker {
             engine,
             debounce,
+            timeout: None,
             on_event,
             next_id: 1,
             pending: None,
@@ -203,6 +214,7 @@ impl Worker {
                 }
             }
             Cmd::SetDebounce(d) => self.debounce = d,
+            Cmd::SetTimeout(t) => self.timeout = t,
             Cmd::Cancel => {
                 self.pending = None;
                 self.kill_running();
@@ -265,7 +277,18 @@ impl Worker {
             return;
         };
         match run.child.try_wait() {
-            Ok(None) => {}
+            Ok(None) => {
+                if let Some(limit) = self.timeout
+                    && run.started.elapsed() > limit
+                {
+                    // An infinite loop in the document: new edits would only
+                    // queue behind it, so stop it.
+                    let mut run = self.running.take().unwrap();
+                    kill_tree(&mut run.child);
+                    let _ = run.child.wait();
+                    self.finish_with(run, Status::Failed, Some(limit));
+                }
+            }
             Ok(Some(status)) => {
                 let run = self.running.take().unwrap();
                 let s = if status.success() {
@@ -283,16 +306,37 @@ impl Worker {
         }
     }
 
-    fn finish(&self, run: Running, mut status: Status) {
+    fn finish(&self, run: Running, status: Status) {
+        self.finish_with(run, status, None);
+    }
+
+    /// `timed_out`: the run was killed after this long.
+    fn finish_with(&self, run: Running, mut status: Status, timed_out: Option<Duration>) {
         let job = run.job;
-        let log_text = std::fs::read(job.artifact("log"))
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .unwrap_or_default();
-        let diagnostics = if status == Status::Cancelled {
+        let mut log = Vec::new();
+        if let Ok(f) = File::open(job.artifact("log")) {
+            let _ = f.take(MAX_LOG_BYTES).read_to_end(&mut log);
+        }
+        let log_text = String::from_utf8_lossy(&log);
+        let mut diagnostics = if status == Status::Cancelled {
             Vec::new()
         } else {
             tex_log::parse(&log_text, job.work_dir())
         };
+        if let Some(limit) = timed_out {
+            diagnostics.insert(
+                0,
+                Diagnostic {
+                    severity: Severity::Error,
+                    file: None,
+                    line: None,
+                    message: format!(
+                        "Typesetting stopped after {}s (infinite loop?)",
+                        limit.as_secs()
+                    ),
+                },
+            );
+        }
         // latexmk exits 0 on some error paths (and Tectonic on recoverable
         // ones); trust the log over the exit code.
         if status == Status::Success && diagnostics.iter().any(|d| d.severity == Severity::Error) {
@@ -453,6 +497,22 @@ mod tests {
         wait_for(&events, 1);
         assert!(t.elapsed() < Duration::from_secs(2));
         assert_eq!(finished(&events)[0].status, Status::Cancelled);
+    }
+
+    #[test]
+    fn timeout_kills_runaway_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = Job::for_root(dir.path().join("main.tex"));
+        let (events, sink) = collect();
+        let compiler = Compiler::new(fake_engine("sh -c 'sleep 30'; true"), Duration::ZERO, sink);
+        compiler.set_timeout(Some(Duration::from_millis(200)));
+        let t = Instant::now();
+        compiler.request_now(job);
+        wait_for(&events, 1);
+        assert!(t.elapsed() < Duration::from_secs(5));
+        let out = &finished(&events)[0];
+        assert_eq!(out.status, Status::Failed);
+        assert!(out.diagnostics[0].message.contains("stopped after"));
     }
 
     #[test]
