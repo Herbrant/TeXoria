@@ -1,6 +1,7 @@
 //! TeXoria — an elegant, fast LaTeX editor.
 
 mod assets;
+mod atomic;
 mod latex;
 mod pdf_pane;
 mod settings;
@@ -19,6 +20,7 @@ actions!(
         Open,
         Save,
         Typeset,
+        CancelTypeset,
         ForwardSearch,
         ToggleTheme,
         ZoomIn,
@@ -38,6 +40,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-o", Open, None),
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-r", Typeset, None),
+        KeyBinding::new("secondary-.", CancelTypeset, None),
         KeyBinding::new("secondary-j", ForwardSearch, None),
         KeyBinding::new("secondary-shift-l", ToggleTheme, None),
         KeyBinding::new("secondary-=", ZoomIn, None),
@@ -64,6 +67,7 @@ fn set_menus(cx: &mut App) {
         ]),
         Menu::new("Typeset").items([
             MenuItem::action("Typeset", Typeset),
+            MenuItem::action("Stop Typesetting", CancelTypeset),
             MenuItem::action("Show in PDF", ForwardSearch),
             MenuItem::action("Live Preview", ToggleLivePreview),
         ]),

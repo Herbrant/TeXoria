@@ -6514,6 +6514,7 @@ dependencies = [
  "serde",
  "smol",
  "synctex",
+ "tempfile",
  "tex-compile",
  "tex-complete",
  "tex-log",

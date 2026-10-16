@@ -16,7 +16,10 @@ An elegant, fast LaTeX editor written in Rust with
   project's labels, `\cite` from `.bib` files (also matches title and author) and `\usepackage`.
 - **Outline** across multi-file projects (`\input`/`\include`), highlighting the current section.
 - **Hybrid engine**: uses TeX Live or MiKTeX when installed (through latexmk: pdfLaTeX, XeLaTeX,
-  LuaLaTeX), otherwise the bundled Tectonic.
+  LuaLaTeX), otherwise the bundled Tectonic. A runaway compile stops after 5 minutes
+  (`compile_timeout_secs` in the settings), or right away with ⌘. (Ctrl+.).
+- **Safe with untrusted projects**: a project's own `latexmkrc` (Perl, which can run any command)
+  is ignored until you click *Trust Project*; your own system and user rc files still apply.
 - **Paper** (light) and **Ink** (dark) themes; in dark mode the PDF is darkened while keeping its hues.
 
 ## Layout

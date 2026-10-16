@@ -53,10 +53,16 @@ struct Highlight {
 pub struct PdfPane {
     renderer: Option<Renderer>,
     error: Option<SharedString>,
+    /// Bumped on every `load`.
     generation: u64,
+    /// Generation of the document the renderer actually holds: a reload
+    /// that fails to open keeps the previous one.
+    doc_generation: u64,
     pages: Vec<PageSize>,
     shown: HashMap<usize, Shown>,
     synctex: Option<Arc<SyncTex>>,
+    /// SyncTeX data for an in-flight load, adopted together with its PDF.
+    pending_synctex: Option<Arc<SyncTex>>,
     zoom: Zoom,
     scroll: ScrollHandle,
     viewport: Size<Pixels>,
@@ -102,9 +108,11 @@ impl PdfPane {
             renderer,
             error,
             generation: 0,
+            doc_generation: 0,
             pages: Vec::new(),
             shown: HashMap::new(),
             synctex: None,
+            pending_synctex: None,
             zoom: Zoom::FitWidth,
             scroll: ScrollHandle::new(),
             viewport: Size::default(),
@@ -138,7 +146,7 @@ impl PdfPane {
                 }
                 match loaded {
                     (Ok(bytes), st) => {
-                        this.synctex = st;
+                        this.pending_synctex = st;
                         if let Some(r) = &this.renderer {
                             r.load(generation, bytes);
                         }
@@ -162,6 +170,8 @@ impl PdfPane {
                 if !self.pages.is_empty() {
                     self.pending_scroll = Some(self.scroll.offset());
                 }
+                self.doc_generation = generation;
+                self.synctex = self.pending_synctex.take();
                 self.pages = pages;
                 self.error = None;
                 self.last_request.clear();
@@ -175,8 +185,14 @@ impl PdfPane {
                 }
             }
             RenderEvent::LoadFailed { generation, error } => {
-                if generation == self.generation && self.pages.is_empty() {
-                    self.error = Some(format!("Could not open PDF: {error}").into());
+                if generation == self.generation {
+                    log::warn!("opening PDF: {error}");
+                    if self.pages.is_empty() {
+                        self.error = Some(format!("Could not open PDF: {error}").into());
+                    }
+                    // The renderer dropped queued requests when the load
+                    // arrived; ask again for the still-loaded document.
+                    self.last_request.clear();
                 }
             }
             RenderEvent::Rendered { key, bitmap } => {
@@ -365,7 +381,7 @@ impl PdfPane {
         );
         for page in order {
             let key = RenderKey {
-                generation: self.generation,
+                generation: self.doc_generation,
                 page,
                 scale_milli,
                 dark: self.dark,

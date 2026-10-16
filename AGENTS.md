@@ -51,9 +51,12 @@ texoria ─┬─ tex-compile ── tex-log
   GUI app's `PATH`) then Tectonic (bundled next to the executable / in the app bundle, or on
   `PATH`). `scheduler::Compiler` runs one engine process at a time in its own process tree;
   requests during a run are coalesced into one follow-up run, and a running job is never killed by
-  new edits (only by explicit `cancel` or an engine change). Build artifacts always go to
-  `<root dir>/.texoria/build` (`Job::for_root`), and the log is parsed with `tex-log` into
-  diagnostics.
+  new edits (only by explicit `cancel`, an engine change or the timeout). Build artifacts always
+  go to `<root dir>/.texoria/build` (`Job::for_root`), and the log is parsed with `tex-log` into
+  diagnostics. The root file is passed as `./name` (a name starting with `-` must not become an
+  option), and unless `Job::allow_project_rc` is set (the user trusted the project, see
+  `Settings::trusted_projects`) latexmk runs with `-norc` plus `-r` for the system/user rc files,
+  because a project's `latexmkrc` is arbitrary Perl.
 - **texoria** (`workspace.rs` is the main window: outline | editor tabs | PDF pane):
   - Live preview: each buffer change schedules a timer (`settings.live_delay_ms`); on fire it
     re-indexes open buffers (outline/completions follow unsaved text) and, if live preview is on,
@@ -74,12 +77,17 @@ texoria ─┬─ tex-compile ── tex-log
   - Settings are TOML in the OS config dir (`directories::ProjectDirs("app","TeXoria","TeXoria")`).
     Themes ("Paper" light, "Ink" dark) are in `assets/themes.json`; icons/fonts are embedded via
     `assets.rs`.
+  - Files (sources and settings) are written through `atomic::write` (temp file + rename), and
+    dirty buffers are saved on quit/window close.
 - **pdf-view**: PDFium is not thread-safe, so a single dedicated worker thread owns the library and
   documents; the UI sends the wanted page set in priority order and gets BGRA bitmaps back. PDFs are
   loaded from memory, never from disk, because an open handle on Windows would block the engine
   from overwriting the PDF. The PDFium version in `fetch-pdfium.sh` must match pdfium-render's
   `pdfium_*` feature. PDFium is located at runtime via `pdfium_dirs()` in `workspace.rs`
   (next to the exe, bundle `Frameworks`/`Resources`, deb/AppImage `lib/texoria`, then repo `vendor/`).
+  The repo `vendor/` dirs (PDFium and Tectonic) are only searched by a binary under the repo's
+  `target/` (`dev_vendor_dir`): a release build must never look at build-machine paths.
+  `fetch-*.sh` verify pinned SHA-256s (`scripts/sha256.sh`): update them when bumping versions.
 - **tex-syntax**: `tree-sitter` must stay on the same major version that gpui-kit uses.
 
 ## Conventions

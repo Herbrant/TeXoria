@@ -22,13 +22,14 @@ use tex_project::{Project, ProjectOutlineItem};
 use tex_syntax::OutlineKind;
 
 use crate::assets::Glyph;
+use crate::atomic;
 use crate::latex::{self, CursorFixup, LatexCompletions};
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
 use crate::settings::Settings;
 use crate::theme::{self, ThemeExt};
 use crate::{
-    CloseTab, ForwardSearch, Open, Save, ToggleDiagnostics, ToggleLivePreview, ToggleOutline,
-    ToggleSoftWrap, ToggleTheme, Typeset, ZoomIn, ZoomOut, ZoomToFit,
+    CancelTypeset, CloseTab, ForwardSearch, Open, Save, ToggleDiagnostics, ToggleLivePreview,
+    ToggleOutline, ToggleSoftWrap, ToggleTheme, Typeset, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -72,6 +73,10 @@ pub struct Workspace {
     outline: Vec<ProjectOutlineItem>,
     show_outline: bool,
     show_diagnostics: bool,
+    /// The project has a `latexmkrc` that is ignored until the user trusts it.
+    untrusted_rc: bool,
+    /// A close was already refused once because saving failed.
+    refused_close: bool,
     fixups: Rc<RefCell<Vec<CursorFixup>>>,
     focus: FocusHandle,
     was_dark: bool,
@@ -84,7 +89,7 @@ impl Workspace {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = Settings::load();
         let pdf = cx.new(|cx| PdfPane::new(pdfium_dirs(), cx));
-        let subscriptions = vec![cx.subscribe_in(
+        let mut subscriptions = vec![cx.subscribe_in(
             &pdf,
             window,
             |this, _, ev: &PdfPaneEvent, window, cx| match ev {
@@ -93,11 +98,23 @@ impl Workspace {
                 }
             },
         )];
+        // Never lose edits made since the last (debounced) save.
+        subscriptions.push(cx.on_app_quit(|this, cx| {
+            this.save_all(cx);
+            async {}
+        }));
+        let weak = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |_, cx| {
+            weak.update(cx, |this, cx| {
+                // If saving fails, keep the window (and the error) up once.
+                let close = this.save_all(cx) || this.refused_close;
+                this.refused_close = !close;
+                close
+            })
+            .unwrap_or(true)
+        });
 
-        let engines = tex_compile::detect(Some(Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../vendor/tectonic"
-        ))));
+        let engines = tex_compile::detect(dev_vendor_dir("tectonic").as_deref());
         let engine_ix = settings
             .engine
             .as_ref()
@@ -119,6 +136,8 @@ impl Workspace {
             outline: Vec::new(),
             show_outline: true,
             show_diagnostics: false,
+            untrusted_rc: false,
+            refused_close: false,
             fixups: Rc::new(RefCell::new(Vec::new())),
             focus: cx.focus_handle(),
             was_dark: cx.theme_is_dark(),
@@ -147,9 +166,11 @@ impl Workspace {
         let (tx, rx) = smol::channel::unbounded::<CompileEvent>();
         // Live debouncing happens here in the UI (it must save first), so the
         // scheduler runs without its own delay.
-        self.compiler = Some(Compiler::new(engine, Duration::ZERO, move |e| {
+        let compiler = Compiler::new(engine, Duration::ZERO, move |e| {
             let _ = tx.send_blocking(e);
-        }));
+        });
+        compiler.set_timeout(self.settings.compile_timeout());
+        self.compiler = Some(compiler);
         self._compile_events = cx.spawn(async move |this, cx| {
             while let Ok(event) = rx.recv().await {
                 if this
@@ -178,7 +199,7 @@ impl Workspace {
             cx.notify();
             return;
         };
-        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let text = tex_project::read_regular(&file).unwrap_or_default();
         let root = tex_project::find_root(&file, &text);
         let root = std::fs::canonicalize(&root).unwrap_or(root);
 
@@ -188,8 +209,13 @@ impl Workspace {
             self.refresh_outline(cx);
             self.settings.push_recent(root.clone());
             self.settings.save();
+            // The previous project's run is irrelevant now.
+            if let Some(c) = &self.compiler {
+                c.cancel();
+            }
+            let job = self.job().expect("root is set");
+            self.untrusted_rc = !job.allow_project_rc && job.has_project_rc();
             // Show a previous build right away, if any.
-            let job = Job::for_root(&root);
             if job.artifact("pdf").is_file() {
                 let synctex = Some(job.artifact("synctex.gz")).filter(|p| p.is_file());
                 self.pdf
@@ -212,7 +238,16 @@ impl Workspace {
             cx.notify();
             return Some(ix);
         }
-        let text = match std::fs::read_to_string(&file) {
+        // Only regular files: inverse search and diagnostics can point
+        // anywhere, and reading a pipe or device would hang.
+        let read = std::fs::metadata(&file).and_then(|m| {
+            if m.is_file() {
+                std::fs::read_to_string(&file)
+            } else {
+                Err(std::io::Error::other("not a regular file"))
+            }
+        });
+        let text = match read {
             Ok(t) => t,
             Err(e) => {
                 self.state =
@@ -341,7 +376,9 @@ impl Workspace {
                 let text = state.text();
                 self.fixups.borrow().iter().find_map(|f| {
                     let start = cursor.checked_sub(f.insert.len())?;
-                    (text.slice(start..cursor) == f.insert.as_str()).then(|| cursor - f.back)
+                    // Slicing inside a multi-byte char would panic.
+                    (text.is_char_boundary(start) && text.slice(start..cursor) == f.insert.as_str())
+                        .then(|| cursor - f.back)
                 })
             };
             if let Some(target) = fix {
@@ -389,7 +426,7 @@ impl Workspace {
                 continue;
             }
             let text = b.editor.read(cx).text().to_string();
-            match std::fs::write(&b.path, &text) {
+            match atomic::write(&b.path, text.as_bytes()) {
                 Ok(()) => {
                     b.saved = text;
                     b.dirty = false;
@@ -406,15 +443,39 @@ impl Workspace {
         ok
     }
 
+    /// The compile job for the current root. The project's own latexmk rc
+    /// file runs arbitrary code, so it is honored only once trusted.
+    fn job(&self) -> Option<Job> {
+        let mut job = Job::for_root(self.root.as_ref()?);
+        job.allow_project_rc = self.settings.is_trusted(job.work_dir());
+        Some(job)
+    }
+
+    fn trust_project(&mut self, cx: &mut Context<Self>) {
+        let Some(job) = self.job() else {
+            return;
+        };
+        self.settings.trust(job.work_dir().to_path_buf());
+        self.settings.save();
+        self.untrusted_rc = false;
+        self.typeset(cx);
+    }
+
     fn typeset(&mut self, cx: &mut Context<Self>) {
-        let Some(root) = self.root.clone() else {
+        let Some(job) = self.job() else {
             return;
         };
         if !self.save_all(cx) {
             return;
         }
         if let Some(c) = &self.compiler {
-            c.request_now(Job::for_root(root));
+            c.request_now(job);
+        }
+    }
+
+    fn cancel_typeset(&mut self) {
+        if let Some(c) = &self.compiler {
+            c.cancel();
         }
     }
 
@@ -427,7 +488,13 @@ impl Workspace {
                 self.state = CompileState::Failed(error.into());
             }
             CompileEvent::Finished(out) => {
+                // A run for a project that is no longer open.
+                if self.root.as_ref() != Some(&out.job.root_file) {
+                    return;
+                }
                 if out.status == Status::Cancelled {
+                    self.state = CompileState::Idle;
+                    cx.notify();
                     return;
                 }
                 let errors = out
@@ -484,7 +551,8 @@ impl Workspace {
                                 return None;
                             }
                             let line = text.slice_line(row).to_string();
-                            let start = line.len() - line.trim_start().len();
+                            // Columns are in chars.
+                            let start = line.chars().count() - line.trim_start().chars().count();
                             let end = line.trim_end().chars().count().max(start + 1);
                             let severity = match d.severity {
                                 Severity::Error => DiagnosticSeverity::Error,
@@ -543,7 +611,10 @@ impl Workspace {
         if self.buffers.len() <= 1 {
             return;
         }
-        self.save_all(cx);
+        // Closing after a failed save would drop the edits.
+        if !self.save_all(cx) {
+            return;
+        }
         self.buffers.remove(self.active);
         self.active = self.active.min(self.buffers.len() - 1);
         cx.notify();
@@ -865,6 +936,30 @@ impl Workspace {
             }))
     }
 
+    fn render_trust_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        h_flex()
+            .gap_3()
+            .px_3()
+            .py_1p5()
+            .text_sm()
+            .bg(theme.warning.opacity(0.12))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(Icon::new(Glyph::Warning).xsmall().text_color(theme.warning))
+            .child(div().flex_1().text_color(theme.foreground).child(
+                "This project's latexmkrc can run arbitrary commands and is ignored \
+                         until you trust the project.",
+            ))
+            .child(
+                Button::new("trust-project")
+                    .warning()
+                    .xsmall()
+                    .label("Trust Project")
+                    .on_click(cx.listener(|this, _, _, cx| this.trust_project(cx))),
+            )
+    }
+
     fn render_diagnostics(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let root_dir = self
@@ -1154,6 +1249,7 @@ impl Render for Workspace {
             let editor_column = v_flex()
                 .size_full()
                 .bg(theme.background)
+                .when(self.untrusted_rc, |d| d.child(self.render_trust_banner(cx)))
                 .when(self.buffers.len() > 1, |d| d.child(self.render_tabs(cx)))
                 .child(
                     div().flex_1().min_h_0().child(
@@ -1203,6 +1299,7 @@ impl Render for Workspace {
                 this.save_all(cx);
             }))
             .on_action(cx.listener(|this, _: &Typeset, _, cx| this.typeset(cx)))
+            .on_action(cx.listener(|this, _: &CancelTypeset, _, _| this.cancel_typeset()))
             .on_action(cx.listener(|this, _: &ForwardSearch, _, cx| this.forward_search(cx)))
             .on_action(cx.listener(|this, _: &ToggleTheme, window, cx| {
                 theme::toggle(window, cx);
@@ -1259,7 +1356,7 @@ fn find_main_file(dir: &Path) -> Option<PathBuf> {
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "tex"))
-        .filter(|p| std::fs::read_to_string(p).is_ok_and(|s| s.contains("\\documentclass")))
+        .filter(|p| tex_project::read_regular(p).is_some_and(|s| s.contains("\\documentclass")))
         .collect();
     candidates.sort();
     candidates.into_iter().next()
@@ -1279,9 +1376,16 @@ fn pdfium_dirs() -> Vec<PathBuf> {
         // deb / AppImage layout
         dirs.push(d.join("../lib/texoria"));
     }
-    dirs.push(PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../vendor/pdfium"
-    )));
+    dirs.extend(dev_vendor_dir("pdfium"));
     dirs
+}
+
+/// `vendor/<name>` of the source checkout, but only for a binary built in it
+/// (`cargo run`). The path is the build machine's: on a user's machine it may
+/// be creatable by anyone, and a library or engine planted there would run.
+fn dev_vendor_dir(name: &str) -> Option<PathBuf> {
+    let repo = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).ok()?;
+    let exe = std::fs::canonicalize(std::env::current_exe().ok()?).ok()?;
+    exe.starts_with(repo.join("target"))
+        .then(|| repo.join("vendor").join(name))
 }

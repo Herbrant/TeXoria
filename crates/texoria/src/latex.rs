@@ -56,7 +56,11 @@ impl CompletionProvider for LatexCompletions {
         _cx: &mut App,
     ) -> Task<Result<CompletionResponse>> {
         // Ranking a few hundred candidates takes microseconds: do it inline.
-        let end = (offset + 1).min(rope.len());
+        // One character past the cursor (to see an auto-closed `}`); it may be
+        // multi-byte, and slicing inside it panics.
+        let end = rope
+            .char_at(offset)
+            .map_or(offset, |c| offset + c.len_utf8());
         let text = rope.slice(0..end).to_string();
         let project = self.project.read().ok();
         let items = tex_complete::complete(&text, offset, project.as_deref(), "  ");

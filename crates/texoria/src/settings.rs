@@ -1,6 +1,7 @@
 //! User settings, persisted as TOML in the OS configuration directory.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +15,11 @@ pub struct Settings {
     /// Pause after the last keystroke before a live compile.
     pub live_delay_ms: u64,
     pub soft_wrap: bool,
+    /// Stop a compile after this many seconds (0: never).
+    pub compile_timeout_secs: u64,
     pub recent: Vec<PathBuf>,
+    /// Project directories whose `latexmkrc` may run.
+    pub trusted_projects: Vec<PathBuf>,
 }
 
 impl Default for Settings {
@@ -24,7 +29,9 @@ impl Default for Settings {
             live_preview: true,
             live_delay_ms: 700,
             soft_wrap: true,
+            compile_timeout_secs: 300,
             recent: Vec::new(),
+            trusted_projects: Vec::new(),
         }
     }
 }
@@ -49,11 +56,25 @@ impl Settings {
         }
         match toml::to_string_pretty(self) {
             Ok(s) => {
-                if let Err(e) = std::fs::write(&p, s) {
+                if let Err(e) = crate::atomic::write(&p, s.as_bytes()) {
                     log::warn!("saving settings: {e}");
                 }
             }
             Err(e) => log::warn!("serializing settings: {e}"),
+        }
+    }
+
+    pub fn compile_timeout(&self) -> Option<Duration> {
+        (self.compile_timeout_secs > 0).then(|| Duration::from_secs(self.compile_timeout_secs))
+    }
+
+    pub fn is_trusted(&self, dir: &Path) -> bool {
+        self.trusted_projects.iter().any(|p| p == dir)
+    }
+
+    pub fn trust(&mut self, dir: PathBuf) {
+        if !self.is_trusted(&dir) {
+            self.trusted_projects.push(dir);
         }
     }
 

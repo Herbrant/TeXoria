@@ -25,6 +25,7 @@ directories.workspace = true
 lsp-types = { version = "0.97", features = ["proposed"] }
 smol = "2"
 image = { version = "0.25", default-features = false }
+tempfile.workspace = true
 
 [build-dependencies]
 embed-resource = "3"
