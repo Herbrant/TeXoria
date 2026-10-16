@@ -1,0 +1,82 @@
+# .deb and .rpm (https://nfpm.goreleaser.com), built by scripts/package-linux.sh from the tree it
+# stages in target/stage/root (paths are relative to the repository root).
+# Keep the dependencies in sync with the libraries allowed by scripts/package-linux.sh.
+name: texoria
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+section: tex
+priority: optional
+maintainer: Davide Carnemolla <cdavide98carnemolla@gmail.com>
+description: |
+  An elegant, fast LaTeX editor.
+  Live PDF preview, two-way SyncTeX, diagnostics, completion, outline and Git built in.
+  Uses TeX Live through latexmk when installed, otherwise the bundled Tectonic.
+vendor: TeXoria
+homepage: https://github.com/Herbrant/TeXoria
+license: Apache-2.0
+
+contents:
+  - src: target/stage/root/usr/bin/texoria
+    dst: /usr/bin/texoria
+  - src: target/stage/root/usr/lib/texoria/libpdfium.so
+    dst: /usr/lib/texoria/libpdfium.so
+  - src: target/stage/root/usr/lib/texoria/bin/tectonic
+    dst: /usr/lib/texoria/bin/tectonic
+  - src: target/stage/root/usr/share/applications/texoria.desktop
+    dst: /usr/share/applications/texoria.desktop
+  # Files only (globs flatten paths, trees add directory entries owned by other packages).
+  - src: target/stage/root/usr/share/icons/hicolor/16x16/apps/texoria.png
+    dst: /usr/share/icons/hicolor/16x16/apps/texoria.png
+  - src: target/stage/root/usr/share/icons/hicolor/32x32/apps/texoria.png
+    dst: /usr/share/icons/hicolor/32x32/apps/texoria.png
+  - src: target/stage/root/usr/share/icons/hicolor/48x48/apps/texoria.png
+    dst: /usr/share/icons/hicolor/48x48/apps/texoria.png
+  - src: target/stage/root/usr/share/icons/hicolor/64x64/apps/texoria.png
+    dst: /usr/share/icons/hicolor/64x64/apps/texoria.png
+  - src: target/stage/root/usr/share/icons/hicolor/128x128/apps/texoria.png
+    dst: /usr/share/icons/hicolor/128x128/apps/texoria.png
+  - src: target/stage/root/usr/share/icons/hicolor/256x256/apps/texoria.png
+    dst: /usr/share/icons/hicolor/256x256/apps/texoria.png
+  - src: target/stage/root/usr/share/icons/hicolor/512x512/apps/texoria.png
+    dst: /usr/share/icons/hicolor/512x512/apps/texoria.png
+  - src: target/stage/root/usr/share/licenses/texoria/*
+    dst: /usr/share/licenses/texoria/
+    packager: rpm
+  - src: target/stage/root/usr/share/licenses/texoria/*
+    dst: /usr/share/doc/texoria/
+    packager: deb
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+      - libgcc-s1
+      - libxcb1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libfontconfig1
+      - libfreetype6
+      - libwayland-client0
+      - libvulkan1
+    recommends:
+      - git
+      - latexmk
+      - mesa-vulkan-drivers
+    suggests:
+      - texlive-latex-extra
+  rpm:
+    depends:
+      - libxcb
+      - libxkbcommon
+      - libxkbcommon-x11
+      - fontconfig
+      - freetype
+      - libwayland-client
+      - vulkan-loader
+    recommends:
+      - git
+      - latexmk
+      - mesa-vulkan-drivers
+    suggests:
+      - texlive-scheme-basic

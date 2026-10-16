@@ -1,0 +1,213 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (matching [workspace.package] version) builds every package, publishes a
+# GitHub release and updates the Homebrew cask and the AUR package. Tags with a pre-release
+# suffix (v1.2.0-rc.1) are published as pre-releases and skip Homebrew/AUR. Running the workflow
+# by hand only builds the packages (downloadable as workflow artifacts).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(scripts/version.sh)"
+          if [ "$REF_TYPE" = tag ] && [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match the workspace version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  build:
+    name: ${{ matrix.name }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macos-aarch64, os: macos-latest }
+          - { name: macos-x86_64, os: macos-15-intel }
+          # The oldest supported Ubuntu: the binary needs the glibc it was built against.
+          - { name: linux-x86_64, os: ubuntu-22.04 }
+          - { name: linux-aarch64, os: ubuntu-22.04-arm }
+          - { name: windows-x86_64, os: windows-latest }
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager@0.11.8
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ clang libfontconfig-dev libwayland-dev \
+            libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev \
+            libasound2-dev libvulkan1
+          case "$(uname -m)" in
+            x86_64) asset=nfpm_2.48.0_Linux_x86_64.tar.gz
+              sha=6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750 ;;
+            aarch64) asset=nfpm_2.48.0_Linux_arm64.tar.gz
+              sha=a9a75213763783b7669719e505474c748c5ad7dc66591a195619deb50f85c2f4 ;;
+          esac
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v2.48.0/$asset" -o "$RUNNER_TEMP/$asset"
+          echo "$sha  $RUNNER_TEMP/$asset" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/$asset" -C /usr/local/bin nfpm
+
+      - name: Fetch PDFium and Tectonic
+        run: |
+          ./scripts/fetch-pdfium.sh
+          ./scripts/fetch-tectonic.sh
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cargo packager --release -p texoria --formats app
+          ./scripts/package-macos.sh
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        env:
+          # linuxdeploy is itself an AppImage: run it without FUSE.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          cargo packager --release -p texoria --formats appimage
+          mv target/dist/texoria_"$VERSION"_"$(uname -m)".AppImage \
+            target/dist/texoria-"$VERSION"-linux-"$(uname -m)".AppImage
+          ./scripts/package-linux.sh
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo packager --release -p texoria --formats nsis
+          mv target/dist/texoria_"$VERSION"_x64-setup.exe \
+            target/dist/texoria-"$VERSION"-windows-x86_64-setup.exe
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            target/dist/*.dmg
+            target/dist/*.AppImage
+            target/dist/*.tar.gz
+            target/dist/*.deb
+            target/dist/*.rpm
+            target/dist/*-setup.exe
+
+  release:
+    needs: [version, build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * | tee SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          flags=()
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "TeXoria ${TAG#v}" \
+            --generate-notes --verify-tag "${flags[@]}"
+
+  manifests:
+    needs: [version, release]
+    if: needs.version.outputs.prerelease == 'false'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: SHA256SUMS
+      - run: ./scripts/render-manifests.sh SHA256SUMS manifests
+      - uses: actions/upload-artifact@v7
+        with:
+          name: manifests
+          path: manifests
+
+  homebrew:
+    needs: [version, manifests]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: manifests
+      - uses: actions/checkout@v7
+        with:
+          repository: Herbrant/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Push the cask
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p tap/Casks
+          cp texoria.rb tap/Casks/texoria.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/texoria.rb
+          git commit -m "texoria $VERSION"
+          git push
+
+  aur:
+    needs: [version, manifests]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: manifests
+      - uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
+        with:
+          pkgname: texoria-bin
+          pkgbuild: PKGBUILD
+          commit_username: Davide Carnemolla
+          commit_email: cdavide98carnemolla@gmail.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to ${{ needs.version.outputs.version }}

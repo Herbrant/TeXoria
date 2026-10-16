@@ -20,12 +20,35 @@ cargo test -p tex-log                          # one crate
 cargo test -p synctex inverse                  # tests matching a name filter
 cargo test -p tex-compile -- --include-ignored # also runs the Tectonic e2e test (downloads TeX bundle first time)
 
-cargo packager --release -p texoria  # .app/.dmg, NSIS, .deb, AppImage into target/dist
+cargo packager --release -p texoria --formats app && ./scripts/package-macos.sh  # ad-hoc signed .dmg
+cargo packager --release -p texoria --formats nsis|appimage   # Windows installer / AppImage
+./scripts/package-linux.sh           # Linux, after a release build: .tar.gz, .deb, .rpm (nfpm)
 ./scripts/gen-icons.sh               # assets/logo/*.svg → crates/texoria/packaging (macOS only)
 ```
 
 CI (`.github/workflows/ci.yml`, macOS/Ubuntu/Windows) runs fmt check, clippy with `-D warnings`,
 tests and a release build — keep all four green. `rustfmt.toml` sets `max_width = 100`.
+
+## Releasing
+
+Bump `version` in `[workspace.package]` (`Cargo.toml`), commit `chore(release): vX.Y.Z`, then
+`git tag vX.Y.Z && git push origin main vX.Y.Z`. `.github/workflows/release.yml` checks that the
+tag matches the version (`scripts/version.sh`), builds on native runners (macOS arm64/x64,
+Ubuntu 22.04 x64/arm64 for an old enough glibc, Windows x64), publishes the GitHub release with
+`SHA256SUMS`, and renders `crates/texoria/packaging/{homebrew,aur}/*.in`
+(`scripts/render-manifests.sh`) into the cask pushed to `Herbrant/homebrew-tap`
+(secret `HOMEBREW_TAP_TOKEN`) and the AUR `texoria-bin` package (secret `AUR_SSH_PRIVATE_KEY`).
+Pre-release tags (`v1.2.0-rc.1`) skip Homebrew and the AUR; a manual run only builds artifacts.
+Asset names (`texoria-<v>-<os>-<arch>.<ext>`, `aarch64`/`x86_64`) are referenced by the templates.
+
+- There is no Apple Developer ID: `package-macos.sh` signs ad hoc (no notarization), and the cask
+  clears the quarantine flag in `postflight_steps`.
+- The Linux layout (`usr/lib/texoria/{libpdfium.so,bin/tectonic}`) is what `pdfium_dirs()` and
+  `bundled_tectonic_dirs()` look for. Package dependencies are listed by hand in
+  `crates/texoria/packaging/linux/nfpm.yaml` and `crates/texoria/packaging/aur/PKGBUILD.in`;
+  `package-linux.sh` fails if a binary links a shared library outside its allowlist, so a new one
+  must be added to all three.
+- Linux bundles Tectonic's static musl builds (the gnu one needs glibc 2.39).
 
 Tests that depend on the environment skip by returning early (they pass trivially) rather than
 failing: `tex-compile/tests/real_engine.rs` needs a TeX engine on the host, and
@@ -108,7 +131,8 @@ texoria ─┬─ tex-compile ── tex-log
   (next to the exe, bundle `Frameworks`/`Resources`, deb/AppImage `lib/texoria`, then repo `vendor/`).
   The repo `vendor/` dirs (PDFium and Tectonic) are only searched by a binary under the repo's
   `target/` (`dev_vendor_dir`): a release build must never look at build-machine paths.
-  `fetch-*.sh` verify pinned SHA-256s (`scripts/sha256.sh`): update them when bumping versions.
+  `fetch-*.sh` verify pinned SHA-256s (`scripts/sha256.sh`): update them when bumping versions
+  (`release.yml` pins nfpm the same way).
 - **tex-syntax**: `tree-sitter` must stay on the same major version that gpui-kit uses.
 
 ## Conventions

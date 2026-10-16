@@ -28,6 +28,28 @@ An elegant, fast LaTeX editor written in Rust with
   system and user rc files still apply.
 - **Paper** (light) and **Ink** (dark) themes; in dark mode the PDF is darkened while keeping its hues.
 
+## Install
+
+Every package bundles PDFium and Tectonic, so TeXoria works without a TeX distribution; install
+TeX Live (or MacTeX/MiKTeX) and `git` to use latexmk and source control.
+
+| Platform | |
+|---|---|
+| macOS (Apple silicon, Intel) | `brew install --cask herbrant/tap/texoria` |
+| Arch Linux (x86_64, aarch64) | `yay -S texoria-bin` (or any AUR helper) |
+| Debian, Ubuntu ≥ 22.04 | `sudo apt install ./texoria_<version>_amd64.deb` (or `_arm64`) |
+| Fedora, openSUSE | `sudo dnf install ./texoria-<version>-1.x86_64.rpm` (or `.aarch64`) |
+| Other Linux | `texoria-<version>-linux-<arch>.AppImage`, or the `.tar.gz` (a `/usr` tree) |
+| Windows (x64) | `texoria-<version>-windows-x86_64-setup.exe` |
+
+The packages are on the [releases page](https://github.com/Herbrant/TeXoria/releases), with a
+`SHA256SUMS` file.
+
+TeXoria is not signed with an Apple Developer ID or a Windows code-signing certificate. The
+Homebrew cask clears the quarantine flag for you; if you download the `.dmg` yourself, run
+`xattr -dr com.apple.quarantine /Applications/TeXoria.app` once after copying the app. On Windows,
+SmartScreen asks for confirmation the first time (*More info* → *Run anyway*).
+
 ## Layout
 
 | Crate | Role |
@@ -68,5 +90,11 @@ The editor typeface is IBM Plex Mono (SIL Open Font License), bundled in `crates
 
 ```sh
 cargo install cargo-packager --locked
-cargo packager --release -p texoria   # .app/.dmg, NSIS, .deb, AppImage in target/dist
+cargo packager --release -p texoria --formats app && ./scripts/package-macos.sh   # signed .dmg
+cargo packager --release -p texoria --formats nsis       # Windows installer
+cargo packager --release -p texoria --formats appimage   # Linux AppImage
+./scripts/package-linux.sh   # after a release build: .tar.gz, .deb and .rpm (needs nfpm)
 ```
+
+Everything lands in `target/dist`. Releases are built by `.github/workflows/release.yml` when a
+`v*` tag is pushed.

@@ -32,7 +32,8 @@ tempfile.workspace = true
 embed-resource = "3"
 
 # `cargo packager --release` (https://github.com/crabnebula-dev/cargo-packager).
-# Run scripts/fetch-pdfium.sh and scripts/fetch-tectonic.sh first.
+# Run scripts/fetch-pdfium.sh and scripts/fetch-tectonic.sh first. Releases sign the .app and
+# build the .dmg with scripts/package-macos.sh, and the .deb/.rpm with scripts/package-linux.sh.
 [package.metadata.packager]
 product-name = "TeXoria"
 identifier = "app.texoria.TeXoria"
@@ -43,8 +44,16 @@ out-dir = "../../target/dist"
 binaries = [{ path = "texoria", main = true }]
 # Generated from assets/logo by scripts/gen-icons.sh.
 icons = ["packaging/icons/*.png", "packaging/texoria.icns", "packaging/texoria.ico"]
-formats = ["app", "dmg", "nsis", "deb", "appimage"]
+formats = ["app", "dmg", "nsis", "appimage"]
 resources = [
   { src = "../../vendor/pdfium/*", target = "." },
   { src = "../../vendor/tectonic/*", target = "bin" },
 ]
+
+[package.metadata.packager.deb]
+# Also used by the AppImage; scripts/package-linux.sh installs the same file.
+desktop-template = "packaging/linux/texoria.desktop"
+
+[package.metadata.packager.macos]
+# GPUI's deployment target.
+minimum-system-version = "10.15"
