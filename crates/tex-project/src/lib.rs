@@ -181,7 +181,7 @@ impl Project {
         if self.files.len() >= MAX_FILES || self.files.contains_key(path) {
             return;
         }
-        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let text = read_regular(path).unwrap_or_default();
         let index = Index::from_text(&text);
         let includes = index.includes.clone();
         self.files.insert(path.to_path_buf(), index);
@@ -213,9 +213,18 @@ impl Project {
 }
 
 fn read_bib(path: &Path) -> Vec<BibEntry> {
-    std::fs::read_to_string(path)
+    read_regular(path)
         .map(|s| bib::parse(&s))
         .unwrap_or_default()
+}
+
+/// Read a text file, refusing anything but regular files: reading a named
+/// pipe (or a device) would block the UI thread forever.
+pub fn read_regular(path: &Path) -> Option<String> {
+    if !path.is_file() {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
 }
 
 /// TeX resolves `\input` paths against the directory it runs in (the root
@@ -281,7 +290,7 @@ pub fn find_root(file: &Path, text: &str) -> PathBuf {
             if p == file || p.extension().is_none_or(|e| e != "tex") {
                 continue;
             }
-            let Ok(src) = std::fs::read_to_string(&p) else {
+            let Some(src) = read_regular(&p) else {
                 continue;
             };
             if !src.contains("\\documentclass") {
@@ -362,6 +371,25 @@ mod tests {
             outline,
             vec!["Introduction", "Approach", "Results", "Discussion"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_named_pipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("refs.bib");
+        let ok = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok {
+            return;
+        }
+        let root = dir.path().join("main.tex");
+        std::fs::write(&root, "\\documentclass{article}\\bibliography{refs}").unwrap();
+        // Would block forever if the FIFO were read.
+        let p = Project::open(&root);
+        assert_eq!(p.bib_entries().count(), 0);
     }
 
     #[test]

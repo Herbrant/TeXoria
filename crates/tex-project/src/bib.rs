@@ -105,7 +105,7 @@ fn fields_of(s: &str) -> Vec<(String, String)> {
         }
         let (value, next) = match b[j] {
             b'{' => {
-                let end = matching_close(b, j).unwrap_or(b.len() - 1);
+                let end = matching_close(b, j).unwrap_or(b.len());
                 (&s[j + 1..end], end + 1)
             }
             b'"' => {
@@ -166,5 +166,23 @@ mod tests {
             Some("LaTeX: a document preparation system")
         );
         assert_eq!(e[1].year.as_deref(), Some("1986"));
+    }
+
+    #[test]
+    fn truncated_field_does_not_panic() {
+        // A .bib saved mid-edit: the last field's brace is never closed.
+        for src in [
+            "@misc{k, title = {",
+            "@misc{k, title = {café",
+            "@misc{k, t = \"é",
+        ] {
+            let e = parse(src);
+            assert_eq!(e.len(), 1, "{src}");
+            assert_eq!(e[0].key, "k");
+        }
+        assert_eq!(
+            parse("@misc{k, title = {café").remove(0).title.as_deref(),
+            Some("café")
+        );
     }
 }
