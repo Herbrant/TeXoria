@@ -1,0 +1,89 @@
+name: Publish
+
+# Update the Homebrew cask and the AUR package from a published GitHub release (its
+# SHA256SUMS). Called by release.yml; run it by hand with the tag to retry a failed publish.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# No init.defaultBranch=main here (unlike ci.yml/release.yml): the AUR only accepts `master`,
+# and the deploy action pushes the branch git creates when the package repository is empty.
+
+jobs:
+  manifests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Render the cask and the PKGBUILD
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS
+          ./scripts/render-manifests.sh SHA256SUMS manifests
+      - uses: actions/upload-artifact@v7
+        with:
+          name: manifests
+          path: manifests
+
+  homebrew:
+    needs: manifests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: manifests
+      - name: Push the cask to Herbrant/homebrew-tap
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          # A plain clone also works while the tap is still empty (actions/checkout does not).
+          git clone "https://x-access-token:$TOKEN@github.com/Herbrant/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cp texoria.rb tap/Casks/texoria.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/texoria.rb
+          if git diff --cached --quiet; then
+            echo "The cask is already up to date"
+            exit 0
+          fi
+          git commit -m "texoria ${TAG#v}"
+          git push origin HEAD:main
+
+  aur:
+    needs: manifests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: manifests
+      - name: Commit message
+        id: message
+        env:
+          TAG: ${{ inputs.tag }}
+        run: echo "text=Update to ${TAG#v}" >> "$GITHUB_OUTPUT"
+      - uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
+        with:
+          pkgname: texoria-bin
+          pkgbuild: PKGBUILD
+          commit_username: Davide Carnemolla
+          commit_email: cdavide98carnemolla@gmail.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: ${{ steps.message.outputs.text }}

@@ -39,6 +39,8 @@ Ubuntu 22.04 x64/arm64 for an old enough glibc, Windows x64), publishes the GitH
 (`scripts/render-manifests.sh`) into the cask pushed to `Herbrant/homebrew-tap`
 (secret `HOMEBREW_TAP_TOKEN`) and the AUR `texoria-bin` package (secret `AUR_SSH_PRIVATE_KEY`).
 Pre-release tags (`v1.2.0-rc.1`) skip Homebrew and the AUR; a manual run only builds artifacts.
+The Homebrew/AUR step is `.github/workflows/publish.yml` (reads `SHA256SUMS` from the release):
+run it by hand with the tag to retry it.
 Asset names (`texoria-<v>-<os>-<arch>.<ext>`, `aarch64`/`x86_64`) are referenced by the templates.
 
 - There is no Apple Developer ID: `package-macos.sh` signs ad hoc (no notarization), and the cask

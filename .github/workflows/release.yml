@@ -1,9 +1,9 @@
 name: Release
 
 # Pushing a tag vX.Y.Z (matching [workspace.package] version) builds every package, publishes a
-# GitHub release and updates the Homebrew cask and the AUR package. Tags with a pre-release
-# suffix (v1.2.0-rc.1) are published as pre-releases and skip Homebrew/AUR. Running the workflow
-# by hand only builds the packages (downloadable as workflow artifacts).
+# GitHub release and updates the Homebrew cask and the AUR package (publish.yml). Tags with a
+# pre-release suffix (v1.2.0-rc.1) are published as pre-releases and skip Homebrew/AUR. Running
+# the workflow by hand only builds the packages (downloadable as workflow artifacts).
 on:
   push:
     tags: ["v*"]
@@ -141,10 +141,6 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum -- * | tee SHA256SUMS
-      - uses: actions/upload-artifact@v7
-        with:
-          name: SHA256SUMS
-          path: dist/SHA256SUMS
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -156,58 +152,10 @@ jobs:
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "TeXoria ${TAG#v}" \
             --generate-notes --verify-tag "${flags[@]}"
 
-  manifests:
+  publish:
     needs: [version, release]
     if: needs.version.outputs.prerelease == 'false'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: SHA256SUMS
-      - run: ./scripts/render-manifests.sh SHA256SUMS manifests
-      - uses: actions/upload-artifact@v7
-        with:
-          name: manifests
-          path: manifests
-
-  homebrew:
-    needs: [version, manifests]
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: manifests
-      - uses: actions/checkout@v7
-        with:
-          repository: Herbrant/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: tap
-      - name: Push the cask
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          mkdir -p tap/Casks
-          cp texoria.rb tap/Casks/texoria.rb
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Casks/texoria.rb
-          git commit -m "texoria $VERSION"
-          git push
-
-  aur:
-    needs: [version, manifests]
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: manifests
-      - uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
-        with:
-          pkgname: texoria-bin
-          pkgbuild: PKGBUILD
-          commit_username: Davide Carnemolla
-          commit_email: cdavide98carnemolla@gmail.com
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: Update to ${{ needs.version.outputs.version }}
+    uses: ./.github/workflows/publish.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
