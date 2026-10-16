@@ -6476,6 +6476,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-git"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "similar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "which",
+]
+
+[[package]]
 name = "tex-log"
 version = "0.1.0"
 dependencies = [
@@ -6517,6 +6529,7 @@ dependencies = [
  "tempfile",
  "tex-compile",
  "tex-complete",
+ "tex-git",
  "tex-log",
  "tex-project",
  "tex-syntax",

@@ -41,6 +41,7 @@ window-free logic with its own unit tests. Dependency flow:
 
 ```
 texoria ─┬─ tex-compile ── tex-log
+         ├─ tex-git (system `git` CLI)
          ├─ tex-complete ── tex-project ── tex-syntax
          ├─ synctex
          └─ pdf-view (PDFium)
@@ -56,8 +57,28 @@ texoria ─┬─ tex-compile ── tex-log
   diagnostics. The root file is passed as `./name` (a name starting with `-` must not become an
   option), and unless `Job::allow_project_rc` is set (the user trusted the project, see
   `Settings::trusted_projects`) latexmk runs with `-norc` plus `-r` for the system/user rc files,
-  because a project's `latexmkrc` is arbitrary Perl.
+  because a project's `latexmkrc` is arbitrary Perl. The scheduler also writes
+  `.texoria/.gitignore` (`*`) so build artifacts never show up in Git.
+- **tex-git**: shells out to the user's `git` (keeps credential helpers, ssh-agent, signing and
+  hooks working) instead of a library. Every command runs without a terminal
+  (`GIT_TERMINAL_PROMPT=0`, a new session on Unix), with `GIT_LITERAL_PATHSPECS=1` and English
+  messages (errors are classified by text into `Error::{NoIdentity, Rejected, Auth, …}`);
+  network operations have a timeout and a `Cancel` token. A repository's own config can run
+  programs even on `git status` (`core.fsmonitor`, filters), so the app only uses a `Repo` for
+  trusted projects. `Git::find` is lazy (on macOS `/usr/bin/git` is skipped without the Command
+  Line Tools, whose stub would pop up an installer). Integration tests in `tests/repo.rs` use temp
+  repos with `GIT_CONFIG_GLOBAL` pointing to a temp file and skip if git is missing.
 - **texoria** (`workspace.rs` is the main window: outline | editor tabs | PDF pane):
+  - `git_panel.rs` is the Source Control sidebar (alternates with the outline). Mutating
+    operations are emitted as `GitPanelEvent::Request(GitOp)`; the workspace saves dirty buffers
+    and calls `GitPanel::execute`, which runs one operation at a time on the background executor.
+    Operations that rewrite files (pull, switch, discard, abort) trigger
+    `Workspace::reload_from_disk`, which also runs on window activation: clean buffers whose file
+    changed are reloaded, tabs of deleted files close.
+  - `diff_view.rs` is a single "preview" diff tab built on `gpui_kit::component::diff`
+    (`DiffFile::parse` of git's patch, `parse_conflicts` for merge conflicts). It does not support
+    combined diffs, so commits are shown against their first parent. The gpui-kit editor has no
+    gutter-marker API, so there are no change markers in the editor itself.
   - Live preview: each buffer change schedules a timer (`settings.live_delay_ms`); on fire it
     re-indexes open buffers (outline/completions follow unsaved text) and, if live preview is on,
     saves and typesets. Debouncing lives in the UI, so the `Compiler` is created with

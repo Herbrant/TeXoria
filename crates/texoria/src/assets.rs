@@ -66,6 +66,21 @@ glyphs! {
     Open => "folder-open",
     Close => "x",
     Book => "book-open",
+    Branch => "git-branch",
+    Commit => "git-commit-horizontal",
+    Conflict => "git-merge-conflict",
+    Push => "arrow-up",
+    Pull => "arrow-down",
+    Fetch => "cloud-download",
+    Refresh => "refresh-cw",
+    Plus => "plus",
+    Minus => "minus",
+    Discard => "undo-2",
+    Check => "check",
+    Split => "columns-2",
+    Unified => "rows-2",
+    PrevChange => "chevron-up",
+    NextChange => "chevron-down",
 }
 
 pub struct Assets;

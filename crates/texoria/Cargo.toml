@@ -10,6 +10,7 @@ gpui-kit = { workspace = true, features = ["tree-sitter"] }
 tex-log.workspace = true
 synctex.workspace = true
 tex-compile.workspace = true
+tex-git.workspace = true
 tex-syntax.workspace = true
 tex-project.workspace = true
 tex-complete.workspace = true

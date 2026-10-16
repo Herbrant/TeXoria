@@ -18,8 +18,14 @@ An elegant, fast LaTeX editor written in Rust with
 - **Hybrid engine**: uses TeX Live or MiKTeX when installed (through latexmk: pdfLaTeX, XeLaTeX,
   LuaLaTeX), otherwise the bundled Tectonic. A runaway compile stops after 5 minutes
   (`compile_timeout_secs` in the settings), or right away with ⌘. (Ctrl+.).
+- **Git built in** (⇧⌘G / Ctrl+Shift+G): see what changed with word-level diffs (unified or side by
+  side), stage, commit (⌘↵ in the message box), amend, pull, push and fetch, browse the history
+  and restore any file from an older commit, switch or create branches, resolve merge conflicts,
+  and initialize or clone a repository (GitHub, GitLab, Overleaf…). It uses the `git` already on
+  your system, so your credential helpers and SSH keys keep working.
 - **Safe with untrusted projects**: a project's own `latexmkrc` (Perl, which can run any command)
-  is ignored until you click *Trust Project*; your own system and user rc files still apply.
+  and its Git configuration (which can too) are ignored until you click *Trust Project*; your own
+  system and user rc files still apply.
 - **Paper** (light) and **Ink** (dark) themes; in dark mode the PDF is darkened while keeping its hues.
 
 ## Layout
@@ -28,6 +34,7 @@ An elegant, fast LaTeX editor written in Rust with
 |---|---|
 | `crates/texoria` | GPUI app: window, editor, panels, themes |
 | `crates/tex-compile` | Engine discovery, background compile queue in isolated processes (debounce, cancellation) |
+| `crates/tex-git` | Git through the system `git` CLI: status, diffs, commit, sync, history, branches |
 | `crates/tex-log` | TeX log parser → diagnostics |
 | `crates/synctex` | `.synctex(.gz)` reader, forward and inverse search |
 | `crates/tex-syntax` | Tree-sitter grammar, highlight query, semantic index |

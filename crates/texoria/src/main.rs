@@ -2,6 +2,8 @@
 
 mod assets;
 mod atomic;
+mod diff_view;
+mod git_panel;
 mod latex;
 mod pdf_pane;
 mod settings;
@@ -31,6 +33,13 @@ actions!(
         ToggleLivePreview,
         ToggleSoftWrap,
         CloseTab,
+        ShowSourceControl,
+        Commit,
+        Fetch,
+        Pull,
+        Push,
+        NewBranch,
+        CloneRepository,
         Quit,
     ]
 );
@@ -52,6 +61,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-p", ToggleLivePreview, None),
         KeyBinding::new("alt-z", ToggleSoftWrap, None),
         KeyBinding::new("secondary-w", CloseTab, None),
+        KeyBinding::new("secondary-shift-g", ShowSourceControl, None),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
 }
@@ -62,6 +72,7 @@ fn set_menus(cx: &mut App) {
         Menu::new("File").items([
             MenuItem::action("Open…", Open),
             MenuItem::action("Save", Save),
+            MenuItem::action("Clone Repository…", CloneRepository),
             MenuItem::separator(),
             MenuItem::action("Close Tab", CloseTab),
         ]),
@@ -81,6 +92,17 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Fit Width", ZoomToFit),
             MenuItem::separator(),
             MenuItem::action("Light/Dark", ToggleTheme),
+        ]),
+        Menu::new("Git").items([
+            MenuItem::action("Source Control", ShowSourceControl),
+            MenuItem::separator(),
+            MenuItem::action("Commit", Commit),
+            MenuItem::action("Pull", Pull),
+            MenuItem::action("Push", Push),
+            MenuItem::action("Fetch", Fetch),
+            MenuItem::separator(),
+            MenuItem::action("New Branch…", NewBranch),
+            MenuItem::action("Clone Repository…", CloneRepository),
         ]),
     ]);
 }

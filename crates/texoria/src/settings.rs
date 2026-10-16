@@ -18,8 +18,14 @@ pub struct Settings {
     /// Stop a compile after this many seconds (0: never).
     pub compile_timeout_secs: u64,
     pub recent: Vec<PathBuf>,
-    /// Project directories whose `latexmkrc` may run.
+    /// Project directories whose `latexmkrc` and Git configuration may run.
     pub trusted_projects: Vec<PathBuf>,
+    /// Show diffs side by side instead of in one column.
+    pub diff_split: bool,
+    /// `git pull --rebase` instead of merging.
+    pub pull_rebase: bool,
+    /// Stop a fetch, pull or push after this many seconds (0: never).
+    pub git_timeout_secs: u64,
 }
 
 impl Default for Settings {
@@ -32,6 +38,9 @@ impl Default for Settings {
             compile_timeout_secs: 300,
             recent: Vec::new(),
             trusted_projects: Vec::new(),
+            diff_split: false,
+            pull_rebase: false,
+            git_timeout_secs: 120,
         }
     }
 }
@@ -66,6 +75,10 @@ impl Settings {
 
     pub fn compile_timeout(&self) -> Option<Duration> {
         (self.compile_timeout_secs > 0).then(|| Duration::from_secs(self.compile_timeout_secs))
+    }
+
+    pub fn git_timeout(&self) -> Option<Duration> {
+        (self.git_timeout_secs > 0).then(|| Duration::from_secs(self.git_timeout_secs))
     }
 
     pub fn is_trusted(&self, dir: &Path) -> bool {

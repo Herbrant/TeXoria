@@ -7,29 +7,36 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use gpui_kit::component::highlighter::{Diagnostic as EditorDiagnostic, DiagnosticSeverity};
-use gpui_kit::component::input::{Editor, EditorState, InputEvent, Position, RopeExt, TabSize};
+use gpui_kit::component::input::{
+    Editor, EditorState, Input, InputEvent, InputState, Position, RopeExt, TabSize,
+};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 use gpui_kit::component::{
-    ActiveTheme, Icon, Sizable, TitleBar,
+    ActiveTheme, Disableable as _, Icon, Sizable, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants},
     h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use tex_compile::{Compiler, Engine, Event as CompileEvent, Job, Severity, Status};
+use tex_git::{Cancel, Git};
 use tex_log::Diagnostic;
 use tex_project::{Project, ProjectOutlineItem};
 use tex_syntax::OutlineKind;
 
 use crate::assets::Glyph;
 use crate::atomic;
+use crate::diff_view::{DiffSource, DiffView, DiffViewEvent};
+use crate::git_panel::{self, GitOp, GitPanel, GitPanelEvent};
 use crate::latex::{self, CursorFixup, LatexCompletions};
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
 use crate::settings::Settings;
 use crate::theme::{self, ThemeExt};
 use crate::{
-    CancelTypeset, CloseTab, ForwardSearch, Open, Save, ToggleDiagnostics, ToggleLivePreview,
-    ToggleOutline, ToggleSoftWrap, ToggleTheme, Typeset, ZoomIn, ZoomOut, ZoomToFit,
+    CancelTypeset, CloneRepository, CloseTab, Commit, Fetch, ForwardSearch, NewBranch, Open, Pull,
+    Push, Save, ShowSourceControl, ToggleDiagnostics, ToggleLivePreview, ToggleOutline,
+    ToggleSoftWrap, ToggleTheme, Typeset, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -58,6 +65,12 @@ struct Buffer {
     _subscription: Subscription,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sidebar {
+    Outline,
+    SourceControl,
+}
+
 pub struct Workspace {
     settings: Settings,
     project: Arc<RwLock<Project>>,
@@ -71,7 +84,14 @@ pub struct Workspace {
     state: CompileState,
     diagnostics: Vec<Diagnostic>,
     outline: Vec<ProjectOutlineItem>,
-    show_outline: bool,
+    show_sidebar: bool,
+    sidebar: Sidebar,
+    git: Entity<GitPanel>,
+    /// The diff tab, shown instead of the editor while `diff_active`.
+    diff: Option<Entity<DiffView>>,
+    diff_active: bool,
+    /// A clone in progress (URL), started from the welcome screen.
+    cloning: Option<(SharedString, Cancel)>,
     show_diagnostics: bool,
     /// The project has a `latexmkrc` that is ignored until the user trusts it.
     untrusted_rc: bool,
@@ -82,6 +102,7 @@ pub struct Workspace {
     was_dark: bool,
     _live: Task<()>,
     _compile_events: Task<()>,
+    _diff_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -89,15 +110,30 @@ impl Workspace {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = Settings::load();
         let pdf = cx.new(|cx| PdfPane::new(pdfium_dirs(), cx));
-        let mut subscriptions = vec![cx.subscribe_in(
-            &pdf,
-            window,
-            |this, _, ev: &PdfPaneEvent, window, cx| match ev {
-                PdfPaneEvent::InverseSearch { file, line } => {
-                    this.reveal(file.clone(), line.saturating_sub(1), window, cx)
+        let git = cx.new(|cx| GitPanel::new(window, cx));
+        git.update(cx, |g, _| {
+            g.configure(settings.pull_rebase, settings.git_timeout())
+        });
+        let mut subscriptions = vec![
+            cx.subscribe_in(
+                &pdf,
+                window,
+                |this, _, ev: &PdfPaneEvent, window, cx| match ev {
+                    PdfPaneEvent::InverseSearch { file, line } => {
+                        this.reveal(file.clone(), line.saturating_sub(1), window, cx)
+                    }
+                },
+            ),
+            cx.subscribe_in(&git, window, Self::on_git_event),
+            // Coming back to the window: pick up what changed meanwhile
+            // (a `git pull` in a terminal, another editor).
+            cx.observe_window_activation(window, |this, window, cx| {
+                if window.is_window_active() {
+                    this.reload_from_disk(window, cx);
+                    this.git.update(cx, |g, cx| g.refresh(cx));
                 }
-            },
-        )];
+            }),
+        ];
         // Never lose edits made since the last (debounced) save.
         subscriptions.push(cx.on_app_quit(|this, cx| {
             this.save_all(cx);
@@ -134,7 +170,12 @@ impl Workspace {
             state: CompileState::Idle,
             diagnostics: Vec::new(),
             outline: Vec::new(),
-            show_outline: true,
+            show_sidebar: true,
+            sidebar: Sidebar::Outline,
+            git,
+            diff: None,
+            diff_active: false,
+            cloning: None,
             show_diagnostics: false,
             untrusted_rc: false,
             refused_close: false,
@@ -143,6 +184,7 @@ impl Workspace {
             was_dark: cx.theme_is_dark(),
             _live: Task::ready(()),
             _compile_events: Task::ready(()),
+            _diff_subscription: None,
             _subscriptions: subscriptions,
         };
         this.start_compiler(cx);
@@ -215,6 +257,8 @@ impl Workspace {
             }
             let job = self.job().expect("root is set");
             self.untrusted_rc = !job.allow_project_rc && job.has_project_rc();
+            self.close_diff(cx);
+            self.sync_git(cx);
             // Show a previous build right away, if any.
             if job.artifact("pdf").is_file() {
                 let synctex = Some(job.artifact("synctex.gz")).filter(|p| p.is_file());
@@ -233,6 +277,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
+        self.diff_active = false;
         if let Some(ix) = self.buffers.iter().position(|b| b.path == file) {
             self.active = ix;
             cx.notify();
@@ -421,6 +466,7 @@ impl Workspace {
 
     fn save_all(&mut self, cx: &mut Context<Self>) -> bool {
         let mut ok = true;
+        let mut wrote = false;
         for b in &mut self.buffers {
             if !b.dirty {
                 continue;
@@ -430,6 +476,7 @@ impl Workspace {
                 Ok(()) => {
                     b.saved = text;
                     b.dirty = false;
+                    wrote = true;
                 }
                 Err(e) => {
                     ok = false;
@@ -439,8 +486,371 @@ impl Workspace {
                 }
             }
         }
+        if wrote {
+            self.git.update(cx, |g, cx| g.refresh(cx));
+        }
         cx.notify();
         ok
+    }
+
+    /// Pick up files changed on disk behind our back (git checkout, pull,
+    /// another editor). Buffers with unsaved edits are left alone; tabs of
+    /// deleted files close.
+    fn reload_from_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut changed = false;
+        let mut ix = 0;
+        while ix < self.buffers.len() {
+            let b = &self.buffers[ix];
+            if b.dirty {
+                ix += 1;
+                continue;
+            }
+            if !b.path.exists() {
+                if self.buffers.len() > 1 {
+                    self.buffers.remove(ix);
+                    changed = true;
+                    continue;
+                }
+                ix += 1;
+                continue;
+            }
+            if let Some(text) = tex_project::read_regular(&b.path)
+                && text != b.saved
+            {
+                b.editor.clone().update(cx, |state, cx| {
+                    let cursor = state.cursor_position();
+                    state.set_value(text.clone(), window, cx);
+                    state.set_cursor_position(cursor, window, cx);
+                });
+                let b = &mut self.buffers[ix];
+                b.last_len = text.len();
+                b.saved = text;
+                changed = true;
+            }
+            ix += 1;
+        }
+        if changed {
+            self.active = self.active.min(self.buffers.len().saturating_sub(1));
+            self.reindex(cx);
+            self.apply_diagnostics(cx);
+            self.typeset(cx);
+        }
+    }
+
+    /// Point the Source Control panel at the current project.
+    fn sync_git(&mut self, cx: &mut Context<Self>) {
+        let dir = self
+            .root
+            .as_ref()
+            .and_then(|r| r.parent())
+            .map(Path::to_path_buf);
+        let trusted = dir.as_ref().is_some_and(|d| self.settings.is_trusted(d));
+        self.git.update(cx, |g, cx| g.set_project(dir, trusted, cx));
+    }
+
+    fn on_git_event(
+        &mut self,
+        _: &Entity<GitPanel>,
+        ev: &GitPanelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match ev {
+            GitPanelEvent::Request(op) => {
+                // git must see what is on screen.
+                if self.save_all(cx) {
+                    let op = op.clone();
+                    self.git.update(cx, |g, cx| g.execute(op, window, cx));
+                }
+            }
+            GitPanelEvent::OpenDiff(source) => self.open_diff(source.clone(), window, cx),
+            GitPanelEvent::WorktreeChanged => {
+                self.reload_from_disk(window, cx);
+                if let Some(d) = &self.diff {
+                    d.update(cx, |d, cx| d.reload(cx));
+                }
+            }
+            GitPanelEvent::StatusChanged => {
+                if let Some(d) = &self.diff {
+                    d.update(cx, |d, cx| d.reload(cx));
+                }
+                cx.notify();
+            }
+            GitPanelEvent::Trust => self.trust_project(cx),
+        }
+    }
+
+    // ── Diff tab ─────────────────────────────────────────────────────────
+
+    fn open_diff(&mut self, source: DiffSource, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_all(cx);
+        let Some(repo) = self.git.read(cx).repo().cloned() else {
+            return;
+        };
+        match &self.diff {
+            Some(d) => d.update(cx, |d, cx| d.show(repo, source, cx)),
+            None => {
+                let split = self.settings.diff_split;
+                let d = cx.new(|cx| DiffView::new(repo, source, split, cx));
+                self._diff_subscription = Some(cx.subscribe_in(&d, window, Self::on_diff_event));
+                self.diff = Some(d);
+            }
+        }
+        self.diff_active = true;
+        cx.notify();
+    }
+
+    fn close_diff(&mut self, cx: &mut Context<Self>) {
+        self.diff = None;
+        self.diff_active = false;
+        self._diff_subscription = None;
+        cx.notify();
+    }
+
+    fn on_diff_event(
+        &mut self,
+        _: &Entity<DiffView>,
+        ev: &DiffViewEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match ev {
+            DiffViewEvent::Restore { sha, path } => {
+                self.restore_version(sha.clone(), path.clone(), window, cx)
+            }
+            DiffViewEvent::Resolved { path, text } => {
+                self.save_resolution(path.clone(), text.clone(), window, cx)
+            }
+            DiffViewEvent::Open(file) => {
+                let file = std::fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+                self.activate_file(file, window, cx);
+            }
+            DiffViewEvent::SplitChanged(split) => {
+                self.settings.diff_split = *split;
+                self.settings.save();
+            }
+            DiffViewEvent::Close => self.close_diff(cx),
+        }
+    }
+
+    /// Write `contents` to a project file and show it in its open tab.
+    fn replace_file(
+        &mut self,
+        file: &Path,
+        contents: &[u8],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> std::io::Result<()> {
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        atomic::write(file, contents)?;
+        self.reload_from_disk(window, cx);
+        Ok(())
+    }
+
+    fn restore_version(
+        &mut self,
+        sha: String,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.git.read(cx).repo().cloned() else {
+            return;
+        };
+        // Unsaved edits would be overwritten without a trace.
+        if !self.save_all(cx) {
+            return;
+        }
+        let file = repo.abs_path(&path);
+        let short: String = sha.chars().take(7).collect();
+        cx.spawn_in(window, async move |this, cx| {
+            let contents = cx
+                .background_spawn(async move { repo.file_at(&sha, &path) })
+                .await;
+            this.update_in(cx, |this, window, cx| match contents {
+                Ok(bytes) => match this.replace_file(&file, &bytes, window, cx) {
+                    Ok(()) => {
+                        let name = file
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        window.push_notification(
+                            Notification::success(format!("{name} restored from {short}"))
+                                .title("Version restored"),
+                            cx,
+                        );
+                        this.git.update(cx, |g, cx| g.refresh(cx));
+                    }
+                    Err(e) => window.push_notification(
+                        Notification::error(format!("Cannot write {}: {e}", file.display())),
+                        cx,
+                    ),
+                },
+                Err(e) => git_panel::notify_error(window, cx, "Restore failed", &e),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn save_resolution(
+        &mut self,
+        path: String,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = self.git.read(cx).repo().cloned() else {
+            return;
+        };
+        if !self.save_all(cx) {
+            return;
+        }
+        let file = repo.abs_path(&path);
+        match self.replace_file(&file, text.as_bytes(), window, cx) {
+            Ok(()) => {
+                self.close_diff(cx);
+                self.git
+                    .update(cx, |g, cx| g.execute(GitOp::Stage(vec![path]), window, cx));
+            }
+            Err(e) => window.push_notification(
+                Notification::error(format!("Cannot write {}: {e}", file.display())),
+                cx,
+            ),
+        }
+    }
+
+    // ── Cloning ──────────────────────────────────────────────────────────
+
+    fn prompt_clone(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cloning.is_some() {
+            return;
+        }
+        let url = cx
+            .new(|cx| InputState::new(window, cx).placeholder("https://github.com/you/paper.git"));
+        let weak = cx.entity().downgrade();
+        let focus = url.focus_handle(cx);
+        let body = url.clone();
+        git_panel::open_form(
+            window,
+            cx,
+            "Clone Repository",
+            "Choose Folder…",
+            Some(focus),
+            move |_, cx| {
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(
+                                "The URL of a Git repository (GitHub, GitLab, Overleaf…). \
+                                 Next, pick the folder to put it in.",
+                            ),
+                    )
+                    .child(Input::new(&body))
+                    .into_any_element()
+            },
+            move |window, cx| {
+                let url = url.read(cx).value().trim().to_string();
+                if url.is_empty() {
+                    return false;
+                }
+                weak.update(cx, |this, cx| this.choose_clone_dir(url, window, cx))
+                    .ok();
+                true
+            },
+        );
+    }
+
+    fn choose_clone_dir(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = tex_git::clone_dir_name(&url) else {
+            window.push_notification(Notification::error("That is not a repository URL"), cx);
+            return;
+        };
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Clone Here".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(parent) = paths
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()
+                .and_then(|p| p.into_iter().next())
+            else {
+                return;
+            };
+            this.update_in(cx, |this, window, cx| {
+                this.clone_into(url, parent.join(name), window, cx)
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn clone_into(
+        &mut self,
+        url: String,
+        dest: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.cloning.is_some() {
+            return;
+        }
+        let cancel = Cancel::new();
+        self.cloning = Some((url.clone().into(), cancel.clone()));
+        let timeout = self.settings.git_timeout();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx
+                .background_spawn(async move {
+                    let git = Git::find()
+                        .ok_or_else(|| tex_git::Error::Invalid("Git is not installed".into()))?
+                        .network_timeout(timeout);
+                    git.clone_repo(&url, &dest, &cancel)
+                        .map(|repo| repo.root().to_path_buf())
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                this.cloning = None;
+                match result {
+                    Ok(dir) => {
+                        // We created it: its configuration is git's default.
+                        this.settings.trust(dir.clone());
+                        this.settings.save();
+                        this.open_path(dir, window, cx);
+                    }
+                    Err(tex_git::Error::Cancelled) => {}
+                    Err(e) => git_panel::notify_error(window, cx, "Clone failed", &e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn show_sidebar(&mut self, kind: Sidebar, cx: &mut Context<Self>) {
+        self.show_sidebar = true;
+        self.sidebar = kind;
+        cx.notify();
+    }
+
+    fn toggle_sidebar(&mut self, kind: Sidebar, cx: &mut Context<Self>) {
+        if self.show_sidebar && self.sidebar == kind {
+            self.show_sidebar = false;
+            cx.notify();
+        } else {
+            self.show_sidebar(kind, cx);
+        }
     }
 
     /// The compile job for the current root. The project's own latexmk rc
@@ -458,6 +868,7 @@ impl Workspace {
         self.settings.trust(job.work_dir().to_path_buf());
         self.settings.save();
         self.untrusted_rc = false;
+        self.sync_git(cx);
         self.typeset(cx);
     }
 
@@ -608,6 +1019,9 @@ impl Workspace {
     }
 
     fn close_tab(&mut self, cx: &mut Context<Self>) {
+        if self.diff_active {
+            return self.close_diff(cx);
+        }
         if self.buffers.len() <= 1 {
             return;
         }
@@ -645,6 +1059,8 @@ impl Workspace {
             .and_then(|r| r.parent())
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned().into());
+        let changes = self.git.read(cx).change_count();
+        let has_project = self.root.is_some();
 
         TitleBar::new().child(
             h_flex()
@@ -656,12 +1072,24 @@ impl Workspace {
                         .ghost()
                         .small()
                         .icon(Glyph::PanelLeft)
-                        .tooltip("Toggle outline")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.show_outline = !this.show_outline;
-                            cx.notify();
-                        })),
+                        .tooltip("Outline (⌘1)")
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.toggle_sidebar(Sidebar::Outline, cx)),
+                        ),
                 )
+                .when(has_project, |d| {
+                    d.child(
+                        Button::new("toggle-git")
+                            .ghost()
+                            .small()
+                            .icon(Glyph::Branch)
+                            .when(changes > 0, |b| b.label(changes.to_string()))
+                            .tooltip("Source control (⇧⌘G)")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.toggle_sidebar(Sidebar::SourceControl, cx)
+                            })),
+                    )
+                })
                 .child(
                     h_flex()
                         .flex_1()
@@ -892,6 +1320,8 @@ impl Workspace {
             .as_ref()
             .and_then(|r| r.parent())
             .map(Path::to_path_buf);
+        let diff_title: Option<SharedString> =
+            self.diff.as_ref().map(|d| d.read(cx).title().into());
         h_flex()
             .h(px(34.))
             .px_2()
@@ -906,7 +1336,7 @@ impl Workspace {
                     .unwrap_or(&b.path)
                     .to_string_lossy()
                     .into_owned();
-                let active = i == self.active;
+                let active = i == self.active && !self.diff_active;
                 h_flex()
                     .id(("tab", i))
                     .gap_1p5()
@@ -931,9 +1361,52 @@ impl Workspace {
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.active = i;
+                        this.diff_active = false;
                         cx.notify();
                     }))
             }))
+            .when_some(diff_title, |d, title| {
+                let active = self.diff_active;
+                d.child(
+                    h_flex()
+                        .id("tab-diff")
+                        .gap_1p5()
+                        .pl_3()
+                        .pr_1()
+                        .h(px(26.))
+                        .rounded(theme.radius)
+                        .text_xs()
+                        .italic()
+                        .cursor_pointer()
+                        .when(active, |d| {
+                            d.bg(theme.tab_active)
+                                .text_color(theme.tab_active_foreground)
+                                .shadow_xs()
+                        })
+                        .when(!active, |d| {
+                            d.text_color(theme.tab_foreground)
+                                .hover(|s| s.bg(theme.accent))
+                        })
+                        .child(Icon::new(Glyph::Branch).xsmall())
+                        .child(title)
+                        .child(
+                            div()
+                                .id("tab-diff-close")
+                                .p_0p5()
+                                .rounded(theme.radius)
+                                .hover(|s| s.bg(theme.muted))
+                                .child(Icon::new(Glyph::Close).xsmall())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.close_diff(cx);
+                                })),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.diff_active = true;
+                            cx.notify();
+                        })),
+                )
+            })
     }
 
     fn render_trust_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1089,6 +1562,25 @@ impl Workspace {
             .unwrap_or_else(|| "No engine".into())
             .into();
         let live = self.settings.live_preview;
+        let git = self.git.read(cx);
+        let branch: Option<SharedString> = git.repo().map(|_| {
+            let st = git.status();
+            let mut label = st
+                .branch
+                .clone()
+                .or_else(|| st.oid.as_ref().map(|o| o.chars().take(7).collect()))
+                .unwrap_or_else(|| "No branch".into());
+            if !st.is_clean() {
+                label.push('*');
+            }
+            if st.ahead > 0 {
+                label.push_str(&format!(" ↑{}", st.ahead));
+            }
+            if st.behind > 0 {
+                label.push_str(&format!(" ↓{}", st.behind));
+            }
+            label.into()
+        });
 
         h_flex()
             .h(px(26.))
@@ -1124,6 +1616,20 @@ impl Workspace {
             )
             .when_some(cursor, |el, c| {
                 el.child(format!("Ln {}, Col {}", c.line + 1, c.character + 1))
+            })
+            .when_some(branch, |el, branch| {
+                el.child(
+                    h_flex()
+                        .id("git-status")
+                        .gap_1()
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(theme.foreground))
+                        .child(Icon::new(Glyph::Branch).xsmall())
+                        .child(branch)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.show_sidebar(Sidebar::SourceControl, cx)
+                        })),
+                )
             })
             .child(div().flex_1())
             .child(
@@ -1221,12 +1727,54 @@ impl Workspace {
                     ),
             )
             .child(
-                Button::new("open")
-                    .primary()
-                    .icon(Glyph::Open)
-                    .label("Open a document…")
-                    .on_click(cx.listener(|this, _, window, cx| this.prompt_open(window, cx))),
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("open")
+                            .primary()
+                            .icon(Glyph::Open)
+                            .label("Open a document…")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.prompt_open(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("clone")
+                            .outline()
+                            .icon(Glyph::Branch)
+                            .label("Clone a repository…")
+                            .disabled(self.cloning.is_some())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.prompt_clone(window, cx)),
+                            ),
+                    ),
             )
+            .when_some(self.cloning.clone(), |d, (url, cancel)| {
+                d.child(
+                    h_flex()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(Icon::new(Glyph::Spinner).xsmall().with_animation(
+                            "clone-spin",
+                            Animation::new(Duration::from_millis(900)).repeat(),
+                            |icon, t| icon.transform(Transformation::rotate(percentage(t))),
+                        ))
+                        .child(
+                            div()
+                                .max_w(px(360.))
+                                .truncate()
+                                .child(format!("Cloning {url}…")),
+                        )
+                        .child(
+                            Button::new("clone-cancel")
+                                .ghost()
+                                .xsmall()
+                                .label("Cancel")
+                                .on_click(move |_, _, _| cancel.cancel()),
+                        ),
+                )
+            })
             .child(v_flex().gap_0p5().children(recent))
     }
 }
@@ -1245,33 +1793,39 @@ impl Render for Workspace {
         let body = if self.buffers.is_empty() {
             self.render_welcome(cx).into_any_element()
         } else {
-            let editor = self.buffers[self.active].editor.clone();
+            let center = match self.diff.clone().filter(|_| self.diff_active) {
+                Some(diff) => diff.into_any_element(),
+                None => Editor::new(&self.buffers[self.active].editor)
+                    .bordered(false)
+                    .h(relative(1.))
+                    .font_family(theme.mono_font_family.clone())
+                    .text_size(px(14.5))
+                    .line_height(relative(1.6))
+                    .into_any_element(),
+            };
             let editor_column = v_flex()
                 .size_full()
                 .bg(theme.background)
                 .when(self.untrusted_rc, |d| d.child(self.render_trust_banner(cx)))
-                .when(self.buffers.len() > 1, |d| d.child(self.render_tabs(cx)))
-                .child(
-                    div().flex_1().min_h_0().child(
-                        Editor::new(&editor)
-                            .bordered(false)
-                            .h(relative(1.))
-                            .font_family(theme.mono_font_family.clone())
-                            .text_size(px(14.5))
-                            .line_height(relative(1.6)),
-                    ),
-                )
+                .when(self.buffers.len() > 1 || self.diff.is_some(), |d| {
+                    d.child(self.render_tabs(cx))
+                })
+                .child(div().flex_1().min_h_0().child(center))
                 .when(self.show_diagnostics, |d| {
                     d.child(self.render_diagnostics(cx))
                 });
+            let sidebar = match self.sidebar {
+                Sidebar::Outline => self.render_outline(cx).into_any_element(),
+                Sidebar::SourceControl => self.git.clone().into_any_element(),
+            };
 
             h_resizable("main")
                 .child(
                     resizable_panel()
-                        .size(px(250.))
-                        .size_range(px(160.)..px(420.))
-                        .visible(self.show_outline)
-                        .child(self.render_outline(cx)),
+                        .size(px(260.))
+                        .size_range(px(160.)..px(460.))
+                        .visible(self.show_sidebar)
+                        .child(sidebar),
                 )
                 .child(resizable_panel().child(editor_column))
                 .child(
@@ -1315,9 +1869,29 @@ impl Render for Workspace {
                 this.pdf.update(cx, |p, cx| p.zoom_to_fit(cx))
             }))
             .on_action(cx.listener(|this, _: &ToggleOutline, _, cx| {
-                this.show_outline = !this.show_outline;
-                cx.notify();
+                this.toggle_sidebar(Sidebar::Outline, cx)
             }))
+            .on_action(cx.listener(|this, _: &ShowSourceControl, window, cx| {
+                this.show_sidebar(Sidebar::SourceControl, cx);
+                this.git.update(cx, |g, cx| g.focus_message(window, cx));
+            }))
+            .on_action(cx.listener(|this, _: &Commit, window, cx| {
+                this.show_sidebar(Sidebar::SourceControl, cx);
+                this.git.update(cx, |g, cx| g.commit(window, cx));
+            }))
+            .on_action(
+                cx.listener(|this, _: &Fetch, _, cx| this.git.update(cx, |g, cx| g.fetch(cx))),
+            )
+            .on_action(cx.listener(|this, _: &Pull, _, cx| this.git.update(cx, |g, cx| g.pull(cx))))
+            .on_action(cx.listener(|this, _: &Push, window, cx| {
+                this.git.update(cx, |g, cx| g.push(window, cx))
+            }))
+            .on_action(cx.listener(|this, _: &NewBranch, window, cx| {
+                this.git.update(cx, |g, cx| g.prompt_new_branch(window, cx))
+            }))
+            .on_action(
+                cx.listener(|this, _: &CloneRepository, window, cx| this.prompt_clone(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &ToggleDiagnostics, _, cx| {
                 this.show_diagnostics = !this.show_diagnostics;
                 cx.notify();
