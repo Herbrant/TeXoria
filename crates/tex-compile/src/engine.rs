@@ -37,6 +37,9 @@ pub struct Job {
     pub root_file: PathBuf,
     /// Directory for all build artifacts (created if missing).
     pub out_dir: PathBuf,
+    /// Let latexmk read the project's own `latexmkrc` / `.latexmkrc`. These
+    /// are Perl scripts, so they are only honored for trusted projects.
+    pub allow_project_rc: bool,
 }
 
 impl Job {
@@ -48,7 +51,18 @@ impl Job {
             .unwrap_or(Path::new("."))
             .join(".texoria")
             .join("build");
-        Job { root_file, out_dir }
+        Job {
+            root_file,
+            out_dir,
+            allow_project_rc: false,
+        }
+    }
+
+    /// Whether the project ships a latexmk rc file that latexmk would run.
+    pub fn has_project_rc(&self) -> bool {
+        PROJECT_RC_FILES
+            .iter()
+            .any(|name| self.work_dir().join(name).is_file())
     }
 
     pub fn stem(&self) -> String {
@@ -99,10 +113,19 @@ impl Engine {
     }
 
     pub fn command(&self, job: &Job) -> Command {
-        let file = job.root_file.file_name().unwrap_or_default();
+        // `./name`, so a file called `-pdflatex=...tex` is not read as an option.
+        let file = Path::new(".").join(job.root_file.file_name().unwrap_or_default());
         let mut cmd = match &self.kind {
             EngineKind::Latexmk { latexmk, flavor } => {
                 let mut c = Command::new(latexmk);
+                if !job.allow_project_rc {
+                    // `-norc` also skips the system and user rc files, which
+                    // are the user's own configuration: read those explicitly.
+                    c.arg("-norc");
+                    for rc in latexmk_rc_files() {
+                        c.arg("-r").arg(rc);
+                    }
+                }
                 c.arg(flavor.latexmk_flag())
                     .args(["-interaction=nonstopmode", "-file-line-error", "-synctex=1"])
                     .arg(format!("-outdir={}", job.out_dir.display()))
@@ -137,6 +160,40 @@ impl Engine {
     }
 }
 
+/// Rc files latexmk reads from the directory it runs in.
+const PROJECT_RC_FILES: [&str; 2] = ["latexmkrc", ".latexmkrc"];
+
+/// The system and user rc files latexmk would read on its own, in its order.
+fn latexmk_rc_files() -> Vec<PathBuf> {
+    let env_path = |k: &str| {
+        std::env::var_os(k)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    let mut files = Vec::new();
+
+    let system = match env_path("LATEXMKRCSYS") {
+        Some(p) => vec![p],
+        None if cfg!(windows) => vec![PathBuf::from("C:/latexmk/LatexMk")],
+        None => [
+            "/opt/local/share/latexmk/LatexMk",
+            "/usr/local/share/latexmk/LatexMk",
+            "/usr/local/lib/latexmk/LatexMk",
+        ]
+        .map(PathBuf::from)
+        .to_vec(),
+    };
+    files.extend(system.into_iter().find(|p| p.is_file()));
+
+    let home = env_path("HOME").or_else(|| env_path("USERPROFILE"));
+    let xdg = env_path("XDG_CONFIG_HOME")
+        .or_else(|| home.as_ref().map(|h| h.join(".config")))
+        .map(|d| d.join("latexmk").join("latexmkrc"));
+    let mut user = xdg.into_iter().chain(home.map(|h| h.join(".latexmkrc")));
+    files.extend(user.find(|p| p.is_file()));
+    files
+}
+
 fn prepend_path(dirs: &[PathBuf]) -> OsString {
     let current = std::env::var_os("PATH").unwrap_or_default();
     let all = dirs.iter().cloned().chain(std::env::split_paths(&current));
@@ -161,8 +218,9 @@ pub fn detect(bundled_dir: Option<&Path>) -> Vec<Engine> {
         }
     }
 
-    let mut tectonic_dirs: Vec<PathBuf> = bundled_dir.into_iter().map(Path::to_path_buf).collect();
-    tectonic_dirs.extend(bundled_tectonic_dirs());
+    // The copy shipped with the app wins over the caller's extra dir.
+    let mut tectonic_dirs = bundled_tectonic_dirs();
+    tectonic_dirs.extend(bundled_dir.map(Path::to_path_buf));
     if let Some((binary, _)) = find_tool("tectonic", &tectonic_dirs) {
         engines.push(Engine {
             kind: EngineKind::Tectonic { binary },
@@ -295,24 +353,80 @@ mod tests {
 
     #[test]
     fn latexmk_command_line() {
-        let engine = Engine {
-            kind: EngineKind::Latexmk {
-                latexmk: "latexmk".into(),
-                flavor: Flavor::XeLatex,
-            },
-            extra_path: vec![],
-        };
+        let engine = latexmk(Flavor::XeLatex);
         let job = Job::for_root("/p/main.tex");
         let cmd = engine.command(&job);
-        let args: Vec<_> = cmd
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(args[0], "-xelatex");
+        let args = args_of(&cmd);
+        assert!(args.contains(&"-xelatex".to_string()));
         assert!(args.contains(&"-synctex=1".to_string()));
         // `job_paths` checks the directory itself; joining uses `\` on Windows.
         assert!(args.contains(&format!("-outdir={}", job.out_dir.display())));
-        assert_eq!(args.last().unwrap(), "main.tex");
+        assert_eq!(
+            Path::new(args.last().unwrap()),
+            Path::new(".").join("main.tex")
+        );
         assert_eq!(cmd.get_current_dir(), Some(Path::new("/p")));
+        // Untrusted by default: project rc files are not read.
+        assert_eq!(args[0], "-norc");
+        let rc_args = args
+            .iter()
+            .position(|a| a == "-xelatex")
+            .expect("flavor flag");
+        assert!(
+            args[1..rc_args]
+                .chunks(2)
+                .all(|w| w[0] == "-r" && Path::new(&w[1]).is_file()),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn trusted_job_reads_project_rc() {
+        let engine = latexmk(Flavor::PdfLatex);
+        let mut job = Job::for_root("/p/main.tex");
+        job.allow_project_rc = true;
+        let args = args_of(&engine.command(&job));
+        assert_eq!(args[0], "-pdf");
+        assert!(!args.iter().any(|a| a == "-norc" || a == "-r"));
+    }
+
+    #[test]
+    fn file_name_cannot_inject_options() {
+        let job = Job::for_root("/p/-pdflatex=touch pwned;.tex");
+        let tectonic = Engine {
+            kind: EngineKind::Tectonic {
+                binary: "tectonic".into(),
+            },
+            extra_path: vec![],
+        };
+        for engine in [latexmk(Flavor::PdfLatex), tectonic] {
+            let args = args_of(&engine.command(&job));
+            assert!(args.iter().all(|a| !a.starts_with("-pdflatex")), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn detects_project_rc() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = Job::for_root(dir.path().join("main.tex"));
+        assert!(!job.has_project_rc());
+        std::fs::write(dir.path().join(".latexmkrc"), "").unwrap();
+        assert!(job.has_project_rc());
+    }
+
+    fn latexmk(flavor: Flavor) -> Engine {
+        Engine {
+            kind: EngineKind::Latexmk {
+                latexmk: "latexmk".into(),
+                flavor,
+            },
+            extra_path: vec![],
+        }
+    }
+
+    fn args_of(cmd: &Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
     }
 }
