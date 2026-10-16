@@ -121,7 +121,7 @@ impl Index {
             env_stack: Vec::new(),
             section: None,
         };
-        ctx.visit(tree.root_node(), &mut index);
+        ctx.walk(tree.root_node(), &mut index);
         index
     }
 
@@ -172,7 +172,34 @@ impl<'a> Walk<'a> {
         out
     }
 
-    fn visit(&mut self, node: Node, index: &mut Index) {
+    /// Pre-order traversal. Iterative: the tree is as deep as the document's
+    /// nesting, and recursing could overflow the stack on pathological input.
+    fn walk(&mut self, root: Node, index: &mut Index) {
+        let mut cursor = root.walk();
+        // For each node on the current path: did entering it push an env?
+        let mut pushed: Vec<bool> = Vec::new();
+        loop {
+            pushed.push(self.enter(cursor.node(), index));
+            if cursor.goto_first_child() {
+                continue;
+            }
+            loop {
+                if pushed.pop() == Some(true) {
+                    self.env_stack.pop();
+                }
+                if cursor.goto_next_sibling() {
+                    break;
+                }
+                if !cursor.goto_parent() {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Record what `node` contributes; returns whether it pushed onto
+    /// `env_stack` (popped once its subtree is done).
+    fn enter(&mut self, node: Node, index: &mut Index) -> bool {
         let kind = node.kind();
         let mut pushed_env = false;
 
@@ -330,14 +357,7 @@ impl<'a> Walk<'a> {
             }
             _ => {}
         }
-
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            self.visit(child, index);
-        }
-        if pushed_env {
-            self.env_stack.pop();
-        }
+        pushed_env
     }
 }
 
@@ -446,6 +466,19 @@ See \ref{eq:e} and \cite{knuth, lamport}.
                 (&IncludeKind::Bib, "refs")
             ]
         );
+    }
+
+    #[test]
+    fn deep_nesting_does_not_overflow() {
+        let depth = 200_000;
+        let doc = format!(
+            "\\section{{A}}{}{}\\label{{x}}",
+            "{".repeat(depth),
+            "}".repeat(depth)
+        );
+        let idx = Index::from_text(&doc);
+        assert_eq!(idx.outline.len(), 1);
+        assert_eq!(idx.labels[0].name, "x");
     }
 
     #[test]
