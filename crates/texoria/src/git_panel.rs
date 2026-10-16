@@ -701,7 +701,7 @@ impl GitPanel {
         match result {
             Ok(Outcome::Initialized(repo)) => {
                 self.git = Some(Some(repo.git().clone()));
-                self.state = RepoState::Ready(repo);
+                self.state = RepoState::Ready(*repo);
                 self.history_loaded = false;
                 cx.emit(GitPanelEvent::Trust);
                 window.push_notification(Notification::success("Repository created"), cx);
@@ -1912,7 +1912,7 @@ struct OpContext {
 
 enum Outcome {
     Done,
-    Initialized(Repo),
+    Initialized(Box<Repo>),
     Synced(SyncOutcome),
 }
 
@@ -1926,7 +1926,7 @@ fn run_op(op: GitOp, ctx: OpContext) -> tex_git::Result<Outcome> {
         let dir = ctx
             .dir
             .ok_or_else(|| Error::Invalid("No project is open".into()))?;
-        return Ok(Outcome::Initialized(git.init(&dir)?));
+        return Ok(Outcome::Initialized(Box::new(git.init(&dir)?)));
     }
     let repo = ctx
         .repo
