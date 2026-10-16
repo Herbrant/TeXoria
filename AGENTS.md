@@ -80,19 +80,26 @@ texoria ─┬─ tex-compile ── tex-log
   new edits (only by explicit `cancel`, an engine change or the timeout). Build artifacts always
   go to `<root dir>/.texoria/build` (`Job::for_root`), and the log is parsed with `tex-log` into
   diagnostics. The root file is passed as `./name` (a name starting with `-` must not become an
-  option), and unless `Job::allow_project_rc` is set (the user trusted the project, see
-  `Settings::trusted_projects`) latexmk runs with `-norc` plus `-r` for the system/user rc files,
+  option), and unless `Job::allow_project_rc` is set (the user allowed it, see
+  `Settings::rc_allowed`) latexmk runs with `-norc` plus `-r` for the system/user rc files,
   because a project's `latexmkrc` is arbitrary Perl. The scheduler also writes
   `.texoria/.gitignore` (`*`) so build artifacts never show up in Git.
 - **tex-git**: shells out to the user's `git` (keeps credential helpers, ssh-agent, signing and
   hooks working) instead of a library. Every command runs without a terminal
   (`GIT_TERMINAL_PROMPT=0`, a new session on Unix), with `GIT_LITERAL_PATHSPECS=1` and English
-  messages (errors are classified by text into `Error::{NoIdentity, Rejected, Auth, …}`);
-  network operations have a timeout and a `Cancel` token. A repository's own config can run
-  programs even on `git status` (`core.fsmonitor`, filters), so the app only uses a `Repo` for
-  trusted projects. `Git::find` is lazy (on macOS `/usr/bin/git` is skipped without the Command
-  Line Tools, whose stub would pop up an installer). Integration tests in `tests/repo.rs` use temp
-  repos with `GIT_CONFIG_GLOBAL` pointing to a temp file and skip if git is missing.
+  messages (errors are classified by text into `Error::{NoIdentity, Rejected, Auth, Unreachable,
+  …}`); network operations have a timeout and a `Cancel` token. `Git::credential` gives network
+  commands a username/password for one URL prefix through an inline `credential.<url>.helper`
+  that reads them from the environment (never the command line, a URL or `.git/config`), after
+  clearing the user's helpers for that URL only. `overleaf.rs` parses Overleaf/Server Pro
+  project and remote URLs; `Repo::sync` is commit-all + `pull --rebase` + push. A repository's
+  own config can run programs even on `git status` (`core.fsmonitor`, filters), so the app only
+  uses a `Repo` for trusted projects. Trust is split in `Settings`: `trusted_projects` lets Git
+  run (a directory and its subdirectories), `rc_allowed` lets a directory's `latexmkrc` run; a
+  clone only gets the first. `Git::find` is lazy (on macOS `/usr/bin/git` is skipped without the
+  Command Line Tools, whose stub would pop up an installer). Integration tests in
+  `tests/repo.rs` use temp repos with `GIT_CONFIG_GLOBAL` pointing to a temp file and skip if git
+  is missing.
 - **texoria** (`workspace.rs` is the main window: outline | editor tabs | PDF pane):
   - `git_panel.rs` is the Source Control sidebar (alternates with the outline). Mutating
     operations are emitted as `GitPanelEvent::Request(GitOp)`; the workspace saves dirty buffers
@@ -100,6 +107,10 @@ texoria ─┬─ tex-compile ── tex-log
     Operations that rewrite files (pull, switch, discard, abort) trigger
     `Workspace::reload_from_disk`, which also runs on window activation: clean buffers whose file
     changed are reloaded, tabs of deleted files close.
+  - `overleaf.rs` keeps Overleaf tokens in the system keychain through GPUI's
+    `{read,write,delete}_credentials` (keyed by server URL, cached in a global, memory-only if
+    the keychain fails). The Git panel detects an Overleaf remote on refresh, passes the token as
+    a `Credential`, offers `GitOp::Sync`, and asks for a new token on `Error::Auth`.
   - `diff_view.rs` is a single "preview" diff tab built on `gpui_kit::component::diff`
     (`DiffFile::parse` of git's patch, `parse_conflicts` for merge conflicts). It does not support
     combined diffs, so commits are shown against their first parent. The gpui-kit editor has no

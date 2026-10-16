@@ -64,13 +64,16 @@ no TeX distribution installed, and uses the one you already have when there is o
   resolve merge conflicts, and clone from GitHub, GitLab or Overleaf.
 - **Your Git, your setup**: TeXoria drives the `git` already on your system, so credential
   helpers, SSH keys, commit signing and hooks keep working.
+- **Overleaf, offline**: open an Overleaf project, work on it without a connection, and bring
+  both sides up to date with one *Sync* (see [Overleaf](#overleaf)).
 
 ### Design
 
 - **Paper** and **Ink**: a warm light theme and a dark one. In dark mode the PDF is darkened
   while keeping its colors.
 - **Safe with untrusted projects**: a project's `latexmkrc` and Git configuration can run
-  arbitrary programs, so both are ignored until you choose *Trust Project*.
+  arbitrary programs, so each is ignored until you allow it. A project you clone is trusted
+  for Git, but its `latexmkrc` still asks first.
 
 ## Install
 
@@ -127,6 +130,27 @@ texoria path/to/thesis/          # or path/to/document.tex
 Build output goes to a `.texoria/build` directory next to the root file, which is ignored by Git
 automatically, so your project stays clean.
 
+### Overleaf
+
+TeXoria works with Overleaf through its
+[Git integration](https://docs.overleaf.com/integrations-and-add-ons/git-integration-and-github-synchronization/git-integration),
+a premium feature: the project's owner needs a paid plan.
+
+1. Choose *Open from Overleaf…* and paste the project's address from your browser
+   (`https://www.overleaf.com/project/…`).
+2. Paste an authentication token, created in Overleaf's *Account Settings* under *Git
+   Integration*. TeXoria keeps it in the system keychain; tokens expire after a year, and
+   TeXoria asks for a new one when Overleaf rejects it.
+3. Pick where to put the project.
+
+Edit offline as usual. *Sync* in the Source Control panel commits your changes (as "Update from
+TeXoria"), pulls what changed on Overleaf and pushes; you can also commit with your own messages
+and Sync afterwards. Overleaf has no branches or tags, and its comments and tracked changes do not
+travel through Git. The compiler and main document chosen on Overleaf are not part of the project
+either: pick them in TeXoria.
+
+For Overleaf Server Pro, add your instance to `overleaf_servers`.
+
 ## Configuration
 
 Settings are stored as TOML in `settings.toml`:
@@ -146,6 +170,7 @@ Settings are stored as TOML in `settings.toml`:
 | `diff_split` | `false` | Show diffs side by side |
 | `pull_rebase` | `false` | Pull with `--rebase` instead of merging |
 | `git_timeout_secs` | `120` | Stop a fetch, pull or push after this long (`0`: never) |
+| `overleaf_servers` | `[]` | Overleaf Server Pro instances, e.g. `["https://latex.example.org"]` |
 
 ## Building from source
 
