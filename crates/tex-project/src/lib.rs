@@ -326,7 +326,7 @@ mod tests {
             vec![
                 "Introduction",
                 "Methods",
-                "A placeholder.",
+                "An example plot.",
                 "Results",
                 "Discussion"
             ]
@@ -338,7 +338,7 @@ mod tests {
             labels,
             vec![
                 "eq:euler",
-                "fig:placeholder",
+                "fig:example",
                 "sec:intro",
                 "sec:methods",
                 "sec:results"

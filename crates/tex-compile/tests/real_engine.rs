@@ -75,10 +75,6 @@ fn compile_sample(engine: tex_compile::Engine) {
     assert_eq!(out.status, Status::Success, "{:#?}", out.diagnostics);
     assert!(out.pdf.is_some());
     assert!(out.synctex.is_some());
-    // The sample references a missing label on purpose.
-    assert!(
-        out.diagnostics
-            .iter()
-            .any(|d| d.message.contains("sec:missing"))
-    );
+    // The sample is meant to be clean: it doubles as the README screenshot.
+    assert!(out.diagnostics.is_empty(), "{:#?}", out.diagnostics);
 }

@@ -3,6 +3,10 @@
 An elegant, fast LaTeX editor written in Rust with
 [GPUI](https://www.gpui.rs) (Zed's GPU-accelerated UI framework) for macOS, Windows and Linux.
 
+| Paper | Ink |
+|---|---|
+| ![TeXoria with the Paper theme](assets/screenshot-paper.png) | ![TeXoria with the Ink theme](assets/screenshot-ink.png) |
+
 - **Live preview**: the document recompiles as you type, without blocking the UI.
   The new PDF replaces the old one only once it is rasterized, so the preview never flashes.
 - **Two-way SyncTeX**: ⌘J (Ctrl+J) jumps from the cursor to the PDF; ⌘-click or
