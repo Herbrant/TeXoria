@@ -252,7 +252,10 @@ pub fn complete(text: &str, offset: usize, project: Option<&Project>, indent: &s
         }
         Context::End { prefix } => {
             let replace = prefix.start..offset + closing as usize;
-            if let Some(env) = innermost_open_env(&text[..prefix.start.saturating_sub(5)]) {
+            // Everything before this `\end` (an offset found by search, so
+            // always on a char boundary).
+            let before = text[..prefix.start].rfind("\\end").unwrap_or(0);
+            if let Some(env) = innermost_open_env(&text[..before]) {
                 let insert = format!("{env}}}");
                 let cursor = insert.len();
                 candidates.push((
@@ -519,6 +522,10 @@ mod tests {
         let items = complete(&t, o, None, "  ");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].insert, "b}");
+
+        // Multi-byte text between `\end` and `{` must not split a char.
+        let (t, o) = at("\\begin{a}\\end\u{a0}\u{3000}{|");
+        assert_eq!(complete(&t, o, None, "  ")[0].insert, "a}");
     }
 
     #[test]
