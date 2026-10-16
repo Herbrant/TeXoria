@@ -7,7 +7,7 @@ pkgrel=1
 pkgdesc='An elegant, fast LaTeX editor'
 arch=('x86_64' 'aarch64')
 url='https://github.com/Herbrant/TeXoria'
-license=('Apache-2.0')
+license=('MIT')
 depends=('glibc' 'gcc-libs' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'fontconfig' 'freetype2'
   'wayland' 'vulkan-icd-loader' 'hicolor-icon-theme')
 optdepends=('git: source control'

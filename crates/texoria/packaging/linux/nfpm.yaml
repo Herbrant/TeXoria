@@ -14,7 +14,7 @@ description: |
   Uses TeX Live through latexmk when installed, otherwise the bundled Tectonic.
 vendor: TeXoria
 homepage: https://github.com/Herbrant/TeXoria
-license: Apache-2.0
+license: MIT
 
 contents:
   - src: target/stage/root/usr/bin/texoria
