@@ -59,7 +59,12 @@ pub(crate) fn run(mut cmd: Command, opts: Options) -> Result<Output, Error> {
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
     isolate(&mut cmd);
-    log::debug!("{cmd:?}");
+    // Not `{cmd:?}`: it lists the environment, credentials included.
+    log::debug!(
+        "{} {:?}",
+        cmd.get_program().to_string_lossy(),
+        cmd.get_args().collect::<Vec<_>>()
+    );
     let mut child = cmd.spawn().map_err(Error::Spawn)?;
 
     // Pipes are drained on their own threads: a full pipe would block git.

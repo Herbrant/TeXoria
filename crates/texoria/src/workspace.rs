@@ -825,12 +825,18 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
+                    let overleaf = credential.is_some();
                     let git = Git::find()
                         .ok_or_else(|| tex_git::Error::Invalid("Git is not installed".into()))?
                         .network_timeout(timeout)
                         .credential(credential);
-                    git.clone_repo(&url, &dest, &cancel)
-                        .map(|repo| repo.root().to_path_buf())
+                    let repo = git.clone_repo(&url, &dest, &cancel)?;
+                    // Overleaf compiles on its side: local build files must not
+                    // reach the collaborators.
+                    if overleaf && let Err(e) = repo.exclude_build_artifacts() {
+                        log::warn!("{e}");
+                    }
+                    Ok(repo.root().to_path_buf())
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
@@ -841,15 +847,19 @@ impl Workspace {
                         if let Some(c) = &credential {
                             overleaf::save_token(&c.url, &c.password, window, cx);
                         }
-                        // We created it: its configuration is git's default. Its
-                        // latexmkrc comes from the remote, so it still needs consent.
-                        this.settings.trust(dir.clone());
-                        this.settings.save();
-                        this.open_path(dir, window, cx);
+                        this.open_path(dir.clone(), window, cx);
+                        // We created it, so its configuration is git's default; its
+                        // latexmkrc comes from the remote and still needs consent. A
+                        // `%!TEX root` may point elsewhere: that is not ours to trust.
+                        let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
+                        if this.root.as_ref().is_some_and(|r| r.starts_with(&dir)) {
+                            this.trust_git(cx);
+                        }
                     }
                     Err(tex_git::Error::Cancelled) => {}
                     Err(tex_git::Error::Auth { .. }) if let Some(c) = credential => {
-                        overleaf::forget_token(&c.url, cx);
+                        // Kept until replaced: the token may be fine, and only this
+                        // project out of reach.
                         let weak = cx.entity().downgrade();
                         let server = c.url.clone();
                         overleaf::prompt_token(

@@ -179,6 +179,8 @@ pub struct GitPanel {
     overleaf: Option<String>,
     /// The token for `overleaf`, once read from the keychain.
     credential: Option<Credential>,
+    /// `credential` was just typed in: saved once Overleaf accepts it.
+    credential_unsaved: bool,
     overleaf_servers: Vec<String>,
     pull_rebase: bool,
     timeout: Option<Duration>,
@@ -227,6 +229,7 @@ impl GitPanel {
             pending: None,
             overleaf: None,
             credential: None,
+            credential_unsaved: false,
             overleaf_servers: Vec::new(),
             pull_rebase: false,
             timeout: None,
@@ -286,6 +289,7 @@ impl GitPanel {
         self.error = None;
         self.overleaf = None;
         self.credential = None;
+        self.credential_unsaved = false;
         self.generation += 1;
         let generation = self.generation;
         cx.notify();
@@ -402,6 +406,7 @@ impl GitPanel {
         }
         self.overleaf = server.clone();
         self.credential = None;
+        self.credential_unsaved = false;
         let Some(server) = server else {
             return;
         };
@@ -424,11 +429,14 @@ impl GitPanel {
         if self.overleaf.is_none() {
             return Ok(());
         }
-        let on_overleaf = self.status.upstream.as_deref().is_some_and(|u| {
-            u.rsplit_once('/')
-                .is_some_and(|(_, b)| b == "main" || b == "master")
+        let tracked = main_remote(&self.status, &self.remotes).and_then(|remote| {
+            self.status
+                .upstream
+                .as_deref()?
+                .strip_prefix(remote)?
+                .strip_prefix('/')
         });
-        if on_overleaf {
+        if matches!(tracked, Some("main" | "master")) {
             Ok(())
         } else {
             Err("Overleaf projects have a single branch: switch back to it to sync.")
@@ -445,31 +453,33 @@ impl GitPanel {
         }
     }
 
-    /// Ask for a new token, then retry `op` with it.
+    /// Ask for a new token, then retry `op` with it. The old one stays in
+    /// the keychain until the new one works: Overleaf may have refused this
+    /// project only.
     fn prompt_overleaf_token(&mut self, op: GitOp, window: &mut Window, cx: &mut Context<Self>) {
         let Some(server) = self.overleaf.clone() else {
             return;
         };
-        let reason = if let Some(old) = self.credential.take() {
-            overleaf::forget_token(&old.url, cx);
+        let reason = if self.credential.is_some() {
             overleaf::TOKEN_REJECTED
         } else {
             overleaf::TOKEN_NEEDED
         };
-        self.pending = Some(op);
         let weak = cx.entity().downgrade();
         let for_token = server.clone();
         overleaf::prompt_token(
             &server,
             reason,
-            move |token, window, cx| {
-                overleaf::save_token(&for_token, &token, window, cx);
+            move |token, _, cx| {
                 let credential = overleaf::credential(&for_token, token);
+                let op = op.clone();
                 weak.update(cx, |this, cx| {
-                    this.credential = Some(credential);
-                    if let Some(op) = this.pending.take() {
-                        this.request(op, cx);
+                    if this.overleaf.as_ref() != Some(&credential.url) {
+                        return;
                     }
+                    this.credential = Some(credential);
+                    this.credential_unsaved = true;
+                    this.request(op, cx);
                 })
                 .ok();
             },
@@ -555,6 +565,14 @@ impl GitPanel {
         if op.touches_worktree() {
             cx.emit(GitPanelEvent::WorktreeChanged);
         }
+        if result.is_ok()
+            && op.is_network()
+            && self.credential_unsaved
+            && let Some(c) = &self.credential
+        {
+            overleaf::save_token(&c.url, &c.password, window, cx);
+            self.credential_unsaved = false;
+        }
         match result {
             Ok(Outcome::Initialized(repo)) => {
                 self.git = Some(Some(repo.git().clone()));
@@ -597,7 +615,8 @@ impl GitPanel {
             Err(Error::Unreachable { .. } | Error::TimedOut(_)) if matches!(op, GitOp::Sync) => {
                 window.push_notification(
                     Notification::warning(
-                        "Your changes are committed here: sync again when you are back online.",
+                        "Your changes are kept on this computer: sync again when you are back \
+                         online.",
                     )
                     .title("Overleaf is out of reach"),
                     cx,

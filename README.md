@@ -149,7 +149,9 @@ and Sync afterwards. Overleaf has no branches or tags, and its comments and trac
 travel through Git. The compiler and main document chosen on Overleaf are not part of the project
 either: pick them in TeXoria.
 
-For Overleaf Server Pro, add your instance to `overleaf_servers`.
+LaTeX build files (`*.aux`, `*.log`, …) are kept out of Sync through the clone's
+`.git/info/exclude`, so nothing new appears in the project on Overleaf. For Overleaf Server Pro,
+add your instance to `overleaf_servers`: it must use HTTPS, or TeXoria will not send it the token.
 
 ## Configuration
 

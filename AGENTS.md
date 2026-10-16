@@ -94,9 +94,11 @@ texoria ─┬─ tex-compile ── tex-log
   clearing the user's helpers for that URL only. `overleaf.rs` parses Overleaf/Server Pro
   project and remote URLs; `Repo::sync` is commit-all + `pull --rebase` + push. A repository's
   own config can run programs even on `git status` (`core.fsmonitor`, filters), so the app only
-  uses a `Repo` for trusted projects. Trust is split in `Settings`: `trusted_projects` lets Git
-  run (a directory and its subdirectories), `rc_allowed` lets a directory's `latexmkrc` run; a
-  clone only gets the first. `Git::find` is lazy (on macOS `/usr/bin/git` is skipped without the
+  uses a `Repo` for trusted projects. Trust is split in `Settings`, both exact directories (never
+  their subdirectories): `trusted_projects` lets Git run, `rc_allowed` lets a `latexmkrc` run; a
+  clone only gets the first, for its root file's directory when that is inside the clone.
+  Credentials are refused if a value has a control character (the credential protocol is line
+  based), Overleaf servers must be HTTPS, and commands are logged without their environment. `Git::find` is lazy (on macOS `/usr/bin/git` is skipped without the
   Command Line Tools, whose stub would pop up an installer). Integration tests in
   `tests/repo.rs` use temp repos with `GIT_CONFIG_GLOBAL` pointing to a temp file and skip if git
   is missing.
@@ -108,9 +110,12 @@ texoria ─┬─ tex-compile ── tex-log
     `Workspace::reload_from_disk`, which also runs on window activation: clean buffers whose file
     changed are reloaded, tabs of deleted files close.
   - `overleaf.rs` keeps Overleaf tokens in the system keychain through GPUI's
-    `{read,write,delete}_credentials` (keyed by server URL, cached in a global, memory-only if
-    the keychain fails). The Git panel detects an Overleaf remote on refresh, passes the token as
-    a `Credential`, offers `GitOp::Sync`, and asks for a new token on `Error::Auth`.
+    `{read,write}_credentials` (keyed by server URL, cached in a global, memory-only if the
+    keychain fails). A typed token is saved only once Overleaf accepted it, and a rejected one is
+    never deleted (the refusal may concern one project only). The Git panel detects an Overleaf
+    remote on refresh, passes the token as a `Credential`, offers `GitOp::Sync`, and asks for a
+    new token on `Error::Auth`. Overleaf clones get the LaTeX artifacts in `.git/info/exclude`
+    (a `.gitignore` would be pushed to the collaborators).
   - `diff_view.rs` is a single "preview" diff tab built on `gpui_kit::component::diff`
     (`DiffFile::parse` of git's patch, `parse_conflicts` for merge conflicts). It does not support
     combined diffs, so commits are shown against their first parent. The gpui-kit editor has no

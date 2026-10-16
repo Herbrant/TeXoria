@@ -18,8 +18,7 @@ pub struct Settings {
     /// Stop a compile after this many seconds (0: never).
     pub compile_timeout_secs: u64,
     pub recent: Vec<PathBuf>,
-    /// Project directories (and their subdirectories) whose Git
-    /// configuration may run.
+    /// Project directories whose Git configuration may run.
     pub trusted_projects: Vec<PathBuf>,
     /// Project directories whose `latexmkrc` may run. `None` in settings
     /// written before it was split from `trusted_projects`.
@@ -99,10 +98,10 @@ impl Settings {
         (self.git_timeout_secs > 0).then(|| Duration::from_secs(self.git_timeout_secs))
     }
 
-    /// Whether Git may run in `dir`: trusting a repository (a clone) also
-    /// covers the subdirectory its root file is in.
+    /// Whether Git may run in `dir`. Only `dir` itself: trusting a folder
+    /// must not extend to every repository below it (a home directory).
     pub fn is_trusted(&self, dir: &Path) -> bool {
-        self.trusted_projects.iter().any(|p| dir.starts_with(p))
+        self.trusted_projects.iter().any(|p| p == dir)
     }
 
     pub fn trust(&mut self, dir: PathBuf) {
@@ -134,11 +133,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn git_trust_covers_subdirectories() {
+    fn git_trust_is_per_directory() {
         let mut s = Settings::default();
         s.trust(PathBuf::from("/p/paper"));
         assert!(s.is_trusted(Path::new("/p/paper")));
-        assert!(s.is_trusted(Path::new("/p/paper/chapters")));
+        assert!(!s.is_trusted(Path::new("/p/paper/chapters")));
         assert!(!s.is_trusted(Path::new("/p/paper2")));
         assert!(!s.is_trusted(Path::new("/p")));
         assert!(!s.allows_rc(Path::new("/p/paper")));

@@ -14,8 +14,8 @@ use gpui_kit::*;
 use tex_git::{Credential, overleaf};
 
 pub const TOKEN_NEEDED: &str = "Overleaf asks Git for a token instead of your password.";
-pub const TOKEN_REJECTED: &str =
-    "Overleaf rejected the token: it may have expired (tokens last a year) or been deleted.";
+pub const TOKEN_REJECTED: &str = "Overleaf refused access: the token may have expired \
+     (tokens last a year) or been deleted, or your account may have lost access to this project.";
 
 /// Tokens by server, read from the keychain at most once per run. A token
 /// also lives here alone when the keychain cannot store it.
@@ -41,7 +41,9 @@ pub fn load_token(server: &str, cx: &mut App) -> Task<Option<String>> {
     let server = server.to_string();
     cx.spawn(async move |cx| {
         let token = match read.await {
-            Ok(found) => found.and_then(|(_, secret)| String::from_utf8(secret).ok()),
+            Ok(found) => found
+                .and_then(|(_, secret)| String::from_utf8(secret).ok())
+                .filter(|t| overleaf::valid_token(t)),
             Err(e) => {
                 log::warn!("reading the token for {server}: {e:#}");
                 None
@@ -83,21 +85,6 @@ pub fn save_token(server: &str, token: &str, window: &mut Window, cx: &mut App) 
             }
         })
         .detach();
-}
-
-/// Drop a token the server rejected.
-pub fn forget_token(server: &str, cx: &mut App) {
-    cx.default_global::<Tokens>()
-        .0
-        .insert(server.to_string(), None);
-    let delete = cx.delete_credentials(server);
-    let server = server.to_string();
-    cx.background_spawn(async move {
-        if let Err(e) = delete.await {
-            log::warn!("deleting the token for {server}: {e:#}");
-        }
-    })
-    .detach();
 }
 
 /// A masked input for a token.
@@ -164,6 +151,13 @@ pub fn prompt_token(
         move |window, cx| {
             let token = input.read(cx).value().trim().to_string();
             if token.is_empty() {
+                return false;
+            }
+            if !overleaf::valid_token(&token) {
+                window.push_notification(
+                    Notification::error("That is not an Overleaf token (olp_…)"),
+                    cx,
+                );
                 return false;
             }
             on_token(token, window, cx);

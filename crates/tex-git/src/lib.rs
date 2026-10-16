@@ -72,6 +72,15 @@ pub struct Credential {
     pub password: String,
 }
 
+impl Credential {
+    /// The credential protocol is line based: a line break in a value
+    /// would let it add fields of its own.
+    fn is_safe(&self) -> bool {
+        let clean = |s: &str| !s.is_empty() && !s.chars().any(char::is_control);
+        clean(&self.url) && clean(&self.username) && clean(&self.password)
+    }
+}
+
 impl fmt::Debug for Credential {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credential")
@@ -264,6 +273,9 @@ impl Git {
         if opts.network
             && let Some(c) = &self.credential
         {
+            if !c.is_safe() {
+                return Err(Error::Invalid("The saved credentials are not valid".into()));
+            }
             // An empty value drops the helpers configured so far for this URL.
             let key = format!("credential.{}.helper", c.url);
             cmd.arg("-c")
@@ -425,6 +437,26 @@ mod tests {
         assert!(fill("github.com", true).contains("password=stale\n"));
         // Only network commands get it.
         assert!(fill("git.overleaf.com", false).contains("password=stale\n"));
+    }
+
+    #[test]
+    fn rejects_credentials_that_break_the_protocol() {
+        let git = Git::at("git").credential(Some(Credential {
+            url: "https://git.overleaf.com".into(),
+            username: "git".into(),
+            password: "olp_x\nquit=1".into(),
+        }));
+        let err = git
+            .run(
+                Path::new("."),
+                ["fetch"],
+                process::Options {
+                    network: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err:?}");
     }
 
     #[test]

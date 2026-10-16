@@ -11,6 +11,12 @@ pub const CLOUD_GIT: &str = "https://git.overleaf.com";
 /// The username that goes with an authentication token.
 pub const USERNAME: &str = "git";
 
+/// Whether `token` looks like an authentication token (`olp_…`): printable
+/// ASCII without spaces, so it cannot break the credential protocol.
+pub fn valid_token(token: &str) -> bool {
+    (8..=512).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_graphic())
+}
+
 /// A project on Overleaf or on a Server Pro instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
@@ -23,7 +29,8 @@ pub struct Project {
 
 /// The project behind what a user pastes: the project's address in the
 /// browser, its Git URL or its bare ID. `servers` are the Server Pro
-/// instances the user works with (`https://latex.example.org`).
+/// instances the user works with (`https://latex.example.org`); only HTTPS
+/// ones count, since the token would otherwise travel in clear text.
 pub fn project(input: &str, servers: &[String]) -> Option<Project> {
     let input = input.trim();
     if is_id(input) {
@@ -54,8 +61,14 @@ fn from_url(url: &Url, servers: &[String], browser: bool) -> Option<Project> {
     }
     let server = servers
         .iter()
-        .filter_map(|s| Url::parse(s).or_else(|| Url::parse(&format!("https://{s}"))))
-        .find(|s| s.host == url.host)?;
+        .filter_map(|s| {
+            if s.contains("://") {
+                Url::parse(s)
+            } else {
+                Url::parse(&format!("https://{s}"))
+            }
+        })
+        .find(|s| s.scheme == "https" && s.host == url.host)?;
     let id = match segments[..] {
         ["git", id] => id,
         ["project", id, ..] if browser => id,
@@ -115,7 +128,10 @@ impl Url {
         let rest = rest.split(['?', '#']).next().unwrap_or_default();
         let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
         let host = authority.rsplit('@').next().unwrap_or_default();
-        if host.is_empty() {
+        // The host ends up in a git config key: nothing but a hostname, an
+        // IP address and a port. A backslash is read as a slash by some.
+        let host_char = |b: u8| b.is_ascii_alphanumeric() || b"-.:[]".contains(&b);
+        if host.is_empty() || !host.bytes().all(host_char) || authority.contains('\\') {
             return None;
         }
         Some(Url {
@@ -172,6 +188,14 @@ mod tests {
             project(&format!("https://other.org/project/{ID}"), &servers),
             None
         );
+        // The token must not travel in clear text.
+        let plain = ["http://latex.example.org".to_string()];
+        assert_eq!(
+            project(&format!("http://latex.example.org/git/{ID}"), &plain),
+            None
+        );
+        let p = project(&format!("http://git.overleaf.com/{ID}"), &[]).unwrap();
+        assert_eq!(p.git_url, format!("https://git.overleaf.com/{ID}"));
     }
 
     #[test]
@@ -185,6 +209,9 @@ mod tests {
             "https://github.com/you/paper.git",
             "git@github.com:you/paper.git",
             "../paper",
+            "https://git.overleaf.com\\@evil.example/64ab12cd34ef",
+            "https://evil example/project/64ab12cd34ef",
+            "https://git.overleaf.com=x/64ab12cd34ef",
         ] {
             assert_eq!(project(input, &[]), None, "{input}");
         }
@@ -206,6 +233,15 @@ mod tests {
             None
         );
         assert_eq!(remote("https://github.com/you/paper.git", &servers), None);
+    }
+
+    #[test]
+    fn tokens() {
+        assert!(valid_token("olp_abcdefghijklmnopqrstuvwxyz0123456789"));
+        assert!(!valid_token(""));
+        assert!(!valid_token("olp_abc\nquit=1"));
+        assert!(!valid_token("olp_abc def"));
+        assert!(!valid_token("olp_àèìòù_xyz"));
     }
 
     #[test]

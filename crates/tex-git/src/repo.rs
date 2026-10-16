@@ -302,6 +302,26 @@ impl Repo {
 
     // ── Changing the working tree and index ─────────────────────────────
 
+    /// Keep LaTeX build artifacts out of commits through `.git/info/exclude`,
+    /// for projects where a `.gitignore` would be unwelcome (it would be
+    /// pushed to the other collaborators, on Overleaf say).
+    pub fn exclude_build_artifacts(&self) -> Result<()> {
+        let path = self.git_dir.join("info").join("exclude");
+        let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+        if text.contains(LATEX_GITIGNORE) {
+            return Ok(());
+        }
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(LATEX_GITIGNORE);
+        let write = |path: &Path| {
+            std::fs::create_dir_all(path.parent().unwrap_or(path))?;
+            std::fs::write(path, &text)
+        };
+        write(&path).map_err(|e| Error::Invalid(format!("writing {}: {e}", path.display())))
+    }
+
     pub fn stage(&self, paths: &[String]) -> Result<()> {
         self.run(Self::with_paths(&["add", "-A"], paths)).map(drop)
     }
