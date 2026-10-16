@@ -576,7 +576,7 @@ impl Workspace {
                 }
                 cx.notify();
             }
-            GitPanelEvent::Trust => self.trust_project(cx),
+            GitPanelEvent::Trust => self.trust_git(cx),
         }
     }
 
@@ -822,7 +822,8 @@ impl Workspace {
                 this.cloning = None;
                 match result {
                     Ok(dir) => {
-                        // We created it: its configuration is git's default.
+                        // We created it: its configuration is git's default. Its
+                        // latexmkrc comes from the remote, so it still needs consent.
                         this.settings.trust(dir.clone());
                         this.settings.save();
                         this.open_path(dir, window, cx);
@@ -857,18 +858,27 @@ impl Workspace {
     /// file runs arbitrary code, so it is honored only once trusted.
     fn job(&self) -> Option<Job> {
         let mut job = Job::for_root(self.root.as_ref()?);
-        job.allow_project_rc = self.settings.is_trusted(job.work_dir());
+        job.allow_project_rc = self.settings.allows_rc(job.work_dir());
         Some(job)
     }
 
-    fn trust_project(&mut self, cx: &mut Context<Self>) {
+    /// Let Git run in the project (its configuration can run programs).
+    fn trust_git(&mut self, cx: &mut Context<Self>) {
         let Some(job) = self.job() else {
             return;
         };
         self.settings.trust(job.work_dir().to_path_buf());
         self.settings.save();
-        self.untrusted_rc = false;
         self.sync_git(cx);
+    }
+
+    fn allow_rc(&mut self, cx: &mut Context<Self>) {
+        let Some(job) = self.job() else {
+            return;
+        };
+        self.settings.allow_rc(job.work_dir().to_path_buf());
+        self.settings.save();
+        self.untrusted_rc = false;
         self.typeset(cx);
     }
 
@@ -1422,14 +1432,14 @@ impl Workspace {
             .child(Icon::new(Glyph::Warning).xsmall().text_color(theme.warning))
             .child(div().flex_1().text_color(theme.foreground).child(
                 "This project's latexmkrc can run arbitrary commands and is ignored \
-                         until you trust the project.",
+                         until you allow it.",
             ))
             .child(
-                Button::new("trust-project")
+                Button::new("allow-rc")
                     .warning()
                     .xsmall()
-                    .label("Trust Project")
-                    .on_click(cx.listener(|this, _, _, cx| this.trust_project(cx))),
+                    .label("Allow latexmkrc")
+                    .on_click(cx.listener(|this, _, _, cx| this.allow_rc(cx))),
             )
     }
 
