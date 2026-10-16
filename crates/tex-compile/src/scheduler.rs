@@ -233,6 +233,7 @@ impl Worker {
             });
             return;
         }
+        ignore_build_dir(&job);
         // Engine chatter goes to a file: draining pipes would need extra
         // threads, and a full pipe blocks the engine.
         let transcript = job.out_dir.join("texoria-run.txt");
@@ -367,6 +368,20 @@ impl Worker {
     }
 }
 
+/// Keep `.texoria/` out of version control without touching the project's
+/// own `.gitignore`: git skips a directory whose `.gitignore` ignores `*`.
+fn ignore_build_dir(job: &Job) {
+    let Some(dir) = job.out_dir.parent().filter(|d| d.ends_with(".texoria")) else {
+        return;
+    };
+    let ignore = dir.join(".gitignore");
+    if !ignore.exists()
+        && let Err(e) = std::fs::write(&ignore, "# Created by TeXoria: build artifacts.\n*\n")
+    {
+        log::debug!("writing {}: {e}", ignore.display());
+    }
+}
+
 /// Put the child in its own process group (Unix) / hide its console
 /// (Windows) so the whole tree can be killed and no window flashes.
 fn isolate(cmd: &mut std::process::Command) {
@@ -465,6 +480,8 @@ mod tests {
         assert_eq!(done.len(), 1, "requests should coalesce");
         assert_eq!(done[0].status, Status::Success);
         assert_eq!(done[0].pdf.as_deref(), Some(job.artifact("pdf").as_path()));
+        let ignore = std::fs::read_to_string(dir.path().join(".texoria/.gitignore")).unwrap();
+        assert!(ignore.lines().any(|l| l == "*"));
     }
 
     #[test]
