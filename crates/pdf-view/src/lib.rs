@@ -17,6 +17,13 @@ use pdfium_render::prelude::*;
 
 /// Hard cap on a single bitmap, to bound memory at extreme zoom levels.
 const MAX_PIXELS: f32 = 48_000_000.0;
+/// Hard cap on either side of a bitmap (degenerate page sizes).
+const MAX_SIDE: f32 = 16_384.0;
+/// Used for pages whose size is missing or nonsensical.
+const FALLBACK_PAGE: PageSize = PageSize {
+    width: 612.0,
+    height: 792.0,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -104,7 +111,8 @@ impl Renderer {
     }
 
     /// Replace the current document. Pending renders for older generations
-    /// are dropped.
+    /// are dropped. If the new bytes do not open, the previous document stays
+    /// loaded (and keeps serving its generation).
     pub fn load(&self, generation: u64, bytes: Vec<u8>) {
         let (lock, cvar) = &*self.shared;
         let mut s = lock.lock().unwrap();
@@ -180,27 +188,17 @@ fn worker(
         };
 
         match work {
-            Work::Load(generation, bytes) => {
-                drop(doc.take());
-                match pdfium.load_pdf_from_byte_vec(bytes, None) {
-                    Ok(d) => {
-                        let pages = d
-                            .pages()
-                            .iter()
-                            .map(|p| PageSize {
-                                width: p.width().value,
-                                height: p.height().value,
-                            })
-                            .collect();
-                        doc = Some((generation, d));
-                        on_event(Event::Loaded { generation, pages });
-                    }
-                    Err(e) => on_event(Event::LoadFailed {
-                        generation,
-                        error: e.to_string(),
-                    }),
+            Work::Load(generation, bytes) => match pdfium.load_pdf_from_byte_vec(bytes, None) {
+                Ok(d) => {
+                    let pages = d.pages().iter().map(|p| page_size(&p)).collect();
+                    doc = Some((generation, d));
+                    on_event(Event::Loaded { generation, pages });
                 }
-            }
+                Err(e) => on_event(Event::LoadFailed {
+                    generation,
+                    error: e.to_string(),
+                }),
+            },
             Work::Render(key) => {
                 let Some((generation, d)) = &doc else {
                     continue;
@@ -217,16 +215,38 @@ fn worker(
     }
 }
 
-fn render_page(doc: &PdfDocument, key: RenderKey) -> Result<Bitmap, PdfiumError> {
-    let page = doc.pages().get(key.page as PdfPageIndex)?;
-    let (w_pt, h_pt) = (page.width().value, page.height().value);
-    let mut scale = key.scale();
+/// The page size in points, sanitized: a crafted PDF can claim zero,
+/// negative or non-finite dimensions.
+fn page_size(page: &PdfPage) -> PageSize {
+    let (width, height) = (page.width().value, page.height().value);
+    let sane = |v: f32| v.is_finite() && v > 0.0;
+    if sane(width) && sane(height) {
+        PageSize { width, height }
+    } else {
+        FALLBACK_PAGE
+    }
+}
+
+/// Bitmap size for a page of `w_pt` × `h_pt` points at `scale`, bounded in
+/// area and per side.
+fn bitmap_size(w_pt: f32, h_pt: f32, scale: f32) -> (i32, i32) {
+    let mut scale = scale;
     let pixels = w_pt * h_pt * scale * scale;
     if pixels > MAX_PIXELS {
         scale *= (MAX_PIXELS / pixels).sqrt();
     }
-    let width = (w_pt * scale).round().max(1.0) as i32;
-    let height = (h_pt * scale).round().max(1.0) as i32;
+    let longest = w_pt.max(h_pt) * scale;
+    if longest > MAX_SIDE {
+        scale *= MAX_SIDE / longest;
+    }
+    let side = |pt: f32| (pt * scale).round().clamp(1.0, MAX_SIDE) as i32;
+    (side(w_pt), side(h_pt))
+}
+
+fn render_page(doc: &PdfDocument, key: RenderKey) -> Result<Bitmap, PdfiumError> {
+    let page = doc.pages().get(key.page as PdfPageIndex)?;
+    let PageSize { width, height } = page_size(&page);
+    let (width, height) = bitmap_size(width, height, key.scale());
     let config = PdfRenderConfig::new()
         .set_fixed_size(width, height)
         .set_format(PdfBitmapFormat::BGRA)
@@ -237,7 +257,7 @@ fn render_page(doc: &PdfDocument, key: RenderKey) -> Result<Bitmap, PdfiumError>
     let mut bgra = bitmap.as_raw_bytes();
     // PDFium rows are 4-byte aligned; with 4 bytes per pixel there is no
     // padding, but guard against a surprising stride anyway.
-    bgra.truncate((bw * bh * 4) as usize);
+    bgra.truncate(bw as usize * bh as usize * 4);
     if key.dark {
         darken(&mut bgra);
     }
@@ -272,6 +292,16 @@ mod tests {
     use std::path::Path;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn bitmap_size_is_bounded() {
+        assert_eq!(bitmap_size(612.0, 792.0, 2.0), (1224, 1584));
+        // Extreme aspect ratio: area is small, but one side would explode.
+        let (w, h) = bitmap_size(1.0e9, 1.0e-3, 1.0);
+        assert!(w as f32 <= MAX_SIDE && h >= 1, "{w}x{h}");
+        let (w, h) = bitmap_size(14_400.0, 14_400.0, 6.0);
+        assert!((w as f32) * (h as f32) <= MAX_PIXELS * 1.01);
+    }
 
     #[test]
     fn darken_preserves_hue() {
