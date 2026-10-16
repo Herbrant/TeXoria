@@ -1,0 +1,1556 @@
+{
+ "commands": [
+  {
+   "name": "\\part",
+   "snippet": "\\part{$1}",
+   "detail": "Part"
+  },
+  {
+   "name": "\\part*",
+   "snippet": "\\part*{$1}",
+   "detail": "Part (unnumbered)"
+  },
+  {
+   "name": "\\chapter",
+   "snippet": "\\chapter{$1}",
+   "detail": "Chapter"
+  },
+  {
+   "name": "\\chapter*",
+   "snippet": "\\chapter*{$1}",
+   "detail": "Chapter (unnumbered)"
+  },
+  {
+   "name": "\\section",
+   "snippet": "\\section{$1}",
+   "detail": "Section"
+  },
+  {
+   "name": "\\section*",
+   "snippet": "\\section*{$1}",
+   "detail": "Section (unnumbered)"
+  },
+  {
+   "name": "\\subsection",
+   "snippet": "\\subsection{$1}",
+   "detail": "Subsection"
+  },
+  {
+   "name": "\\subsection*",
+   "snippet": "\\subsection*{$1}",
+   "detail": "Subsection (unnumbered)"
+  },
+  {
+   "name": "\\subsubsection",
+   "snippet": "\\subsubsection{$1}",
+   "detail": "Subsubsection"
+  },
+  {
+   "name": "\\subsubsection*",
+   "snippet": "\\subsubsection*{$1}",
+   "detail": "Subsubsection (unnumbered)"
+  },
+  {
+   "name": "\\paragraph",
+   "snippet": "\\paragraph{$1}",
+   "detail": "Paragraph"
+  },
+  {
+   "name": "\\paragraph*",
+   "snippet": "\\paragraph*{$1}",
+   "detail": "Paragraph (unnumbered)"
+  },
+  {
+   "name": "\\subparagraph",
+   "snippet": "\\subparagraph{$1}",
+   "detail": "Subparagraph"
+  },
+  {
+   "name": "\\subparagraph*",
+   "snippet": "\\subparagraph*{$1}",
+   "detail": "Subparagraph (unnumbered)"
+  },
+  {
+   "name": "\\documentclass",
+   "snippet": "\\documentclass{$1}",
+   "detail": "Document class"
+  },
+  {
+   "name": "\\usepackage",
+   "snippet": "\\usepackage{$1}",
+   "detail": "Load package"
+  },
+  {
+   "name": "\\begin",
+   "snippet": "\\begin{$1}",
+   "detail": "Begin environment"
+  },
+  {
+   "name": "\\end",
+   "snippet": "\\end{$1}",
+   "detail": "End environment"
+  },
+  {
+   "name": "\\input",
+   "snippet": "\\input{$1}",
+   "detail": "Input file"
+  },
+  {
+   "name": "\\include",
+   "snippet": "\\include{$1}",
+   "detail": "Include file (new page)"
+  },
+  {
+   "name": "\\includeonly",
+   "snippet": "\\includeonly{$1}",
+   "detail": "Restrict includes"
+  },
+  {
+   "name": "\\title",
+   "snippet": "\\title{$1}",
+   "detail": "Document title"
+  },
+  {
+   "name": "\\author",
+   "snippet": "\\author{$1}",
+   "detail": "Document author"
+  },
+  {
+   "name": "\\date",
+   "snippet": "\\date{$1}",
+   "detail": "Document date"
+  },
+  {
+   "name": "\\today",
+   "snippet": "\\today",
+   "detail": "Current date"
+  },
+  {
+   "name": "\\maketitle",
+   "snippet": "\\maketitle",
+   "detail": "Typeset title"
+  },
+  {
+   "name": "\\tableofcontents",
+   "snippet": "\\tableofcontents",
+   "detail": "Table of contents"
+  },
+  {
+   "name": "\\listoffigures",
+   "snippet": "\\listoffigures",
+   "detail": "List of figures"
+  },
+  {
+   "name": "\\listoftables",
+   "snippet": "\\listoftables",
+   "detail": "List of tables"
+  },
+  {
+   "name": "\\appendix",
+   "snippet": "\\appendix",
+   "detail": "Start appendices"
+  },
+  {
+   "name": "\\frontmatter",
+   "snippet": "\\frontmatter",
+   "detail": "Front matter (book)"
+  },
+  {
+   "name": "\\mainmatter",
+   "snippet": "\\mainmatter",
+   "detail": "Main matter (book)"
+  },
+  {
+   "name": "\\backmatter",
+   "snippet": "\\backmatter",
+   "detail": "Back matter (book)"
+  },
+  {
+   "name": "\\footnote",
+   "snippet": "\\footnote{$1}",
+   "detail": "Footnote"
+  },
+  {
+   "name": "\\label",
+   "snippet": "\\label{$1}",
+   "detail": "Label"
+  },
+  {
+   "name": "\\ref",
+   "snippet": "\\ref{$1}",
+   "detail": "Reference"
+  },
+  {
+   "name": "\\eqref",
+   "snippet": "\\eqref{$1}",
+   "detail": "Equation reference"
+  },
+  {
+   "name": "\\pageref",
+   "snippet": "\\pageref{$1}",
+   "detail": "Page reference"
+  },
+  {
+   "name": "\\autoref",
+   "snippet": "\\autoref{$1}",
+   "detail": "Automatic reference (hyperref)"
+  },
+  {
+   "name": "\\cref",
+   "snippet": "\\cref{$1}",
+   "detail": "Clever reference (cleveref)"
+  },
+  {
+   "name": "\\Cref",
+   "snippet": "\\Cref{$1}",
+   "detail": "Clever reference, capitalized"
+  },
+  {
+   "name": "\\cite",
+   "snippet": "\\cite{$1}",
+   "detail": "Citation"
+  },
+  {
+   "name": "\\citep",
+   "snippet": "\\citep{$1}",
+   "detail": "Parenthetical citation (natbib)"
+  },
+  {
+   "name": "\\citet",
+   "snippet": "\\citet{$1}",
+   "detail": "Textual citation (natbib)"
+  },
+  {
+   "name": "\\parencite",
+   "snippet": "\\parencite{$1}",
+   "detail": "Parenthetical citation (biblatex)"
+  },
+  {
+   "name": "\\textcite",
+   "snippet": "\\textcite{$1}",
+   "detail": "Textual citation (biblatex)"
+  },
+  {
+   "name": "\\autocite",
+   "snippet": "\\autocite{$1}",
+   "detail": "Automatic citation (biblatex)"
+  },
+  {
+   "name": "\\nocite",
+   "snippet": "\\nocite{$1}",
+   "detail": "Add to bibliography without citing"
+  },
+  {
+   "name": "\\bibliography",
+   "snippet": "\\bibliography{$1}",
+   "detail": "BibTeX database"
+  },
+  {
+   "name": "\\bibliographystyle",
+   "snippet": "\\bibliographystyle{$1}",
+   "detail": "BibTeX style"
+  },
+  {
+   "name": "\\addbibresource",
+   "snippet": "\\addbibresource{$1}",
+   "detail": "Bibliography resource (biblatex)"
+  },
+  {
+   "name": "\\printbibliography",
+   "snippet": "\\printbibliography",
+   "detail": "Print bibliography (biblatex)"
+  },
+  {
+   "name": "\\url",
+   "snippet": "\\url{$1}",
+   "detail": "URL"
+  },
+  {
+   "name": "\\href",
+   "snippet": "\\href{$1}{$2}",
+   "detail": "Hyperlink"
+  },
+  {
+   "name": "\\caption",
+   "snippet": "\\caption{$1}",
+   "detail": "Caption"
+  },
+  {
+   "name": "\\centering",
+   "snippet": "\\centering",
+   "detail": "Center content"
+  },
+  {
+   "name": "\\includegraphics",
+   "snippet": "\\includegraphics[width=${1:\\linewidth}]{$2}",
+   "detail": "Include image"
+  },
+  {
+   "name": "\\newcommand",
+   "snippet": "\\newcommand{$1}{$2}",
+   "detail": "Define command"
+  },
+  {
+   "name": "\\renewcommand",
+   "snippet": "\\renewcommand{$1}{$2}",
+   "detail": "Redefine command"
+  },
+  {
+   "name": "\\newenvironment",
+   "snippet": "\\newenvironment{$1}{$2}{$3}",
+   "detail": "Define environment"
+  },
+  {
+   "name": "\\newtheorem",
+   "snippet": "\\newtheorem{$1}{$2}",
+   "detail": "Define theorem-like environment"
+  },
+  {
+   "name": "\\item",
+   "snippet": "\\item ",
+   "detail": "List item"
+  },
+  {
+   "name": "\\textbf",
+   "snippet": "\\textbf{$1}",
+   "detail": "Bold"
+  },
+  {
+   "name": "\\textit",
+   "snippet": "\\textit{$1}",
+   "detail": "Italic"
+  },
+  {
+   "name": "\\emph",
+   "snippet": "\\emph{$1}",
+   "detail": "Emphasis"
+  },
+  {
+   "name": "\\underline",
+   "snippet": "\\underline{$1}",
+   "detail": "Underline"
+  },
+  {
+   "name": "\\texttt",
+   "snippet": "\\texttt{$1}",
+   "detail": "Monospace"
+  },
+  {
+   "name": "\\textsc",
+   "snippet": "\\textsc{$1}",
+   "detail": "Small caps"
+  },
+  {
+   "name": "\\textsf",
+   "snippet": "\\textsf{$1}",
+   "detail": "Sans serif"
+  },
+  {
+   "name": "\\textrm",
+   "snippet": "\\textrm{$1}",
+   "detail": "Roman"
+  },
+  {
+   "name": "\\textup",
+   "snippet": "\\textup{$1}",
+   "detail": "Upright"
+  },
+  {
+   "name": "\\textsuperscript",
+   "snippet": "\\textsuperscript{$1}",
+   "detail": "Superscript"
+  },
+  {
+   "name": "\\textsubscript",
+   "snippet": "\\textsubscript{$1}",
+   "detail": "Subscript"
+  },
+  {
+   "name": "\\textcolor",
+   "snippet": "\\textcolor{$1}{$2}",
+   "detail": "Colored text (xcolor)"
+  },
+  {
+   "name": "\\tiny",
+   "snippet": "\\tiny",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\scriptsize",
+   "snippet": "\\scriptsize",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\footnotesize",
+   "snippet": "\\footnotesize",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\small",
+   "snippet": "\\small",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\normalsize",
+   "snippet": "\\normalsize",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\large",
+   "snippet": "\\large",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\Large",
+   "snippet": "\\Large",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\LARGE",
+   "snippet": "\\LARGE",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\huge",
+   "snippet": "\\huge",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\Huge",
+   "snippet": "\\Huge",
+   "detail": "Font size"
+  },
+  {
+   "name": "\\newpage",
+   "snippet": "\\newpage",
+   "detail": "New page"
+  },
+  {
+   "name": "\\clearpage",
+   "snippet": "\\clearpage",
+   "detail": "Clear page (flush floats)"
+  },
+  {
+   "name": "\\newline",
+   "snippet": "\\newline",
+   "detail": "Line break"
+  },
+  {
+   "name": "\\linebreak",
+   "snippet": "\\linebreak",
+   "detail": "Line break"
+  },
+  {
+   "name": "\\noindent",
+   "snippet": "\\noindent",
+   "detail": "No paragraph indent"
+  },
+  {
+   "name": "\\vspace",
+   "snippet": "\\vspace{$1}",
+   "detail": "Vertical space"
+  },
+  {
+   "name": "\\hspace",
+   "snippet": "\\hspace{$1}",
+   "detail": "Horizontal space"
+  },
+  {
+   "name": "\\vfill",
+   "snippet": "\\vfill",
+   "detail": "Vertical fill"
+  },
+  {
+   "name": "\\hfill",
+   "snippet": "\\hfill",
+   "detail": "Horizontal fill"
+  },
+  {
+   "name": "\\medskip",
+   "snippet": "\\medskip",
+   "detail": "Medium vertical skip"
+  },
+  {
+   "name": "\\bigskip",
+   "snippet": "\\bigskip",
+   "detail": "Big vertical skip"
+  },
+  {
+   "name": "\\smallskip",
+   "snippet": "\\smallskip",
+   "detail": "Small vertical skip"
+  },
+  {
+   "name": "\\quad",
+   "snippet": "\\quad",
+   "detail": "Space (1em)"
+  },
+  {
+   "name": "\\qquad",
+   "snippet": "\\qquad",
+   "detail": "Space (2em)"
+  },
+  {
+   "name": "\\hline",
+   "snippet": "\\hline",
+   "detail": "Table rule"
+  },
+  {
+   "name": "\\toprule",
+   "snippet": "\\toprule",
+   "detail": "Top rule (booktabs)"
+  },
+  {
+   "name": "\\midrule",
+   "snippet": "\\midrule",
+   "detail": "Mid rule (booktabs)"
+  },
+  {
+   "name": "\\bottomrule",
+   "snippet": "\\bottomrule",
+   "detail": "Bottom rule (booktabs)"
+  },
+  {
+   "name": "\\multicolumn",
+   "snippet": "\\multicolumn{$1}{$2}{$3}",
+   "detail": "Span columns"
+  },
+  {
+   "name": "\\linewidth",
+   "snippet": "\\linewidth",
+   "detail": "Line width"
+  },
+  {
+   "name": "\\textwidth",
+   "snippet": "\\textwidth",
+   "detail": "Text width"
+  },
+  {
+   "name": "\\LaTeX",
+   "snippet": "\\LaTeX",
+   "detail": "LaTeX logo"
+  },
+  {
+   "name": "\\TeX",
+   "snippet": "\\TeX",
+   "detail": "TeX logo"
+  },
+  {
+   "name": "\\ldots",
+   "snippet": "\\ldots",
+   "detail": "Ellipsis"
+  },
+  {
+   "name": "\\dots",
+   "snippet": "\\dots",
+   "detail": "Ellipsis"
+  },
+  {
+   "name": "\\verb",
+   "snippet": "\\verb|$1|",
+   "detail": "Inline verbatim"
+  },
+  {
+   "name": "\\thanks",
+   "snippet": "\\thanks{$1}",
+   "detail": "Title footnote"
+  },
+  {
+   "name": "\\setlength",
+   "snippet": "\\setlength{$1}{$2}",
+   "detail": "Set length"
+  },
+  {
+   "name": "\\pagestyle",
+   "snippet": "\\pagestyle{$1}",
+   "detail": "Page style"
+  },
+  {
+   "name": "\\thispagestyle",
+   "snippet": "\\thispagestyle{$1}",
+   "detail": "Page style for this page"
+  },
+  {
+   "name": "\\geometry",
+   "snippet": "\\geometry{$1}",
+   "detail": "Page geometry (geometry)"
+  },
+  {
+   "name": "\\frac",
+   "snippet": "\\frac{$1}{$2}",
+   "detail": "Fraction"
+  },
+  {
+   "name": "\\dfrac",
+   "snippet": "\\dfrac{$1}{$2}",
+   "detail": "Display fraction (amsmath)"
+  },
+  {
+   "name": "\\tfrac",
+   "snippet": "\\tfrac{$1}{$2}",
+   "detail": "Text fraction (amsmath)"
+  },
+  {
+   "name": "\\sqrt",
+   "snippet": "\\sqrt{$1}",
+   "detail": "Square root"
+  },
+  {
+   "name": "\\binom",
+   "snippet": "\\binom{$1}{$2}",
+   "detail": "Binomial (amsmath)"
+  },
+  {
+   "name": "\\sum",
+   "snippet": "\\sum_{$1}^{$2}",
+   "detail": "Sum"
+  },
+  {
+   "name": "\\prod",
+   "snippet": "\\prod_{$1}^{$2}",
+   "detail": "Product"
+  },
+  {
+   "name": "\\int",
+   "snippet": "\\int_{$1}^{$2}",
+   "detail": "Integral"
+  },
+  {
+   "name": "\\iint",
+   "snippet": "\\iint",
+   "detail": "Double integral"
+  },
+  {
+   "name": "\\oint",
+   "snippet": "\\oint",
+   "detail": "Contour integral"
+  },
+  {
+   "name": "\\lim",
+   "snippet": "\\lim_{$1}",
+   "detail": "Limit"
+  },
+  {
+   "name": "\\infty",
+   "snippet": "\\infty",
+   "detail": "Infinity"
+  },
+  {
+   "name": "\\partial",
+   "snippet": "\\partial",
+   "detail": "Partial derivative"
+  },
+  {
+   "name": "\\nabla",
+   "snippet": "\\nabla",
+   "detail": "Nabla"
+  },
+  {
+   "name": "\\mathbb",
+   "snippet": "\\mathbb{$1}",
+   "detail": "Blackboard bold (amssymb)"
+  },
+  {
+   "name": "\\mathcal",
+   "snippet": "\\mathcal{$1}",
+   "detail": "Calligraphic"
+  },
+  {
+   "name": "\\mathbf",
+   "snippet": "\\mathbf{$1}",
+   "detail": "Bold math"
+  },
+  {
+   "name": "\\mathrm",
+   "snippet": "\\mathrm{$1}",
+   "detail": "Roman math"
+  },
+  {
+   "name": "\\mathit",
+   "snippet": "\\mathit{$1}",
+   "detail": "Italic math"
+  },
+  {
+   "name": "\\mathfrak",
+   "snippet": "\\mathfrak{$1}",
+   "detail": "Fraktur (amssymb)"
+  },
+  {
+   "name": "\\mathsf",
+   "snippet": "\\mathsf{$1}",
+   "detail": "Sans-serif math"
+  },
+  {
+   "name": "\\text",
+   "snippet": "\\text{$1}",
+   "detail": "Text in math (amsmath)"
+  },
+  {
+   "name": "\\operatorname",
+   "snippet": "\\operatorname{$1}",
+   "detail": "Operator name (amsmath)"
+  },
+  {
+   "name": "\\left",
+   "snippet": "\\left($1\\right)",
+   "detail": "Sized delimiters"
+  },
+  {
+   "name": "\\right",
+   "snippet": "\\right",
+   "detail": "Right delimiter"
+  },
+  {
+   "name": "\\cdot",
+   "snippet": "\\cdot",
+   "detail": "Centered dot"
+  },
+  {
+   "name": "\\cdots",
+   "snippet": "\\cdots",
+   "detail": "Centered dots"
+  },
+  {
+   "name": "\\vdots",
+   "snippet": "\\vdots",
+   "detail": "Vertical dots"
+  },
+  {
+   "name": "\\ddots",
+   "snippet": "\\ddots",
+   "detail": "Diagonal dots"
+  },
+  {
+   "name": "\\times",
+   "snippet": "\\times",
+   "detail": "Times"
+  },
+  {
+   "name": "\\div",
+   "snippet": "\\div",
+   "detail": "Division"
+  },
+  {
+   "name": "\\pm",
+   "snippet": "\\pm",
+   "detail": "Plus-minus"
+  },
+  {
+   "name": "\\mp",
+   "snippet": "\\mp",
+   "detail": "Minus-plus"
+  },
+  {
+   "name": "\\leq",
+   "snippet": "\\leq",
+   "detail": "≤"
+  },
+  {
+   "name": "\\geq",
+   "snippet": "\\geq",
+   "detail": "≥"
+  },
+  {
+   "name": "\\neq",
+   "snippet": "\\neq",
+   "detail": "≠"
+  },
+  {
+   "name": "\\approx",
+   "snippet": "\\approx",
+   "detail": "≈"
+  },
+  {
+   "name": "\\equiv",
+   "snippet": "\\equiv",
+   "detail": "≡"
+  },
+  {
+   "name": "\\sim",
+   "snippet": "\\sim",
+   "detail": "∼"
+  },
+  {
+   "name": "\\simeq",
+   "snippet": "\\simeq",
+   "detail": "≃"
+  },
+  {
+   "name": "\\propto",
+   "snippet": "\\propto",
+   "detail": "∝"
+  },
+  {
+   "name": "\\ll",
+   "snippet": "\\ll",
+   "detail": "≪"
+  },
+  {
+   "name": "\\gg",
+   "snippet": "\\gg",
+   "detail": "≫"
+  },
+  {
+   "name": "\\in",
+   "snippet": "\\in",
+   "detail": "∈"
+  },
+  {
+   "name": "\\notin",
+   "snippet": "\\notin",
+   "detail": "∉"
+  },
+  {
+   "name": "\\subset",
+   "snippet": "\\subset",
+   "detail": "⊂"
+  },
+  {
+   "name": "\\subseteq",
+   "snippet": "\\subseteq",
+   "detail": "⊆"
+  },
+  {
+   "name": "\\supset",
+   "snippet": "\\supset",
+   "detail": "⊃"
+  },
+  {
+   "name": "\\cup",
+   "snippet": "\\cup",
+   "detail": "∪"
+  },
+  {
+   "name": "\\cap",
+   "snippet": "\\cap",
+   "detail": "∩"
+  },
+  {
+   "name": "\\emptyset",
+   "snippet": "\\emptyset",
+   "detail": "∅"
+  },
+  {
+   "name": "\\setminus",
+   "snippet": "\\setminus",
+   "detail": "∖"
+  },
+  {
+   "name": "\\forall",
+   "snippet": "\\forall",
+   "detail": "∀"
+  },
+  {
+   "name": "\\exists",
+   "snippet": "\\exists",
+   "detail": "∃"
+  },
+  {
+   "name": "\\neg",
+   "snippet": "\\neg",
+   "detail": "¬"
+  },
+  {
+   "name": "\\land",
+   "snippet": "\\land",
+   "detail": "∧"
+  },
+  {
+   "name": "\\lor",
+   "snippet": "\\lor",
+   "detail": "∨"
+  },
+  {
+   "name": "\\to",
+   "snippet": "\\to",
+   "detail": "→"
+  },
+  {
+   "name": "\\rightarrow",
+   "snippet": "\\rightarrow",
+   "detail": "→"
+  },
+  {
+   "name": "\\leftarrow",
+   "snippet": "\\leftarrow",
+   "detail": "←"
+  },
+  {
+   "name": "\\Rightarrow",
+   "snippet": "\\Rightarrow",
+   "detail": "⇒"
+  },
+  {
+   "name": "\\Leftarrow",
+   "snippet": "\\Leftarrow",
+   "detail": "⇐"
+  },
+  {
+   "name": "\\iff",
+   "snippet": "\\iff",
+   "detail": "⟺"
+  },
+  {
+   "name": "\\implies",
+   "snippet": "\\implies",
+   "detail": "⟹"
+  },
+  {
+   "name": "\\mapsto",
+   "snippet": "\\mapsto",
+   "detail": "↦"
+  },
+  {
+   "name": "\\langle",
+   "snippet": "\\langle",
+   "detail": "⟨"
+  },
+  {
+   "name": "\\rangle",
+   "snippet": "\\rangle",
+   "detail": "⟩"
+  },
+  {
+   "name": "\\lvert",
+   "snippet": "\\lvert",
+   "detail": "|"
+  },
+  {
+   "name": "\\rvert",
+   "snippet": "\\rvert",
+   "detail": "|"
+  },
+  {
+   "name": "\\lVert",
+   "snippet": "\\lVert",
+   "detail": "‖"
+  },
+  {
+   "name": "\\rVert",
+   "snippet": "\\rVert",
+   "detail": "‖"
+  },
+  {
+   "name": "\\lfloor",
+   "snippet": "\\lfloor",
+   "detail": "⌊"
+  },
+  {
+   "name": "\\rfloor",
+   "snippet": "\\rfloor",
+   "detail": "⌋"
+  },
+  {
+   "name": "\\lceil",
+   "snippet": "\\lceil",
+   "detail": "⌈"
+  },
+  {
+   "name": "\\rceil",
+   "snippet": "\\rceil",
+   "detail": "⌉"
+  },
+  {
+   "name": "\\hat",
+   "snippet": "\\hat{$1}",
+   "detail": "Hat accent"
+  },
+  {
+   "name": "\\bar",
+   "snippet": "\\bar{$1}",
+   "detail": "Bar accent"
+  },
+  {
+   "name": "\\tilde",
+   "snippet": "\\tilde{$1}",
+   "detail": "Tilde accent"
+  },
+  {
+   "name": "\\vec",
+   "snippet": "\\vec{$1}",
+   "detail": "Vector arrow"
+  },
+  {
+   "name": "\\dot",
+   "snippet": "\\dot{$1}",
+   "detail": "Dot accent"
+  },
+  {
+   "name": "\\ddot",
+   "snippet": "\\ddot{$1}",
+   "detail": "Double dot accent"
+  },
+  {
+   "name": "\\overline",
+   "snippet": "\\overline{$1}",
+   "detail": "Overline"
+  },
+  {
+   "name": "\\underbrace",
+   "snippet": "\\underbrace{$1}_{$2}",
+   "detail": "Underbrace"
+  },
+  {
+   "name": "\\overbrace",
+   "snippet": "\\overbrace{$1}^{$2}",
+   "detail": "Overbrace"
+  },
+  {
+   "name": "\\sin",
+   "snippet": "\\sin",
+   "detail": "sine"
+  },
+  {
+   "name": "\\cos",
+   "snippet": "\\cos",
+   "detail": "cosine"
+  },
+  {
+   "name": "\\tan",
+   "snippet": "\\tan",
+   "detail": "tangent"
+  },
+  {
+   "name": "\\log",
+   "snippet": "\\log",
+   "detail": "logarithm"
+  },
+  {
+   "name": "\\ln",
+   "snippet": "\\ln",
+   "detail": "natural log"
+  },
+  {
+   "name": "\\exp",
+   "snippet": "\\exp",
+   "detail": "exponential"
+  },
+  {
+   "name": "\\max",
+   "snippet": "\\max",
+   "detail": "maximum"
+  },
+  {
+   "name": "\\min",
+   "snippet": "\\min",
+   "detail": "minimum"
+  },
+  {
+   "name": "\\sup",
+   "snippet": "\\sup",
+   "detail": "supremum"
+  },
+  {
+   "name": "\\inf",
+   "snippet": "\\inf",
+   "detail": "infimum"
+  },
+  {
+   "name": "\\det",
+   "snippet": "\\det",
+   "detail": "determinant"
+  },
+  {
+   "name": "\\tag",
+   "snippet": "\\tag{$1}",
+   "detail": "Equation tag (amsmath)"
+  },
+  {
+   "name": "\\nonumber",
+   "snippet": "\\nonumber",
+   "detail": "Suppress equation number"
+  },
+  {
+   "name": "\\notag",
+   "snippet": "\\notag",
+   "detail": "Suppress equation number"
+  },
+  {
+   "name": "\\alpha",
+   "snippet": "\\alpha",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\beta",
+   "snippet": "\\beta",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\gamma",
+   "snippet": "\\gamma",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\delta",
+   "snippet": "\\delta",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\epsilon",
+   "snippet": "\\epsilon",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\varepsilon",
+   "snippet": "\\varepsilon",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\zeta",
+   "snippet": "\\zeta",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\eta",
+   "snippet": "\\eta",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\theta",
+   "snippet": "\\theta",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\vartheta",
+   "snippet": "\\vartheta",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\iota",
+   "snippet": "\\iota",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\kappa",
+   "snippet": "\\kappa",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\lambda",
+   "snippet": "\\lambda",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\mu",
+   "snippet": "\\mu",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\nu",
+   "snippet": "\\nu",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\xi",
+   "snippet": "\\xi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\pi",
+   "snippet": "\\pi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\varpi",
+   "snippet": "\\varpi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\rho",
+   "snippet": "\\rho",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\varrho",
+   "snippet": "\\varrho",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\sigma",
+   "snippet": "\\sigma",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\varsigma",
+   "snippet": "\\varsigma",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\tau",
+   "snippet": "\\tau",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\upsilon",
+   "snippet": "\\upsilon",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\phi",
+   "snippet": "\\phi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\varphi",
+   "snippet": "\\varphi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\chi",
+   "snippet": "\\chi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\psi",
+   "snippet": "\\psi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\omega",
+   "snippet": "\\omega",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Gamma",
+   "snippet": "\\Gamma",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Delta",
+   "snippet": "\\Delta",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Theta",
+   "snippet": "\\Theta",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Lambda",
+   "snippet": "\\Lambda",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Xi",
+   "snippet": "\\Xi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Pi",
+   "snippet": "\\Pi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Sigma",
+   "snippet": "\\Sigma",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Upsilon",
+   "snippet": "\\Upsilon",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Phi",
+   "snippet": "\\Phi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Psi",
+   "snippet": "\\Psi",
+   "detail": "Greek letter"
+  },
+  {
+   "name": "\\Omega",
+   "snippet": "\\Omega",
+   "detail": "Greek letter"
+  }
+ ],
+ "environments": [
+  {
+   "name": "document",
+   "body": "$0",
+   "detail": "Document body"
+  },
+  {
+   "name": "abstract",
+   "body": "$0",
+   "detail": "Abstract"
+  },
+  {
+   "name": "itemize",
+   "body": "\\item $0",
+   "detail": "Bulleted list"
+  },
+  {
+   "name": "enumerate",
+   "body": "\\item $0",
+   "detail": "Numbered list"
+  },
+  {
+   "name": "description",
+   "body": "\\item[$1] $0",
+   "detail": "Description list"
+  },
+  {
+   "name": "equation",
+   "body": "$0",
+   "detail": "Numbered equation"
+  },
+  {
+   "name": "equation*",
+   "body": "$0",
+   "detail": "Unnumbered equation (amsmath)"
+  },
+  {
+   "name": "align",
+   "body": "$0",
+   "detail": "Aligned equations (amsmath)"
+  },
+  {
+   "name": "align*",
+   "body": "$0",
+   "detail": "Aligned equations, unnumbered"
+  },
+  {
+   "name": "gather",
+   "body": "$0",
+   "detail": "Gathered equations (amsmath)"
+  },
+  {
+   "name": "multline",
+   "body": "$0",
+   "detail": "Multi-line equation (amsmath)"
+  },
+  {
+   "name": "split",
+   "body": "$0",
+   "detail": "Split equation (amsmath)"
+  },
+  {
+   "name": "cases",
+   "body": "$0",
+   "detail": "Cases (amsmath)"
+  },
+  {
+   "name": "matrix",
+   "body": "$0",
+   "detail": "Matrix (amsmath)"
+  },
+  {
+   "name": "pmatrix",
+   "body": "$0",
+   "detail": "Matrix with parentheses"
+  },
+  {
+   "name": "bmatrix",
+   "body": "$0",
+   "detail": "Matrix with brackets"
+  },
+  {
+   "name": "vmatrix",
+   "body": "$0",
+   "detail": "Determinant"
+  },
+  {
+   "name": "figure",
+   "body": "\\centering\n$0\n\\caption{}\n\\label{fig:}",
+   "detail": "Figure float"
+  },
+  {
+   "name": "table",
+   "body": "\\centering\n$0\n\\caption{}\n\\label{tab:}",
+   "detail": "Table float"
+  },
+  {
+   "name": "tabular",
+   "body": "$0",
+   "detail": "Table"
+  },
+  {
+   "name": "center",
+   "body": "$0",
+   "detail": "Centered"
+  },
+  {
+   "name": "flushleft",
+   "body": "$0",
+   "detail": "Left aligned"
+  },
+  {
+   "name": "flushright",
+   "body": "$0",
+   "detail": "Right aligned"
+  },
+  {
+   "name": "quote",
+   "body": "$0",
+   "detail": "Quotation"
+  },
+  {
+   "name": "quotation",
+   "body": "$0",
+   "detail": "Long quotation"
+  },
+  {
+   "name": "verbatim",
+   "body": "$0",
+   "detail": "Verbatim"
+  },
+  {
+   "name": "minipage",
+   "body": "$0",
+   "detail": "Mini page"
+  },
+  {
+   "name": "theorem",
+   "body": "$0",
+   "detail": "Theorem"
+  },
+  {
+   "name": "lemma",
+   "body": "$0",
+   "detail": "Lemma"
+  },
+  {
+   "name": "proof",
+   "body": "$0",
+   "detail": "Proof (amsthm)"
+  },
+  {
+   "name": "definition",
+   "body": "$0",
+   "detail": "Definition"
+  },
+  {
+   "name": "corollary",
+   "body": "$0",
+   "detail": "Corollary"
+  },
+  {
+   "name": "proposition",
+   "body": "$0",
+   "detail": "Proposition"
+  },
+  {
+   "name": "remark",
+   "body": "$0",
+   "detail": "Remark"
+  },
+  {
+   "name": "example",
+   "body": "$0",
+   "detail": "Example"
+  },
+  {
+   "name": "tikzpicture",
+   "body": "$0",
+   "detail": "TikZ picture"
+  },
+  {
+   "name": "frame",
+   "body": "$0",
+   "detail": "Beamer frame"
+  },
+  {
+   "name": "columns",
+   "body": "$0",
+   "detail": "Beamer columns"
+  },
+  {
+   "name": "lstlisting",
+   "body": "$0",
+   "detail": "Code listing (listings)"
+  },
+  {
+   "name": "minted",
+   "body": "$0",
+   "detail": "Code listing (minted)"
+  },
+  {
+   "name": "thebibliography",
+   "body": "$0",
+   "detail": "Bibliography"
+  },
+  {
+   "name": "titlepage",
+   "body": "$0",
+   "detail": "Title page"
+  },
+  {
+   "name": "appendices",
+   "body": "$0",
+   "detail": "Appendices"
+  }
+ ],
+ "packages": [
+  "amsmath",
+  "amssymb",
+  "amsthm",
+  "mathtools",
+  "graphicx",
+  "hyperref",
+  "cleveref",
+  "geometry",
+  "xcolor",
+  "tikz",
+  "pgfplots",
+  "booktabs",
+  "array",
+  "tabularx",
+  "longtable",
+  "multirow",
+  "caption",
+  "subcaption",
+  "float",
+  "wrapfig",
+  "listings",
+  "minted",
+  "fontenc",
+  "inputenc",
+  "babel",
+  "polyglossia",
+  "fontspec",
+  "microtype",
+  "csquotes",
+  "biblatex",
+  "natbib",
+  "siunitx",
+  "enumitem",
+  "fancyhdr",
+  "titlesec",
+  "tocloft",
+  "setspace",
+  "parskip",
+  "lipsum",
+  "blindtext",
+  "xparse",
+  "etoolbox",
+  "ifthen",
+  "calc",
+  "url",
+  "algorithm2e",
+  "algorithmic",
+  "algorithmicx",
+  "physics",
+  "bm",
+  "cancel",
+  "tcolorbox",
+  "mdframed",
+  "todonotes",
+  "glossaries",
+  "acronym",
+  "appendix",
+  "pdfpages",
+  "standalone",
+  "subfiles",
+  "import",
+  "beamer",
+  "lmodern",
+  "newtxtext",
+  "newtxmath",
+  "libertine",
+  "mathpazo",
+  "ebgaramond"
+ ]
+}

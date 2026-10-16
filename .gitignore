@@ -1,0 +1,9 @@
+/target
+.texoria/
+.DS_Store
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+!tests/fixtures/**/*.synctex.gz
+/vendor

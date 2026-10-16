@@ -1,0 +1,10 @@
+[package]
+name = "pdf-view"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_latest", "thread_safe"] }
+log.workspace = true
+thiserror.workspace = true

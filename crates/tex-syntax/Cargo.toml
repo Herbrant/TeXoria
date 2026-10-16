@@ -1,0 +1,10 @@
+[package]
+name = "tex-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Must match the tree-sitter major used by gpui-component.
+tree-sitter = "0.26"
+codebook-tree-sitter-latex = "0.6.1"

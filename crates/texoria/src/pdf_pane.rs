@@ -1,0 +1,621 @@
+//! The PDF preview: continuous scrolling, zoom, flicker-free reloads and
+//! SyncTeX forward/inverse search.
+//!
+//! Only pages near the viewport get elements and bitmaps. On reload the
+//! previous bitmaps stay on screen until the new ones are rasterized, so the
+//! preview never flashes blank while you type.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use gpui_kit::component::{
+    ActiveTheme, Icon, Sizable, button::Button, button::ButtonVariants, h_flex, v_flex,
+};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
+use pdf_view::{Bitmap, Event as RenderEvent, PageSize, RenderKey, Renderer};
+use synctex::{Rect, SyncTex};
+
+use crate::assets::Glyph;
+
+const MARGIN: f32 = 28.0;
+const GAP: f32 = 18.0;
+const MIN_ZOOM: f32 = 0.25;
+const MAX_ZOOM: f32 = 6.0;
+/// Pages around the viewport kept rasterized (and their bitmaps retained).
+const RENDER_AHEAD: usize = 1;
+const KEEP_AROUND: usize = 6;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Zoom {
+    FitWidth,
+    Fixed(f32),
+}
+
+pub enum PdfPaneEvent {
+    /// The user cmd/ctrl-clicked a point that maps back to the source.
+    InverseSearch { file: PathBuf, line: u32 },
+}
+
+struct Shown {
+    key: RenderKey,
+    image: Arc<RenderImage>,
+}
+
+struct Highlight {
+    page: usize,
+    rects: Vec<Rect>,
+    id: usize,
+}
+
+pub struct PdfPane {
+    renderer: Option<Renderer>,
+    error: Option<SharedString>,
+    generation: u64,
+    pages: Vec<PageSize>,
+    shown: HashMap<usize, Shown>,
+    synctex: Option<Arc<SyncTex>>,
+    zoom: Zoom,
+    scroll: ScrollHandle,
+    viewport: Size<Pixels>,
+    highlight: Option<Highlight>,
+    highlight_seq: usize,
+    dark: bool,
+    to_drop: Vec<Arc<RenderImage>>,
+    last_request: Vec<RenderKey>,
+    /// Scroll position to restore once the new layout is known.
+    pending_scroll: Option<Point<Pixels>>,
+    _events: Task<()>,
+    _highlight_timer: Task<()>,
+}
+
+impl EventEmitter<PdfPaneEvent> for PdfPane {}
+
+impl PdfPane {
+    pub fn new(library_dirs: Vec<PathBuf>, cx: &mut Context<Self>) -> Self {
+        let (tx, rx) = smol::channel::unbounded::<RenderEvent>();
+        let (renderer, error) = match Renderer::new(library_dirs, move |e| {
+            let _ = tx.send_blocking(e);
+        }) {
+            Ok(r) => (Some(r), None),
+            Err(e) => {
+                log::error!("{e}");
+                (
+                    None,
+                    Some(SharedString::from(format!("PDF preview unavailable: {e}"))),
+                )
+            }
+        };
+        let events = cx.spawn(async move |this, cx| {
+            while let Ok(event) = rx.recv().await {
+                if this
+                    .update(cx, |this, cx| this.on_render_event(event, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        PdfPane {
+            renderer,
+            error,
+            generation: 0,
+            pages: Vec::new(),
+            shown: HashMap::new(),
+            synctex: None,
+            zoom: Zoom::FitWidth,
+            scroll: ScrollHandle::new(),
+            viewport: Size::default(),
+            highlight: None,
+            highlight_seq: 0,
+            dark: false,
+            to_drop: Vec::new(),
+            last_request: Vec::new(),
+            pending_scroll: None,
+            _events: events,
+            _highlight_timer: Task::ready(()),
+        }
+    }
+
+    /// Load (or reload) a PDF and its SyncTeX data from disk.
+    pub fn load(&mut self, pdf: PathBuf, synctex: Option<PathBuf>, cx: &mut Context<Self>) {
+        self.generation += 1;
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            let loaded = cx
+                .background_spawn(async move {
+                    let bytes = std::fs::read(&pdf);
+                    let st = synctex.and_then(|p| SyncTex::open(&p).ok()).map(Arc::new);
+                    (bytes, st)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                // A newer load superseded this one while it was reading.
+                if this.generation != generation {
+                    return;
+                }
+                match loaded {
+                    (Ok(bytes), st) => {
+                        this.synctex = st;
+                        if let Some(r) = &this.renderer {
+                            r.load(generation, bytes);
+                        }
+                    }
+                    (Err(e), _) => log::warn!("reading PDF: {e}"),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn on_render_event(&mut self, event: RenderEvent, cx: &mut Context<Self>) {
+        match event {
+            RenderEvent::Loaded { generation, pages } => {
+                if generation != self.generation {
+                    return;
+                }
+                // Keep the reading position across reloads.
+                if !self.pages.is_empty() {
+                    self.pending_scroll = Some(self.scroll.offset());
+                }
+                self.pages = pages;
+                self.error = None;
+                self.last_request.clear();
+                // Bitmaps for pages that no longer exist must go.
+                let n = self.pages.len();
+                let gone: Vec<usize> = self.shown.keys().copied().filter(|p| *p >= n).collect();
+                for p in gone {
+                    if let Some(s) = self.shown.remove(&p) {
+                        self.to_drop.push(s.image);
+                    }
+                }
+            }
+            RenderEvent::LoadFailed { generation, error } => {
+                if generation == self.generation && self.pages.is_empty() {
+                    self.error = Some(format!("Could not open PDF: {error}").into());
+                }
+            }
+            RenderEvent::Rendered { key, bitmap } => {
+                if key.page >= self.pages.len() {
+                    return;
+                }
+                let newer = self.shown.get(&key.page).is_none_or(|s| {
+                    key.generation > s.key.generation
+                        || (key.generation == s.key.generation && key != s.key)
+                });
+                if !newer {
+                    return;
+                }
+                if let Some(image) = to_render_image(bitmap)
+                    && let Some(old) = self.shown.insert(key.page, Shown { key, image })
+                {
+                    self.to_drop.push(old.image);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn set_dark(&mut self, dark: bool, cx: &mut Context<Self>) {
+        if self.dark != dark {
+            self.dark = dark;
+            self.last_request.clear();
+            cx.notify();
+        }
+    }
+
+    // ── Geometry ─────────────────────────────────────────────────────────
+
+    fn zoom_factor(&self) -> f32 {
+        match self.zoom {
+            Zoom::Fixed(z) => z,
+            Zoom::FitWidth => {
+                let widest = self.pages.iter().map(|p| p.width).fold(0.0, f32::max);
+                if widest <= 0.0 || self.viewport.width <= px(0.) {
+                    return 1.0;
+                }
+                ((f32::from(self.viewport.width) - 2.0 * MARGIN) / widest).clamp(MIN_ZOOM, MAX_ZOOM)
+            }
+        }
+    }
+
+    /// Page rectangles in content coordinates (pixels), plus content size.
+    fn layout(&self, zoom: f32) -> (Vec<Bounds<Pixels>>, Size<Pixels>) {
+        let widest = self
+            .pages
+            .iter()
+            .map(|p| p.width * zoom)
+            .fold(0.0, f32::max);
+        let content_w = (widest + 2.0 * MARGIN).max(f32::from(self.viewport.width));
+        let mut y = MARGIN;
+        let rects = self
+            .pages
+            .iter()
+            .map(|p| {
+                let (w, h) = (p.width * zoom, p.height * zoom);
+                let r = Bounds::new(point(px((content_w - w) / 2.0), px(y)), size(px(w), px(h)));
+                y += h + GAP;
+                r
+            })
+            .collect();
+        (rects, size(px(content_w), px(y - GAP + MARGIN)))
+    }
+
+    fn set_zoom(&mut self, zoom: Zoom, anchor: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+        let old = self.zoom_factor();
+        self.zoom = match zoom {
+            Zoom::Fixed(z) => Zoom::Fixed(z.clamp(MIN_ZOOM, MAX_ZOOM)),
+            z => z,
+        };
+        let new = self.zoom_factor();
+        // Keep the content point under the anchor (or the viewport center)
+        // fixed while zooming.
+        let anchor = anchor.unwrap_or(point(self.viewport.width / 2.0, self.viewport.height / 2.0));
+        let offset = self.scroll.offset();
+        let ratio = new / old;
+        let cx_ = (anchor.x - offset.x) * ratio - anchor.x;
+        let cy_ = (anchor.y - offset.y) * ratio - anchor.y;
+        self.pending_scroll = Some(point(-cx_, -cy_));
+        cx.notify();
+    }
+
+    pub fn zoom_in(&mut self, cx: &mut Context<Self>) {
+        let z = self.zoom_factor() * 1.2;
+        self.set_zoom(Zoom::Fixed(z), None, cx);
+    }
+
+    pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
+        let z = self.zoom_factor() / 1.2;
+        self.set_zoom(Zoom::Fixed(z), None, cx);
+    }
+
+    pub fn zoom_to_fit(&mut self, cx: &mut Context<Self>) {
+        self.set_zoom(Zoom::FitWidth, None, cx);
+    }
+
+    // ── SyncTeX ──────────────────────────────────────────────────────────
+
+    /// Source → PDF: scroll to and briefly highlight `line` of `file`.
+    pub fn forward_search(&mut self, file: &Path, line: u32, cx: &mut Context<Self>) -> bool {
+        let Some(loc) = self.synctex.as_ref().and_then(|s| s.forward(file, line)) else {
+            return false;
+        };
+        let zoom = self.zoom_factor();
+        let (rects, content) = self.layout(zoom);
+        let Some(page) = rects.get(loc.page) else {
+            return false;
+        };
+        let first = loc.rects[0];
+        let target_y = page.origin.y + px(first.y * zoom) - self.viewport.height * 0.35;
+        let max_y = (content.height - self.viewport.height).max(px(0.));
+        let offset = self.scroll.offset();
+        self.pending_scroll = Some(point(offset.x, -target_y.clamp(px(0.), max_y)));
+
+        self.highlight_seq += 1;
+        self.highlight = Some(Highlight {
+            page: loc.page,
+            rects: loc.rects,
+            id: self.highlight_seq,
+        });
+        let id = self.highlight_seq;
+        self._highlight_timer = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(1800))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.highlight.as_ref().is_some_and(|h| h.id == id) {
+                    this.highlight = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        });
+        cx.notify();
+        true
+    }
+
+    fn on_mouse_down(&mut self, ev: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if !ev.modifiers.secondary() && ev.click_count < 2 {
+            return;
+        }
+        let Some(st) = self.synctex.clone() else {
+            return;
+        };
+        let zoom = self.zoom_factor();
+        let (rects, _) = self.layout(zoom);
+        let origin = self.scroll.bounds().origin;
+        let offset = self.scroll.offset();
+        let p = ev.position - origin - offset;
+        let Some((page, r)) = rects.iter().enumerate().find(|(_, r)| r.contains(&p)) else {
+            return;
+        };
+        let x = f32::from(p.x - r.origin.x) / zoom;
+        let y = f32::from(p.y - r.origin.y) / zoom;
+        if let Some(loc) = st.inverse(page, x, y) {
+            cx.emit(PdfPaneEvent::InverseSearch {
+                file: loc.file,
+                line: loc.line,
+            });
+        }
+    }
+
+    // ── Rendering ────────────────────────────────────────────────────────
+
+    /// Ask the renderer for whatever visible pages lack a sharp bitmap.
+    fn request_bitmaps(&mut self, visible: &[usize], scale: f32) {
+        let Some(renderer) = &self.renderer else {
+            return;
+        };
+        let scale_milli = quantize(scale);
+        let mut wanted: Vec<RenderKey> = Vec::new();
+        let around = visible.first().map(|f| {
+            f.saturating_sub(RENDER_AHEAD)
+                ..(visible.last().unwrap() + RENDER_AHEAD + 1).min(self.pages.len())
+        });
+        // Visible pages first, then the ones just outside.
+        let order = visible.iter().copied().chain(
+            around
+                .into_iter()
+                .flatten()
+                .filter(|p| !visible.contains(p)),
+        );
+        for page in order {
+            let key = RenderKey {
+                generation: self.generation,
+                page,
+                scale_milli,
+                dark: self.dark,
+            };
+            if self.shown.get(&page).is_none_or(|s| s.key != key) {
+                wanted.push(key);
+            }
+        }
+        if wanted != self.last_request {
+            renderer.request(wanted.clone());
+            self.last_request = wanted;
+        }
+    }
+
+    fn evict_far_pages(&mut self, visible: &[usize]) {
+        let (Some(&first), Some(&last)) = (visible.first(), visible.last()) else {
+            return;
+        };
+        let far: Vec<usize> = self
+            .shown
+            .keys()
+            .copied()
+            .filter(|p| *p + KEEP_AROUND < first || *p > last + KEEP_AROUND)
+            .collect();
+        for p in far {
+            if let Some(s) = self.shown.remove(&p) {
+                self.to_drop.push(s.image);
+            }
+        }
+    }
+
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let zoom_pct = (self.zoom_factor() * 100.0).round() as i32;
+        h_flex()
+            .absolute()
+            .bottom(px(14.))
+            .right(px(14.))
+            .gap_0p5()
+            .p_0p5()
+            .rounded(cx.theme().radius_lg)
+            .bg(cx.theme().popover)
+            .border_1()
+            .border_color(cx.theme().border)
+            .shadow_md()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(
+                Button::new("zoom-out")
+                    .ghost()
+                    .xsmall()
+                    .icon(Glyph::ZoomOut)
+                    .on_click(cx.listener(|this, _, _, cx| this.zoom_out(cx))),
+            )
+            .child(
+                Button::new("zoom-fit")
+                    .ghost()
+                    .xsmall()
+                    .label(format!("{zoom_pct}%"))
+                    .tooltip("Fit width")
+                    .on_click(cx.listener(|this, _, _, cx| this.zoom_to_fit(cx))),
+            )
+            .child(
+                Button::new("zoom-in")
+                    .ghost()
+                    .xsmall()
+                    .icon(Glyph::ZoomIn)
+                    .on_click(cx.listener(|this, _, _, cx| this.zoom_in(cx))),
+            )
+    }
+}
+
+impl Render for PdfPane {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        for image in self.to_drop.drain(..) {
+            let _ = window.drop_image(image);
+        }
+
+        // The viewport is only known after layout; re-render once it changes.
+        let bounds = self.scroll.bounds().size;
+        if bounds != self.viewport && bounds.width > px(0.) {
+            self.viewport = bounds;
+            self.last_request.clear();
+            window.request_animation_frame();
+        }
+
+        let theme = cx.theme();
+        let canvas_bg = theme.muted;
+        let empty = |msg: SharedString| {
+            v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_3()
+                .bg(canvas_bg)
+                .text_color(theme.muted_foreground)
+                .text_sm()
+                .child(
+                    Icon::new(Glyph::Book)
+                        .size_8()
+                        .text_color(theme.muted_foreground.opacity(0.5)),
+                )
+                .child(msg)
+                .into_any_element()
+        };
+        if self.pages.is_empty() {
+            let msg = self
+                .error
+                .clone()
+                .unwrap_or_else(|| "The preview appears after the first typeset.".into());
+            return div()
+                .id("pdf-pane")
+                .size_full()
+                .child(empty(msg))
+                .into_any_element();
+        }
+
+        let zoom = self.zoom_factor();
+        let (rects, content) = self.layout(zoom);
+
+        if let Some(offset) = self.pending_scroll.take() {
+            let max_x = (content.width - self.viewport.width).max(px(0.));
+            let max_y = (content.height - self.viewport.height).max(px(0.));
+            self.scroll.set_offset(point(
+                offset.x.clamp(-max_x, px(0.)),
+                offset.y.clamp(-max_y, px(0.)),
+            ));
+        }
+
+        let offset = self.scroll.offset();
+        let view_top = -offset.y;
+        let view_bottom = view_top + self.viewport.height.max(px(1.));
+        let visible: Vec<usize> = rects
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.bottom() >= view_top && r.top() <= view_bottom)
+            .map(|(i, _)| i)
+            .collect();
+        self.request_bitmaps(&visible, zoom * window.scale_factor());
+        self.evict_far_pages(&visible);
+
+        let theme = cx.theme();
+        let highlight_color = theme.primary.opacity(0.28);
+        let shadow_page = theme.is_dark();
+        let pages = rects.iter().enumerate().filter_map(|(i, r)| {
+            // Elements only for pages near the viewport.
+            let near = r.bottom() >= view_top - self.viewport.height
+                && r.top() <= view_bottom + self.viewport.height;
+            if !near {
+                return None;
+            }
+            let paper = if self.dark {
+                rgb(0x202020)
+            } else {
+                rgb(0xffffff)
+            };
+            let mut page = div()
+                .absolute()
+                .left(r.origin.x)
+                .top(r.origin.y)
+                .w(r.size.width)
+                .h(r.size.height)
+                .bg(paper)
+                .rounded(px(2.))
+                .overflow_hidden()
+                .when(!shadow_page, |d| d.shadow_md())
+                .when(shadow_page, |d| d.border_1().border_color(theme.border));
+            if let Some(shown) = self.shown.get(&i) {
+                page = page.child(
+                    img(shown.image.clone())
+                        .size_full()
+                        .object_fit(ObjectFit::Fill),
+                );
+            }
+            if let Some(h) = self.highlight.as_ref().filter(|h| h.page == i) {
+                for (k, rect) in h.rects.iter().enumerate() {
+                    page = page.child(
+                        div()
+                            .absolute()
+                            .left(px(rect.x * zoom - 3.0))
+                            .top(px(rect.y * zoom - 2.0))
+                            .w(px(rect.width * zoom + 6.0))
+                            .h(px(rect.height * zoom + 4.0))
+                            .rounded(px(3.))
+                            .bg(highlight_color)
+                            .with_animation(
+                                ElementId::NamedInteger(
+                                    "synctex-hl".into(),
+                                    (h.id * 1000 + k) as u64,
+                                ),
+                                Animation::new(Duration::from_millis(1600))
+                                    .with_easing(ease_in_out),
+                                |el, t| {
+                                    el.opacity(if t < 0.5 { 1.0 } else { 1.0 - (t - 0.5) * 2.0 })
+                                },
+                            ),
+                    );
+                }
+            }
+            Some(page)
+        });
+
+        div()
+            .id("pdf-pane")
+            .relative()
+            .size_full()
+            .bg(canvas_bg)
+            .child(
+                div()
+                    .id("pdf-scroll")
+                    .size_full()
+                    .overflow_scroll()
+                    .track_scroll(&self.scroll)
+                    .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+                    .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| {
+                        if !(ev.modifiers.secondary() || ev.modifiers.control) {
+                            return;
+                        }
+                        let dy = f32::from(ev.delta.pixel_delta(px(16.)).y);
+                        let factor = (1.0 + dy / 400.0).clamp(0.8, 1.25);
+                        let origin = this.scroll.bounds().origin;
+                        let z = this.zoom_factor() * factor;
+                        this.set_zoom(Zoom::Fixed(z), Some(ev.position - origin), cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_pinch(cx.listener(|this, ev: &PinchEvent, _, cx| {
+                        let origin = this.scroll.bounds().origin;
+                        let z = this.zoom_factor() * (1.0 + ev.delta);
+                        this.set_zoom(Zoom::Fixed(z), Some(ev.position - origin), cx);
+                    }))
+                    .child(
+                        div()
+                            .relative()
+                            .w(content.width)
+                            .h(content.height)
+                            .children(pages),
+                    ),
+            )
+            .child(self.render_toolbar(cx))
+            .into_any_element()
+    }
+}
+
+/// Snap to 5% steps so continuous resizing does not re-rasterize per pixel.
+fn quantize(scale: f32) -> u32 {
+    let step = 1.05f32.ln();
+    let snapped = (scale.max(0.05).ln() / step).round() * step;
+    (snapped.exp() * 1000.0).round() as u32
+}
+
+fn to_render_image(bitmap: Bitmap) -> Option<Arc<RenderImage>> {
+    let buffer = image::RgbaImage::from_raw(bitmap.width, bitmap.height, bitmap.bgra)?;
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
+}

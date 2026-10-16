@@ -1,0 +1,11 @@
+[package]
+name = "tex-project"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tex-syntax.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

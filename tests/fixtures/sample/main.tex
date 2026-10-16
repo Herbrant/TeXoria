@@ -1,0 +1,37 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+
+\title{TeXoria Sample}
+\author{Ada Lovelace}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+\label{sec:intro}
+Hello from TeXoria. This paragraph is here to check forward and inverse
+search between the source and the PDF output.
+
+\input{chapters/methods}
+
+\section{Results}
+\label{sec:results}
+As shown in Section~\ref{sec:methods}, the identity
+\begin{equation}
+  e^{i\pi} + 1 = 0
+  \label{eq:euler}
+\end{equation}
+holds. See also \ref{sec:missing} and \cite{knuth1984}.
+
+\subsection{Discussion}
+A deliberately long word to trigger a box warning:
+Supercalifragilisticexpialidociouslyextraordinarilylongwordthatdoesnotfit.
+
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}

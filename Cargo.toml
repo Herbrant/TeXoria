@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Davide Carnemolla <cdavide98carnemolla@gmail.com>"]
+
+[workspace.dependencies]
+# UI (pre-1.0: version pinned with "=")
+gpui-kit = "=0.7.3"
+
+# Core
+anyhow = "1"
+thiserror = "2"
+flate2 = "1"
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+regex = "1"
+directories = "6"
+notify = "8"
+which = "8"
+tempfile = "3"
+
+# Intra-workspace
+tex-log = { path = "crates/tex-log" }
+synctex = { path = "crates/synctex" }
+tex-compile = { path = "crates/tex-compile" }
+tex-syntax = { path = "crates/tex-syntax" }
+tex-project = { path = "crates/tex-project" }
+tex-complete = { path = "crates/tex-complete" }
+pdf-view = { path = "crates/pdf-view" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2

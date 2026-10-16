@@ -1,0 +1,43 @@
+[package]
+name = "texoria"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "An elegant, fast LaTeX editor"
+
+[dependencies]
+gpui-kit = { workspace = true, features = ["tree-sitter"] }
+tex-log.workspace = true
+synctex.workspace = true
+tex-compile.workspace = true
+tex-syntax.workspace = true
+tex-project.workspace = true
+tex-complete.workspace = true
+pdf-view.workspace = true
+
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+serde.workspace = true
+toml.workspace = true
+directories.workspace = true
+# Versions shared with gpui-kit (completion items, async channels, frames).
+lsp-types = { version = "0.97", features = ["proposed"] }
+smol = "2"
+image = { version = "0.25", default-features = false }
+
+# `cargo packager --release` (https://github.com/crabnebula-dev/cargo-packager).
+# Run scripts/fetch-pdfium.sh and scripts/fetch-tectonic.sh first.
+[package.metadata.packager]
+product-name = "TeXoria"
+identifier = "app.texoria.TeXoria"
+category = "Productivity"
+description = "An elegant, fast LaTeX editor"
+before-packaging-command = "cargo build -p texoria --release"
+out-dir = "../../target/dist"
+binaries = [{ path = "texoria", main = true }]
+formats = ["app", "dmg", "nsis", "deb", "appimage"]
+resources = [
+  { src = "../../vendor/pdfium/*", target = "." },
+  { src = "../../vendor/tectonic/*", target = "bin" },
+]
