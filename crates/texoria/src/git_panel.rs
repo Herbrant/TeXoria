@@ -6,6 +6,7 @@
 //! at a time.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -29,6 +30,7 @@ use tex_git::{
 
 use crate::assets::Glyph;
 use crate::diff_view::DiffSource;
+use crate::file_tree::GitMark;
 use crate::overleaf;
 
 /// The message of the commit a Sync makes when the message box is empty.
@@ -317,6 +319,31 @@ impl GitPanel {
     /// Files with changes, for a badge.
     pub fn change_count(&self) -> usize {
         self.status.entries.len()
+    }
+
+    /// Changed files by absolute path, for the Files view.
+    pub fn file_marks(&self) -> HashMap<PathBuf, GitMark> {
+        let Some(repo) = self.repo() else {
+            return HashMap::new();
+        };
+        // Project paths are canonical.
+        let root = std::fs::canonicalize(repo.root()).unwrap_or_else(|_| repo.root().into());
+        self.status
+            .entries
+            .iter()
+            .map(|e| {
+                let mark = if e.conflicted {
+                    GitMark::Conflict
+                } else if e.is_untracked()
+                    || matches!(e.index, Change::Added | Change::Renamed | Change::Copied)
+                {
+                    GitMark::Added
+                } else {
+                    GitMark::Modified
+                };
+                (root.join(&e.path), mark)
+            })
+            .collect()
     }
 
     pub fn focus_message(&self, window: &mut Window, cx: &mut Context<Self>) {

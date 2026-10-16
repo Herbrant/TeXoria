@@ -102,7 +102,7 @@ texoria ─┬─ tex-compile ── tex-log
   Command Line Tools, whose stub would pop up an installer). Integration tests in
   `tests/repo.rs` use temp repos with `GIT_CONFIG_GLOBAL` pointing to a temp file and skip if git
   is missing.
-- **texoria** (`workspace.rs` is the main window: outline | editor tabs | PDF pane):
+- **texoria** (`workspace.rs` is the main window: outline or files | editor tabs | PDF pane):
   - `git_panel.rs` is the Source Control sidebar (alternates with the outline). Mutating
     operations are emitted as `GitPanelEvent::Request(GitOp)`; the workspace saves dirty buffers
     and calls `GitPanel::execute`, which runs one operation at a time on the background executor.
@@ -118,6 +118,14 @@ texoria ─┬─ tex-compile ── tex-log
     (`SyncReview`), and `run_op` refuses the Sync if new ones appeared since. Overleaf projects
     get `Repo::exclude_local_files` (build artifacts, system/editor files, package caches in
     `.git/info/exclude`: a `.gitignore` would be pushed to the collaborators).
+  - `file_tree.rs` is the Files view, which shares the sidebar with the outline (switch at the
+    top; `Workspace::navigator` remembers which). It scans `root.parent()` with
+    `tex_project::files::scan` on the background executor and renders it with gpui-kit's
+    `tree` (whose `TreeItem` is a folder only if it has children, so `FileTree` keeps its own
+    rows). Changes are emitted as `FileTreeEvent::Request(FileOp)` and run by
+    `Workspace::run_file_op` after saving buffers: tabs follow a rename (a renamed root file
+    goes through `set_root`) and close on delete. Git colors come from `GitPanel::file_marks`.
+    Files that are not text (`files::looks_like_text`) open with the system app.
   - `diff_view.rs` is a single "preview" diff tab built on `gpui_kit::component::diff`
     (`DiffFile::parse` of git's patch, `parse_conflicts` for merge conflicts). It does not support
     combined diffs, so commits are shown against their first parent. The gpui-kit editor has no

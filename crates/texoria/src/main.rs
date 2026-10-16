@@ -3,6 +3,7 @@
 mod assets;
 mod atomic;
 mod diff_view;
+mod file_tree;
 mod git_panel;
 mod latex;
 mod overleaf;
@@ -30,6 +31,7 @@ actions!(
         ZoomOut,
         ZoomToFit,
         ToggleOutline,
+        ToggleFiles,
         ToggleDiagnostics,
         ToggleLivePreview,
         ToggleSoftWrap,
@@ -60,6 +62,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary--", ZoomOut, None),
         KeyBinding::new("secondary-0", ZoomToFit, None),
         KeyBinding::new("secondary-1", ToggleOutline, None),
+        KeyBinding::new("secondary-shift-e", ToggleFiles, None),
         KeyBinding::new("secondary-shift-m", ToggleDiagnostics, None),
         KeyBinding::new("secondary-shift-p", ToggleLivePreview, None),
         KeyBinding::new("alt-z", ToggleSoftWrap, None),
@@ -88,6 +91,7 @@ fn set_menus(cx: &mut App) {
         ]),
         Menu::new("View").items([
             MenuItem::action("Outline", ToggleOutline),
+            MenuItem::action("Files", ToggleFiles),
             MenuItem::action("Problems", ToggleDiagnostics),
             MenuItem::action("Soft Wrap", ToggleSoftWrap),
             MenuItem::separator(),

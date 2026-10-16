@@ -1,4 +1,4 @@
-//! The main window: outline | editor | PDF, with live typesetting.
+//! The main window: outline or files | editor | PDF, with live typesetting.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -22,12 +22,13 @@ use gpui_kit::*;
 use tex_compile::{Compiler, Engine, Event as CompileEvent, Job, Severity, Status};
 use tex_git::{Cancel, Credential, Git};
 use tex_log::Diagnostic;
-use tex_project::{Project, ProjectOutlineItem};
+use tex_project::{Project, ProjectOutlineItem, files};
 use tex_syntax::OutlineKind;
 
 use crate::assets::Glyph;
 use crate::atomic;
 use crate::diff_view::{DiffSource, DiffView, DiffViewEvent};
+use crate::file_tree::{FileOp, FileTree, FileTreeEvent};
 use crate::git_panel::{self, GitOp, GitPanel, GitPanelEvent};
 use crate::latex::{self, CursorFixup, LatexCompletions};
 use crate::overleaf;
@@ -37,8 +38,8 @@ use crate::theme::{self, ThemeExt};
 use crate::{
     CancelTypeset, CloneRepository, CloseTab, Commit, Fetch, ForwardSearch, NewBranch, Open,
     OpenFromOverleaf, Pull, Push, Save, ShowSourceControl, SyncOverleaf, ToggleDiagnostics,
-    ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme, Typeset, ZoomIn, ZoomOut,
-    ZoomToFit,
+    ToggleFiles, ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme, Typeset, ZoomIn,
+    ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -70,6 +71,7 @@ struct Buffer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Sidebar {
     Outline,
+    Files,
     SourceControl,
 }
 
@@ -88,6 +90,9 @@ pub struct Workspace {
     outline: Vec<ProjectOutlineItem>,
     show_sidebar: bool,
     sidebar: Sidebar,
+    /// The last of Outline and Files: what the sidebar button shows.
+    navigator: Sidebar,
+    files: Entity<FileTree>,
     git: Entity<GitPanel>,
     /// The diff tab, shown instead of the editor while `diff_active`.
     diff: Option<Entity<DiffView>>,
@@ -112,6 +117,7 @@ impl Workspace {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = Settings::load();
         let pdf = cx.new(|cx| PdfPane::new(pdfium_dirs(), cx));
+        let files = cx.new(FileTree::new);
         let git = cx.new(|cx| GitPanel::new(window, cx));
         git.update(cx, |g, _| {
             g.configure(
@@ -131,11 +137,13 @@ impl Workspace {
                 },
             ),
             cx.subscribe_in(&git, window, Self::on_git_event),
+            cx.subscribe_in(&files, window, Self::on_file_tree_event),
             // Coming back to the window: pick up what changed meanwhile
             // (a `git pull` in a terminal, another editor).
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
                     this.reload_from_disk(window, cx);
+                    this.files.update(cx, |f, cx| f.refresh(cx));
                     this.git.update(cx, |g, cx| g.refresh(cx));
                 }
             }),
@@ -178,6 +186,8 @@ impl Workspace {
             outline: Vec::new(),
             show_sidebar: true,
             sidebar: Sidebar::Outline,
+            navigator: Sidebar::Outline,
+            files,
             git,
             diff: None,
             diff_active: false,
@@ -250,7 +260,12 @@ impl Workspace {
         let text = tex_project::read_regular(&file).unwrap_or_default();
         let root = tex_project::find_root(&file, &text);
         let root = std::fs::canonicalize(&root).unwrap_or(root);
+        self.set_root(root, cx);
+        self.activate_file(file, window, cx);
+    }
 
+    /// Make `root` the project's root file (a no-op if it already is).
+    fn set_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         if self.root.as_deref() != Some(&root) {
             self.root = Some(root.clone());
             *self.project.write().unwrap() = Project::open(&root);
@@ -265,6 +280,8 @@ impl Workspace {
             self.untrusted_rc = !job.allow_project_rc && job.has_project_rc();
             self.close_diff(cx);
             self.sync_git(cx);
+            self.files
+                .update(cx, |f, cx| f.set_project(Some(root.clone()), cx));
             // Show a previous build right away, if any.
             if job.artifact("pdf").is_file() {
                 let synctex = Some(job.artifact("synctex.gz")).filter(|p| p.is_file());
@@ -273,7 +290,6 @@ impl Workspace {
             }
             self.typeset(cx);
         }
-        self.activate_file(file, window, cx);
     }
 
     /// Focus the buffer for `file`, opening it if needed. Returns its index.
@@ -572,6 +588,7 @@ impl Workspace {
             GitPanelEvent::OpenDiff(source) => self.open_diff(source.clone(), window, cx),
             GitPanelEvent::WorktreeChanged => {
                 self.reload_from_disk(window, cx);
+                self.files.update(cx, |f, cx| f.refresh(cx));
                 if let Some(d) = &self.diff {
                     d.update(cx, |d, cx| d.reload(cx));
                 }
@@ -580,10 +597,93 @@ impl Workspace {
                 if let Some(d) = &self.diff {
                     d.update(cx, |d, cx| d.reload(cx));
                 }
+                let marks = self.git.read(cx).file_marks();
+                self.files.update(cx, |f, cx| f.set_marks(marks, cx));
                 cx.notify();
             }
             GitPanelEvent::Trust => self.trust_git(cx),
         }
+    }
+
+    // ── Files ────────────────────────────────────────────────────────────
+
+    fn on_file_tree_event(
+        &mut self,
+        _: &Entity<FileTree>,
+        ev: &FileTreeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match ev {
+            FileTreeEvent::Open(path) => {
+                if files::looks_like_text(path) {
+                    self.activate_file(path.clone(), window, cx);
+                } else {
+                    cx.open_with_system(path);
+                }
+            }
+            FileTreeEvent::Request(op) => self.run_file_op(op.clone(), window, cx),
+        }
+    }
+
+    /// Carry out a change to the project's files, keeping open tabs in step.
+    fn run_file_op(&mut self, op: FileOp, window: &mut Window, cx: &mut Context<Self>) {
+        // Unsaved edits would be lost by a delete, or written back to the
+        // old path after a rename.
+        if !self.save_all(cx) {
+            return;
+        }
+        let (title, result) = match &op {
+            FileOp::CreateFile(path) => ("Cannot create the file", create_file(path)),
+            FileOp::CreateDir(path) => ("Cannot create the folder", std::fs::create_dir_all(path)),
+            FileOp::Rename { from, to } => ("Cannot rename", rename(from, to)),
+            FileOp::Delete(path) => ("Cannot delete", remove(path)),
+        };
+        if let Err(e) = result {
+            window.push_notification(Notification::error(e.to_string()).title(title), cx);
+            self.files.update(cx, |f, cx| f.refresh(cx));
+            return;
+        }
+
+        let active = self.buffers.get(self.active).map(|b| b.path.clone());
+        match op {
+            FileOp::CreateFile(path) => {
+                self.activate_file(path, window, cx);
+            }
+            FileOp::CreateDir(_) => {}
+            FileOp::Rename { from, to } => {
+                let moved = |p: &Path| {
+                    let rest = p.strip_prefix(&from).ok()?;
+                    Some(if rest.as_os_str().is_empty() {
+                        to.clone()
+                    } else {
+                        to.join(rest)
+                    })
+                };
+                for b in &mut self.buffers {
+                    if let Some(p) = moved(&b.path) {
+                        b.path = p;
+                    }
+                }
+                if let Some(root) = self.root.as_deref().and_then(moved) {
+                    self.set_root(root, cx);
+                }
+            }
+            FileOp::Delete(path) => {
+                self.buffers.retain(|b| !b.path.starts_with(&path));
+                self.active = active
+                    .and_then(|a| self.buffers.iter().position(|b| b.path == a))
+                    .unwrap_or(0);
+                if self.buffers.is_empty()
+                    && let Some(root) = self.root.clone()
+                {
+                    self.activate_file(root, window, cx);
+                }
+            }
+        }
+        self.files.update(cx, |f, cx| f.refresh(cx));
+        self.git.update(cx, |g, cx| g.refresh(cx));
+        self.reindex(cx);
     }
 
     // ── Diff tab ─────────────────────────────────────────────────────────
@@ -1016,6 +1116,14 @@ impl Workspace {
     fn show_sidebar(&mut self, kind: Sidebar, cx: &mut Context<Self>) {
         self.show_sidebar = true;
         self.sidebar = kind;
+        match kind {
+            Sidebar::Outline => self.navigator = kind,
+            Sidebar::Files => {
+                self.navigator = kind;
+                self.files.update(cx, |f, cx| f.refresh(cx));
+            }
+            Sidebar::SourceControl => {}
+        }
         cx.notify();
     }
 
@@ -1256,9 +1364,9 @@ impl Workspace {
                         .ghost()
                         .small()
                         .icon(Glyph::PanelLeft)
-                        .tooltip("Outline (⌘1)")
+                        .tooltip("Outline and files (⌘1, ⇧⌘E)")
                         .on_click(
-                            cx.listener(|this, _, _, cx| this.toggle_sidebar(Sidebar::Outline, cx)),
+                            cx.listener(|this, _, _, cx| this.toggle_sidebar(this.navigator, cx)),
                         ),
                 )
                 .when(has_project, |d| {
@@ -1391,6 +1499,91 @@ impl Workspace {
             }))
     }
 
+    /// The sidebar's Outline and Files views, with a switch between them.
+    fn render_navigator(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let files = self.sidebar == Sidebar::Files;
+        let tab = |id: &'static str, label: &'static str, kind: Sidebar, cx: &mut Context<Self>| {
+            let active = self.sidebar == kind;
+            let theme = cx.theme();
+            div()
+                .id(id)
+                .px_2()
+                .py_0p5()
+                .rounded(theme.radius)
+                .text_xs()
+                .cursor_pointer()
+                .when(active, |d| {
+                    d.bg(theme.sidebar_accent)
+                        .text_color(theme.foreground)
+                        .font_weight(FontWeight::MEDIUM)
+                })
+                .when(!active, |d| {
+                    d.text_color(theme.muted_foreground)
+                        .hover(|s| s.text_color(theme.foreground))
+                })
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| this.show_sidebar(kind, cx)))
+        };
+        let file_button = |id: &'static str, icon: Glyph, tooltip: &'static str| {
+            Button::new(id)
+                .ghost()
+                .xsmall()
+                .icon(icon)
+                .tooltip(tooltip)
+                .disabled(self.root.is_none())
+        };
+        let header = h_flex()
+            .px_3()
+            .pt_3()
+            .pb_2()
+            .gap_1()
+            .child(tab("nav-outline", "Outline", Sidebar::Outline, cx))
+            .child(tab("nav-files", "Files", Sidebar::Files, cx))
+            .child(div().flex_1())
+            .when(files, |d| {
+                d.child(
+                    file_button("files-new-file", Glyph::NewFile, "New File").on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.files
+                                .update(cx, |f, cx| f.prompt_new(false, window, cx))
+                        }),
+                    ),
+                )
+                .child(
+                    file_button("files-new-folder", Glyph::NewFolder, "New Folder").on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.files
+                                .update(cx, |f, cx| f.prompt_new(true, window, cx))
+                        }),
+                    ),
+                )
+                .child(
+                    file_button("files-refresh", Glyph::Refresh, "Refresh").on_click(
+                        cx.listener(|this, _, _, cx| this.files.update(cx, |f, cx| f.refresh(cx))),
+                    ),
+                )
+            });
+        let body = if files {
+            div()
+                .flex_1()
+                .min_h_0()
+                .pb_2()
+                .child(self.files.clone())
+                .into_any_element()
+        } else {
+            self.render_outline(cx).into_any_element()
+        };
+
+        let theme = cx.theme();
+        v_flex()
+            .size_full()
+            .bg(theme.sidebar)
+            .border_r_1()
+            .border_color(theme.sidebar_border)
+            .child(header)
+            .child(body)
+    }
+
     fn render_outline(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         // The section containing the cursor is highlighted.
@@ -1464,37 +1657,21 @@ impl Workspace {
         });
 
         v_flex()
-            .size_full()
-            .bg(theme.sidebar)
-            .border_r_1()
-            .border_color(theme.sidebar_border)
-            .child(
-                div()
-                    .px_4()
-                    .pt_4()
-                    .pb_2()
-                    .text_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.muted_foreground)
-                    .child("OUTLINE"),
-            )
-            .child(
-                v_flex()
-                    .id("outline-list")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .pb_4()
-                    .when(self.outline.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .px_4()
-                                .text_sm()
-                                .text_color(theme.muted_foreground)
-                                .child("No sections yet"),
-                        )
-                    })
-                    .children(items),
-            )
+            .id("outline-list")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .pb_4()
+            .when(self.outline.is_empty(), |d| {
+                d.child(
+                    div()
+                        .px_4()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("No sections yet"),
+                )
+            })
+            .children(items)
     }
 
     fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2008,8 +2185,10 @@ impl Render for Workspace {
                 .when(self.show_diagnostics, |d| {
                     d.child(self.render_diagnostics(cx))
                 });
+            let active = (!self.diff_active).then(|| self.buffers[self.active].path.clone());
+            self.files.update(cx, |f, cx| f.set_active(active, cx));
             let sidebar = match self.sidebar {
-                Sidebar::Outline => self.render_outline(cx).into_any_element(),
+                Sidebar::Outline | Sidebar::Files => self.render_navigator(cx).into_any_element(),
                 Sidebar::SourceControl => self.git.clone().into_any_element(),
             };
 
@@ -2065,6 +2244,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &ToggleOutline, _, cx| {
                 this.toggle_sidebar(Sidebar::Outline, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &ToggleFiles, _, cx| this.toggle_sidebar(Sidebar::Files, cx)),
+            )
             .on_action(cx.listener(|this, _: &ShowSourceControl, window, cx| {
                 this.show_sidebar(Sidebar::SourceControl, cx);
                 this.git.update(cx, |g, cx| g.focus_message(window, cx));
@@ -2116,6 +2298,38 @@ impl Render for Workspace {
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+/// An empty file, failing if `path` exists (and creating its directories).
+fn create_file(path: &Path) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map(drop)
+}
+
+/// `rename`, refusing to replace another file (it replaces silently on Unix).
+fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    if to.symlink_metadata().is_ok() && !files::is_same_file(from, to) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{} already exists", to.display()),
+        ));
+    }
+    std::fs::rename(from, to)
+}
+
+/// Delete a file, or a directory with its contents (a link, not its target).
+fn remove(path: &Path) -> std::io::Result<()> {
+    if path.symlink_metadata()?.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
 }
 
 /// In a directory, the `.tex` file that has `\documentclass` (preferring

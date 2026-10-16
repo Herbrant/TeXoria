@@ -44,6 +44,8 @@ no TeX distribution installed, and uses the one you already have when there is o
   `\usepackage`.
 - **Document outline** across multi-file projects (`\input`, `\include`), following the section
   you are editing.
+- **File browser** next to the outline: the project folder as a tree, colored by Git status,
+  to open, create, rename and delete files. Images and PDFs open in their usual app.
 - **Inline diagnostics**: errors and warnings from the TeX log are underlined in the source and
   collected in the *Problems* panel.
 

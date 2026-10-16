@@ -2,6 +2,7 @@
 //! `\include`, and the bibliographies they reference.
 
 pub mod bib;
+pub mod files;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

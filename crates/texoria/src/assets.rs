@@ -81,6 +81,11 @@ glyphs! {
     Unified => "rows-2",
     PrevChange => "chevron-up",
     NextChange => "chevron-down",
+    Folder => "folder",
+    Expand => "chevron-right",
+    PlainFile => "file",
+    NewFile => "file-plus",
+    NewFolder => "folder-plus",
 }
 
 pub struct Assets;
