@@ -73,6 +73,8 @@ no TeX distribution installed, and uses the one you already have when there is o
 
 - **Paper** and **Ink**: a warm light theme and a dark one. In dark mode the PDF is darkened
   while keeping its colors.
+- **Settings** in their own window (⌘,): theme, engine, live preview, Git and Overleaf options,
+  and the projects you trusted, with every change applied right away.
 - **Safe with untrusted projects**: a project's `latexmkrc` and Git configuration can run
   arbitrary programs, so each is ignored until you allow it. A project you clone is trusted
   for Git, but its `latexmkrc` still asks first.
@@ -155,28 +157,8 @@ either: pick them in TeXoria.
 LaTeX build files (`*.aux`, `*.log`, …), system and editor files (`.DS_Store`, `*~`, …) and
 package caches (`_minted-*`) are kept out of Sync through the project's `.git/info/exclude`, so
 they never reach your collaborators. For Overleaf Server Pro,
-add your instance to `overleaf_servers`: it must use HTTPS, or TeXoria will not send it the token.
-
-## Configuration
-
-Settings are stored as TOML in `settings.toml`:
-
-| OS | Location |
-|---|---|
-| macOS | `~/Library/Application Support/app.TeXoria.TeXoria/` |
-| Linux | `~/.config/texoria/` |
-| Windows | `%APPDATA%\TeXoria\TeXoria\config\` |
-
-| Key | Default | |
-|---|---|---|
-| `live_preview` | `true` | Recompile automatically after edits |
-| `live_delay_ms` | `700` | Pause after the last keystroke before a live compile |
-| `soft_wrap` | `true` | Wrap long lines in the editor |
-| `compile_timeout_secs` | `300` | Stop a compile after this long (`0`: never) |
-| `diff_split` | `false` | Show diffs side by side |
-| `pull_rebase` | `false` | Pull with `--rebase` instead of merging |
-| `git_timeout_secs` | `120` | Stop a fetch, pull or push after this long (`0`: never) |
-| `overleaf_servers` | `[]` | Overleaf Server Pro instances, e.g. `["https://latex.example.org"]` |
+add your instance in *Settings* (⌘,), under *Git*: it must use HTTPS, or TeXoria will not send it
+the token.
 
 ## Building from source
 

@@ -33,13 +33,14 @@ use crate::git_panel::{self, GitOp, GitPanel, GitPanelEvent};
 use crate::latex::{self, CursorFixup, LatexCompletions};
 use crate::overleaf;
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
-use crate::settings::Settings;
+use crate::settings::{Settings, ThemeChoice};
+use crate::settings_window::SettingsWindow;
 use crate::theme::{self, ThemeExt};
 use crate::{
     CancelTypeset, CloneRepository, CloseTab, Commit, Fetch, ForwardSearch, NewBranch, Open,
-    OpenFromOverleaf, Pull, Push, Save, ShowSourceControl, SyncOverleaf, ToggleDiagnostics,
-    ToggleFiles, ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme, Typeset, ZoomIn,
-    ZoomOut, ZoomToFit,
+    OpenFromOverleaf, OpenSettings, Pull, Push, Save, ShowSourceControl, SyncOverleaf,
+    ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme,
+    Typeset, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -76,14 +77,14 @@ enum Sidebar {
 }
 
 pub struct Workspace {
-    settings: Settings,
+    pub(crate) settings: Settings,
     project: Arc<RwLock<Project>>,
     root: Option<PathBuf>,
     buffers: Vec<Buffer>,
     active: usize,
     pdf: Entity<PdfPane>,
-    engines: Vec<Engine>,
-    engine_ix: usize,
+    pub(crate) engines: Vec<Engine>,
+    pub(crate) engine_ix: usize,
     compiler: Option<Compiler>,
     state: CompileState,
     diagnostics: Vec<Diagnostic>,
@@ -107,6 +108,7 @@ pub struct Workspace {
     fixups: Rc<RefCell<Vec<CursorFixup>>>,
     focus: FocusHandle,
     was_dark: bool,
+    settings_window: Option<AnyWindowHandle>,
     _live: Task<()>,
     _compile_events: Task<()>,
     _diff_subscription: Option<Subscription>,
@@ -119,13 +121,7 @@ impl Workspace {
         let pdf = cx.new(|cx| PdfPane::new(pdfium_dirs(), cx));
         let files = cx.new(FileTree::new);
         let git = cx.new(|cx| GitPanel::new(window, cx));
-        git.update(cx, |g, _| {
-            g.configure(
-                settings.pull_rebase,
-                settings.git_timeout(),
-                settings.overleaf_servers.clone(),
-            )
-        });
+        theme::apply(settings.theme, Some(window), cx);
         let mut subscriptions = vec![
             cx.subscribe_in(
                 &pdf,
@@ -145,6 +141,12 @@ impl Workspace {
                     this.reload_from_disk(window, cx);
                     this.files.update(cx, |f, cx| f.refresh(cx));
                     this.git.update(cx, |g, cx| g.refresh(cx));
+                }
+            }),
+            cx.observe_window_appearance(window, |this, window, cx| {
+                if this.settings.theme == ThemeChoice::System {
+                    theme::apply(ThemeChoice::System, Some(window), cx);
+                    this.sync_theme(cx);
                 }
             }),
         ];
@@ -198,11 +200,13 @@ impl Workspace {
             fixups: Rc::new(RefCell::new(Vec::new())),
             focus: cx.focus_handle(),
             was_dark: cx.theme_is_dark(),
+            settings_window: None,
             _live: Task::ready(()),
             _compile_events: Task::ready(()),
             _diff_subscription: None,
             _subscriptions: subscriptions,
         };
+        this.configure_git(cx);
         this.start_compiler(cx);
         if this.engines.is_empty() {
             this.state = CompileState::Failed(
@@ -215,6 +219,118 @@ impl Workspace {
         let dark = this.was_dark;
         this.pdf.update(cx, |pdf, cx| pdf.set_dark(dark, cx));
         this
+    }
+
+    fn configure_git(&mut self, cx: &mut Context<Self>) {
+        let s = &self.settings;
+        let (rebase, timeout, servers) =
+            (s.pull_rebase, s.git_timeout(), s.overleaf_servers.clone());
+        self.git
+            .update(cx, |g, _| g.configure(rebase, timeout, servers));
+    }
+
+    // ── Settings ─────────────────────────────────────────────────────────
+
+    /// Change the settings, save them and bring what is running in line.
+    pub fn update_settings(
+        &mut self,
+        change: impl FnOnce(&mut Settings),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let old = self.settings.clone();
+        change(&mut self.settings);
+        self.settings.save();
+
+        if self.settings.engine != old.engine
+            && let Some(ix) = self
+                .settings
+                .engine
+                .as_ref()
+                .and_then(|label| self.engines.iter().position(|e| &e.label() == label))
+            && ix != self.engine_ix
+        {
+            self.set_engine(ix, cx);
+        }
+        if self.settings.compile_timeout_secs != old.compile_timeout_secs
+            && let Some(c) = &self.compiler
+        {
+            c.set_timeout(self.settings.compile_timeout());
+        }
+        if self.settings.soft_wrap != old.soft_wrap {
+            let wrap = self.settings.soft_wrap;
+            for b in &mut self.buffers {
+                let lines = b.editor.read(cx).text().lines_len();
+                b.soft_wrap = wrap && lines <= SOFT_WRAP_MAX_LINES;
+                let wrap = b.soft_wrap;
+                b.editor
+                    .update(cx, |state, cx| state.set_soft_wrap(wrap, window, cx));
+            }
+        }
+        let s = &self.settings;
+        if (s.pull_rebase, s.git_timeout_secs, &s.overleaf_servers)
+            != (old.pull_rebase, old.git_timeout_secs, &old.overleaf_servers)
+        {
+            self.configure_git(cx);
+        }
+        if self.settings.diff_split != old.diff_split
+            && let Some(d) = &self.diff
+        {
+            let split = self.settings.diff_split;
+            d.update(cx, |d, cx| d.set_split(split, cx));
+        }
+        if self.settings.trusted_projects != old.trusted_projects {
+            self.sync_git(cx);
+        }
+        if self.settings.rc_allowed != old.rc_allowed
+            && let Some(job) = self.job()
+            && job.allow_project_rc != old.allows_rc(job.work_dir())
+        {
+            self.untrusted_rc = !job.allow_project_rc && job.has_project_rc();
+            self.typeset(cx);
+        }
+        if self.settings.theme != old.theme {
+            theme::apply(self.settings.theme, Some(window), cx);
+            self.sync_theme(cx);
+        }
+        cx.notify();
+    }
+
+    /// Open the Settings window, or bring it to the front.
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(handle) = self.settings_window
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return;
+        }
+        let workspace = cx.entity().downgrade();
+        let main = window.window_handle();
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::centered(size(px(820.), px(600.)), cx)),
+            window_min_size: Some(size(px(560.), px(400.))),
+            app_id: Some("texoria".into()),
+            ..TitleBar::window_options()
+        };
+        // The new window reads the workspace, which is being updated here.
+        cx.defer(move |cx| {
+            let opened = gpui_kit::open_window(options, cx, {
+                let workspace = workspace.clone();
+                move |window, cx| cx.new(|cx| SettingsWindow::new(workspace, main, window, cx))
+            });
+            match opened {
+                Ok((handle, _)) => {
+                    let _ = workspace.update(cx, |w, _| w.settings_window = Some(handle));
+                }
+                Err(e) => log::error!("opening the settings window: {e}"),
+            }
+        });
+    }
+
+    fn toggle_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let choice = theme::toggled(cx);
+        self.update_settings(|s| s.theme = choice, window, cx);
     }
 
     fn start_compiler(&mut self, cx: &mut Context<Self>) {
@@ -732,8 +848,8 @@ impl Workspace {
                 self.activate_file(file, window, cx);
             }
             DiffViewEvent::SplitChanged(split) => {
-                self.settings.diff_split = *split;
-                self.settings.save();
+                let split = *split;
+                self.update_settings(|s| s.diff_split = split, window, cx);
             }
             DiffViewEvent::Close => self.close_diff(cx),
         }
@@ -1152,6 +1268,7 @@ impl Workspace {
         self.settings.trust(job.work_dir().to_path_buf());
         self.settings.save();
         self.sync_git(cx);
+        cx.notify();
     }
 
     fn allow_rc(&mut self, cx: &mut Context<Self>) {
@@ -1299,8 +1416,12 @@ impl Workspace {
         if self.engines.is_empty() {
             return;
         }
-        self.engine_ix = (self.engine_ix + 1) % self.engines.len();
-        let engine = self.engines[self.engine_ix].clone();
+        self.set_engine((self.engine_ix + 1) % self.engines.len(), cx);
+    }
+
+    fn set_engine(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.engine_ix = ix;
+        let engine = self.engines[ix].clone();
         self.settings.engine = Some(engine.label());
         self.settings.save();
         if let Some(c) = &self.compiler {
@@ -1422,10 +1543,17 @@ impl Workspace {
                             Glyph::Moon
                         })
                         .tooltip("Toggle light/dark")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            theme::toggle(window, cx);
-                            this.sync_theme(cx);
-                        })),
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_theme(window, cx))),
+                )
+                .child(
+                    Button::new("settings")
+                        .ghost()
+                        .small()
+                        .icon(Glyph::Settings)
+                        .tooltip("Settings (⌘,)")
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
+                        ),
                 )
                 .child(div().w(px(6.))),
         )
@@ -2228,10 +2356,12 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Typeset, _, cx| this.typeset(cx)))
             .on_action(cx.listener(|this, _: &CancelTypeset, _, _| this.cancel_typeset()))
             .on_action(cx.listener(|this, _: &ForwardSearch, _, cx| this.forward_search(cx)))
-            .on_action(cx.listener(|this, _: &ToggleTheme, window, cx| {
-                theme::toggle(window, cx);
-                this.sync_theme(cx);
-            }))
+            .on_action(
+                cx.listener(|this, _: &ToggleTheme, window, cx| this.toggle_theme(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &OpenSettings, window, cx| this.open_settings(window, cx)),
+            )
             .on_action(
                 cx.listener(|this, _: &ZoomIn, _, cx| this.pdf.update(cx, |p, cx| p.zoom_in(cx))),
             )

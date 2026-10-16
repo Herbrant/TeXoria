@@ -9,6 +9,7 @@ mod latex;
 mod overleaf;
 mod pdf_pane;
 mod settings;
+mod settings_window;
 mod theme;
 mod workspace;
 
@@ -45,6 +46,7 @@ actions!(
         CloneRepository,
         OpenFromOverleaf,
         SyncOverleaf,
+        OpenSettings,
         Quit,
     ]
 );
@@ -68,13 +70,18 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("alt-z", ToggleSoftWrap, None),
         KeyBinding::new("secondary-w", CloseTab, None),
         KeyBinding::new("secondary-shift-g", ShowSourceControl, None),
+        KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
 }
 
 fn set_menus(cx: &mut App) {
     cx.set_menus([
-        Menu::new("TeXoria").items([MenuItem::action("Quit TeXoria", Quit)]),
+        Menu::new("TeXoria").items([
+            MenuItem::action("Settings…", OpenSettings),
+            MenuItem::separator(),
+            MenuItem::action("Quit TeXoria", Quit),
+        ]),
         Menu::new("File").items([
             MenuItem::action("Open…", Open),
             MenuItem::action("Save", Save),

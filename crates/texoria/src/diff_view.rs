@@ -172,7 +172,7 @@ impl DiffView {
         .detach();
     }
 
-    fn set_split(&mut self, split: bool, cx: &mut Context<Self>) {
+    pub fn set_split(&mut self, split: bool, cx: &mut Context<Self>) {
         self.split = split;
         self.state.update(cx, |s, cx| s.set_mode(mode(split), cx));
         cx.emit(DiffViewEvent::SplitChanged(split));

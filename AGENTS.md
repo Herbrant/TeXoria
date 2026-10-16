@@ -147,6 +147,11 @@ texoria ─┬─ tex-compile ── tex-log
     the rasterized PNG/`.icns`/`.ico` in `crates/texoria/packaging` are committed. `build.rs`
     embeds the `.ico` as Windows resource ID 1, which is where GPUI loads the window icon from.
   - Settings are TOML in the OS config dir (`directories::ProjectDirs("app","TeXoria","TeXoria")`).
+    `Workspace` owns them; `settings_window.rs` is the Settings window (⌘,, a second window built
+    on gpui-kit's `setting` component) and writes every change through
+    `Workspace::update_settings`, which saves and applies only what changed (engine, timeouts,
+    soft wrap of open tabs, Git options, trust, theme). Its setters update the main window, so
+    they must never run from inside it.
     Themes ("Paper" light, "Ink" dark) are in `assets/themes.json`; icons/fonts are embedded via
     `assets.rs`.
   - Files (sources and settings) are written through `atomic::write` (temp file + rename), and

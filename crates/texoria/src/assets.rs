@@ -86,6 +86,7 @@ glyphs! {
     PlainFile => "file",
     NewFile => "file-plus",
     NewFolder => "folder-plus",
+    Settings => "settings",
 }
 
 pub struct Assets;

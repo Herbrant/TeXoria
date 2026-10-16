@@ -32,6 +32,41 @@ pub struct Settings {
     pub git_timeout_secs: u64,
     /// Overleaf Server Pro instances (`https://latex.example.org`).
     pub overleaf_servers: Vec<String>,
+    pub theme: ThemeChoice,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeChoice {
+    /// Follow the system appearance.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeChoice {
+    pub const ALL: [ThemeChoice; 3] = [ThemeChoice::System, ThemeChoice::Light, ThemeChoice::Dark];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            ThemeChoice::System => "system",
+            ThemeChoice::Light => "light",
+            ThemeChoice::Dark => "dark",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeChoice::System => "System",
+            ThemeChoice::Light => "Paper (light)",
+            ThemeChoice::Dark => "Ink (dark)",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.key() == key)
+    }
 }
 
 impl Default for Settings {
@@ -49,6 +84,7 @@ impl Default for Settings {
             pull_rebase: false,
             git_timeout_secs: 120,
             overleaf_servers: Vec::new(),
+            theme: ThemeChoice::System,
         }
     }
 }
@@ -160,5 +196,20 @@ mod tests {
 
         let s = Settings::parse("trusted_projects = [\"/p/paper\"]\nrc_allowed = []\n");
         assert!(!s.allows_rc(Path::new("/p/paper")));
+    }
+
+    #[test]
+    fn theme_defaults_to_system_and_round_trips() {
+        assert_eq!(Settings::parse("").theme, ThemeChoice::System);
+        let s = Settings {
+            theme: ThemeChoice::Dark,
+            ..Settings::default()
+        };
+        let text = toml::to_string_pretty(&s).unwrap();
+        assert!(text.contains("theme = \"dark\""));
+        assert_eq!(Settings::parse(&text).theme, ThemeChoice::Dark);
+        for c in ThemeChoice::ALL {
+            assert_eq!(ThemeChoice::from_key(c.key()), Some(c));
+        }
     }
 }
