@@ -41,7 +41,9 @@ Ubuntu 22.04 x64/arm64 for an old enough glibc, Windows x64), publishes the GitH
 Pre-release tags (`v1.2.0-rc.1`) skip Homebrew and the AUR; a manual run only builds artifacts.
 The Homebrew/AUR step is `.github/workflows/publish.yml` (reads `SHA256SUMS` from the release):
 run it by hand with the tag to retry it.
-Asset names (`texoria-<v>-<os>-<arch>.<ext>`, `aarch64`/`x86_64`) are referenced by the templates.
+Asset names (`texoria-<v>-<os>-<arch>.<ext>`, `aarch64`/`x86_64`) are referenced by the templates
+and by `scripts/install.sh`, the end-user installer for macOS/Linux (latest release, checked
+against `SHA256SUMS`, no root: `/Applications` or `~/.local`).
 
 - There is no Apple Developer ID: `package-macos.sh` signs ad hoc (no notarization), and the cask
   clears the quarantine flag in `postflight_steps`.
@@ -190,4 +192,7 @@ texoria ─┬─ tex-compile ── tex-log
 ## Conventions
 
 - All repository content (code, comments, docs, commits) is in English.
+- User and developer documentation lives in `docs/` (index: `docs/README.md`); the README stays
+  short and links to it. Update the relevant page when a user-visible behavior, setting or
+  shortcut changes. The project is MIT-licensed.
 - Commit messages follow Conventional Commits (`type(scope): subject`).

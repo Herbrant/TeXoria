@@ -1,0 +1,28 @@
+# Keyboard shortcuts
+
+| Action | macOS | Windows, Linux |
+|---|---|---|
+| Open a file or folder | ⌘O | Ctrl+O |
+| Save | ⌘S | Ctrl+S |
+| Close tab | ⌘W | Ctrl+W |
+| Typeset | ⌘R | Ctrl+R |
+| Stop typesetting (outside the editor) | ⌘. | Ctrl+. |
+| Toggle live preview | ⌘⇧P | Ctrl+Shift+P |
+| Show the cursor's position in the PDF | ⌘J | Ctrl+J |
+| Jump from the PDF to the source | ⌘-click or double-click | Ctrl-click or double-click |
+| Zoom the PDF in / out | ⌘= / ⌘- | Ctrl+= / Ctrl+- |
+| Fit the PDF to the pane's width | ⌘0 | Ctrl+0 |
+| Outline | ⌘1 | Ctrl+1 |
+| Files | ⌘⇧E | Ctrl+Shift+E |
+| Source control | ⌘⇧G | Ctrl+Shift+G |
+| Problems panel | ⌘⇧M | Ctrl+Shift+M |
+| Commit (in the commit message box) | ⌘↵ | Ctrl+Enter |
+| Soft wrap (current tab) | ⌥Z | Alt+Z |
+| Spelling corrections (code actions, in the editor) | ⌘. or right-click | Ctrl+. or right-click |
+| Switch light / dark theme | ⌘⇧L | Ctrl+Shift+L |
+| Settings | ⌘, | Ctrl+, |
+| Quit | ⌘Q | Ctrl+Q |
+
+In the editor, ⌘. (Ctrl+.) opens the code actions instead of stopping the run: use *Typeset* →
+*Stop Typesetting*, or click outside the editor first. The editor also has the usual
+text-editing shortcuts (undo, redo, select all, …).

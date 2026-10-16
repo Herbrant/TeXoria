@@ -1,0 +1,51 @@
+# Settings
+
+Open the Settings window with ⌘, (Ctrl+,). Every change applies right away.
+
+## Editor
+
+| Setting | Default | |
+|---|---|---|
+| Theme | System | *Paper* (light), *Ink* (dark), or follow the system appearance. ⌘⇧L switches between them. |
+| Soft wrap | On | Wrap long lines. Very long files always open unwrapped; ⌥Z toggles the current tab. |
+| Check spelling | On | See [Spell checking](writing.md#spell-checking). |
+| Dictionary | | The words you added to your dictionary; remove them from here. |
+
+## Typesetting
+
+| Setting | Default | |
+|---|---|---|
+| Engine | First found | latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, or Tectonic (see [Engines](preview.md#engines)). |
+| Timeout | 300 s | Stop a run after this many seconds (0: never). |
+| Live preview | On | Save and typeset automatically after edits. |
+| Delay | 700 ms | Pause after the last keystroke before a live run. |
+
+## Git
+
+| Setting | Default | |
+|---|---|---|
+| Pull with rebase | Off | Rebase local commits on top of the pulled ones instead of merging. |
+| Side-by-side diffs | Off | Show changes in two columns instead of one. |
+| Network timeout | 120 s | Stop a fetch, pull or push after this many seconds (0: never). |
+| Overleaf Server Pro | | Your own Overleaf instances, which must use HTTPS. |
+
+## Trusted projects
+
+A project's Git configuration and its `latexmkrc` can run programs, so TeXoria asks before
+letting them (see [Git](git.md#trusting-a-project) and [latexmkrc](preview.md#latexmkrc)). This
+page lists the folders you allowed, separately for Git and for `latexmkrc`. Remove a folder and
+TeXoria will ask again.
+
+## Where files are stored
+
+Settings are a TOML file, `settings.toml`, that you can also edit by hand while TeXoria is
+closed. Downloaded spelling dictionaries go to the cache folder.
+
+| | Settings | Dictionaries |
+|---|---|---|
+| macOS | `~/Library/Application Support/app.TeXoria.TeXoria/` | `~/Library/Caches/app.TeXoria.TeXoria/dictionaries/` |
+| Linux | `~/.config/texoria/` | `~/.cache/texoria/dictionaries/` |
+| Windows | `%APPDATA%\TeXoria\TeXoria\config\` | `%LOCALAPPDATA%\TeXoria\TeXoria\cache\dictionaries\` |
+
+Overleaf tokens are not in the settings: they are in the system keychain (Keychain on macOS,
+Credential Manager on Windows, the Secret Service on Linux).

@@ -1,0 +1,59 @@
+# Writing
+
+## Completion
+
+Suggestions appear as you type and depend on where the cursor is:
+
+| Where | What is suggested |
+|---|---|
+| After `\` | Commands |
+| `\begin{…}` | Environments; the matching `\end{…}` is inserted for you |
+| `\ref{…}`, `\eqref{…}`, … | The labels defined anywhere in the project |
+| `\cite{…}` | The entries of the project's `.bib` files, matched by key, title or author |
+| `\usepackage{…}` | Package names |
+
+Ranking is fuzzy, so `\sec` finds `\section` and `\subsection`. Completions follow unsaved
+changes in every open tab.
+
+## Outline
+
+The outline (⌘1) lists the parts, chapters, sections and subsections of the whole project,
+following `\input` and `\include`, and highlights the section you are editing. Click an entry to
+jump to it.
+
+## Files
+
+The Files view (⌘⇧E) shares the sidebar with the outline and shows the project folder as a tree,
+colored by Git status. From it you can open, create, rename and delete files and folders. Tabs
+follow a renamed file and close when their file is deleted. Files that are not text, such as
+images and PDFs, open in their usual app.
+
+## Diagnostics
+
+After each run, the errors and warnings of the TeX log are underlined in the source and listed
+in the *Problems* panel (⌘⇧M). Click a problem to jump to its line.
+
+## Spell checking
+
+Misspelled words are underlined with a wavy line. Only the prose is checked: commands, math,
+labels, citations and the preamble (except `\title`) are skipped. Right-click a word, or press
+⌘. (Ctrl+.) on it, to pick a correction or add the word to your dictionary.
+
+Each file's language is detected automatically from, in order:
+
+1. a magic comment, in the file or in the root file:
+   ```latex
+   % !TeX spellcheck = en_GB
+   ```
+2. `babel` or `polyglossia` options in the root file;
+3. the text itself;
+4. the system language.
+
+The language is shown in the status bar: click it to choose another one, go back to automatic
+detection, or turn checking off for that file. About 90 languages are available (the
+[Hunspell dictionaries of wooorm/dictionaries](https://github.com/wooorm/dictionaries)).
+Dictionaries already installed on your system are used as they are; the others are downloaded
+the first time they are needed and verified against a pinned checksum.
+
+Turn spell checking off entirely, or remove words from your dictionary, in
+[Settings](settings.md) → *Editor*.
