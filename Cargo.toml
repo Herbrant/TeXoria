@@ -26,11 +26,14 @@ directories = "6"
 notify = "8"
 which = "8"
 tempfile = "3"
+# Already pulled in by gpui-kit's diff viewer.
+similar = "2.7"
 
 # Intra-workspace
 tex-log = { path = "crates/tex-log" }
 synctex = { path = "crates/synctex" }
 tex-compile = { path = "crates/tex-compile" }
+tex-git = { path = "crates/tex-git" }
 tex-syntax = { path = "crates/tex-syntax" }
 tex-project = { path = "crates/tex-project" }
 tex-complete = { path = "crates/tex-complete" }
