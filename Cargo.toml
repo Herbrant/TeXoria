@@ -37,6 +37,7 @@ tex-git = { path = "crates/tex-git" }
 tex-syntax = { path = "crates/tex-syntax" }
 tex-project = { path = "crates/tex-project" }
 tex-complete = { path = "crates/tex-complete" }
+tex-spell = { path = "crates/tex-spell" }
 pdf-view = { path = "crates/pdf-view" }
 
 [profile.release]

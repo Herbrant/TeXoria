@@ -10,6 +10,7 @@ mod overleaf;
 mod pdf_pane;
 mod settings;
 mod settings_window;
+mod spell;
 mod theme;
 mod workspace;
 

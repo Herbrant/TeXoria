@@ -132,8 +132,9 @@ impl SettingsWindow {
 
     // ── Pages ────────────────────────────────────────────────────────────
 
-    fn editor_page(&self) -> SettingPage {
+    fn editor_page(&self, cx: &App) -> SettingPage {
         let t = self.target.clone();
+        let words = t.get(cx, |s| s.spell_words.clone());
         let themes = ThemeChoice::ALL
             .iter()
             .map(|c| (c.key().into(), c.label().into()))
@@ -172,6 +173,31 @@ impl SettingsWindow {
                      ⌥Z toggles the current tab.",
                 ),
             ),
+            SettingGroup::new()
+                .title("Spelling")
+                .item(
+                    SettingItem::new(
+                        "Check spelling",
+                        bool_field(&t, |s| s.spell_check, |s, v| s.spell_check = v)
+                            .default_value(Settings::default().spell_check),
+                    )
+                    .description(
+                        "Underline misspelled words. The language of each file comes from a \
+                         `% !TeX spellcheck = …` comment, babel or polyglossia, or the text \
+                         itself, and can be changed in the status bar. Dictionaries that are not \
+                         installed are downloaded the first time they are needed.",
+                    ),
+                )
+                .item(removable_list(
+                    "word",
+                    words,
+                    String::clone,
+                    "Words added to the dictionary appear here.",
+                    {
+                        let t = t.clone();
+                        move |word, cx| t.set(cx, |s| s.spell_words.retain(|w| *w != word))
+                    },
+                )),
         ])
     }
 
@@ -437,10 +463,21 @@ fn path_list(
     empty: &'static str,
     remove: impl Fn(PathBuf, &mut App) + 'static,
 ) -> SettingItem {
+    removable_list(id, dirs, |d| d.display().to_string(), empty, remove)
+}
+
+/// Items, each with a button that removes it.
+fn removable_list<T: Clone + 'static>(
+    id: &'static str,
+    items: Vec<T>,
+    show: impl Fn(&T) -> String + 'static,
+    empty: &'static str,
+    remove: impl Fn(T, &mut App) + 'static,
+) -> SettingItem {
     let remove = std::rc::Rc::new(remove);
     SettingItem::render(move |_, _, cx| {
         let theme = cx.theme();
-        if dirs.is_empty() {
+        if items.is_empty() {
             return div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
@@ -450,25 +487,19 @@ fn path_list(
         v_flex()
             .w_full()
             .gap_1()
-            .children(dirs.iter().enumerate().map(|(ix, dir)| {
-                let (dir, remove) = (dir.clone(), remove.clone());
+            .children(items.iter().enumerate().map(|(ix, item)| {
+                let label = show(item);
+                let (item, remove) = (item.clone(), remove.clone());
                 h_flex()
                     .w_full()
                     .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .child(dir.display().to_string()),
-                    )
+                    .child(div().flex_1().min_w_0().truncate().text_sm().child(label))
                     .child(
                         Button::new((id, ix))
                             .ghost()
                             .small()
                             .label("Remove")
-                            .on_click(move |_, _, cx| remove(dir.clone(), cx)),
+                            .on_click(move |_, _, cx| remove(item.clone(), cx)),
                     )
             }))
             .into_any_element()
@@ -478,7 +509,7 @@ fn path_list(
 impl Render for SettingsWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let pages = [
-            self.editor_page(),
+            self.editor_page(cx),
             self.typesetting_page(cx),
             self.git_page(cx),
             self.trust_page(cx),

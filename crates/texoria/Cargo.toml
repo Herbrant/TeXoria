@@ -14,6 +14,7 @@ tex-git.workspace = true
 tex-syntax.workspace = true
 tex-project.workspace = true
 tex-complete.workspace = true
+tex-spell.workspace = true
 pdf-view.workspace = true
 
 anyhow.workspace = true
@@ -21,11 +22,14 @@ log.workspace = true
 env_logger.workspace = true
 serde.workspace = true
 toml.workspace = true
+serde_json.workspace = true
 directories.workspace = true
 # Versions shared with gpui-kit (completion items, async channels, frames).
 lsp-types = { version = "0.97", features = ["proposed"] }
 smol = "2"
 image = { version = "0.25", default-features = false }
+# The system language: fallback for spell checking and regional variants.
+sys-locale = "0.3"
 tempfile.workspace = true
 
 [build-dependencies]

@@ -68,6 +68,7 @@ window-free logic with its own unit tests. Dependency flow:
 texoria ─┬─ tex-compile ── tex-log
          ├─ tex-git (system `git` CLI)
          ├─ tex-complete ── tex-project ── tex-syntax
+         ├─ tex-spell ── tex-syntax
          ├─ synctex
          └─ pdf-view (PDFium)
 ```
@@ -102,6 +103,17 @@ texoria ─┬─ tex-compile ── tex-log
   Command Line Tools, whose stub would pop up an installer). Integration tests in
   `tests/repo.rs` use temp repos with `GIT_CONFIG_GLOBAL` pointing to a temp file and skip if git
   is missing.
+- **tex-spell**: spell checking. `extract::words` walks the tree-sitter tree and keeps only prose
+  (allow-list of node kinds, deny-lists of commands/environments, no preamble but `\title`);
+  `lang::detect` picks the language: `% !TeX spellcheck` (file, then root), babel/polyglossia
+  (`Index::{language_options, main_language}` from tex-syntax, root first), whatlang on the prose,
+  then the system language. `catalog` lists the ~90 Hunspell dictionaries of
+  wooorm/dictionaries; `store` uses system ones (`DICPATH`, `/usr/share/hunspell`,
+  `~/Library/Spelling`...) or downloads them at the pinned `store::COMMIT`, checking the SHA-256
+  in `data/dictionaries.tsv` (regenerate both with `scripts/gen-dictionaries.sh <commit>`).
+  Dictionaries are never bundled (their licenses vary, GPL included). spellbook is stricter than
+  Hunspell: `repair` reads numeric flags like Hunspell and drops unreadable lines so that every
+  catalog dictionary loads (keep it that way when bumping the commit).
 - **texoria** (`workspace.rs` is the main window: outline or files | editor tabs | PDF pane):
   - `git_panel.rs` is the Source Control sidebar (alternates with the outline). Mutating
     operations are emitted as `GitPanelEvent::Request(GitOp)`; the workspace saves dirty buffers
@@ -139,6 +151,13 @@ texoria ─┬─ tex-compile ── tex-log
   - `pdf_pane.rs` keeps old bitmaps on screen until the new PDF's pages are rasterized (no flash)
     and only materializes pages near the viewport. SyncTeX forward/inverse search goes through the
     `synctex` crate, whose coordinates are PDF points with a top-left origin, y downwards.
+  - `spell.rs`: each `Buffer` has a `BufferSpell` (a `TextDecorationCollection` of wavy
+    underlines, which follow edits, unlike editor diagnostics that are cleared on every edit).
+    `Workspace::spellcheck` runs `spell::analyze` and `Speller::misspelled` on the background
+    executor after `spell::DELAY`, and drops the result if the text changed meanwhile.
+    Corrections come from the editor's custom context menu and a `CodeActionProvider`, both
+    dispatching `ReplaceMisspelling`/`AddToDictionary` to the workspace. The language picker is in
+    the status bar; per-file choices and the personal dictionary live in `Settings`.
   - `latex.rs` registers the tree-sitter LaTeX language with gpui-kit's `LanguageRegistry` and
     bridges `tex-complete` items (byte range + insert text + cursor offset) to the editor;
     the post-insert cursor move is done in `Workspace::on_buffer_changed` via "fixups".

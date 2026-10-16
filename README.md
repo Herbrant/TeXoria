@@ -48,6 +48,11 @@ no TeX distribution installed, and uses the one you already have when there is o
   to open, create, rename and delete files. Images and PDFs open in their usual app.
 - **Inline diagnostics**: errors and warnings from the TeX log are underlined in the source and
   collected in the *Problems* panel.
+- **Spell checking in ~90 languages**: misspelled words in the prose (not in commands, math or
+  labels) are underlined, with corrections on right-click or ⌘. (Ctrl+.). Each file's language
+  is detected automatically from a `% !TeX spellcheck` comment, babel/polyglossia or the text
+  itself, and shown in the status bar, where you can change it. Hunspell dictionaries already
+  on your system are used; the others are downloaded the first time they are needed.
 
 ### Preview
 

@@ -10,6 +10,7 @@ use gpui_kit::component::highlighter::{Diagnostic as EditorDiagnostic, Diagnosti
 use gpui_kit::component::input::{
     Editor, EditorState, Input, InputEvent, InputState, Position, RopeExt, TabSize,
 };
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 use gpui_kit::component::{
@@ -23,6 +24,7 @@ use tex_compile::{Compiler, Engine, Event as CompileEvent, Job, Severity, Status
 use tex_git::{Cancel, Credential, Git};
 use tex_log::Diagnostic;
 use tex_project::{Project, ProjectOutlineItem, files};
+use tex_spell::{Source, Speller, catalog};
 use tex_syntax::OutlineKind;
 
 use crate::assets::Glyph;
@@ -33,8 +35,9 @@ use crate::git_panel::{self, GitOp, GitPanel, GitPanelEvent};
 use crate::latex::{self, CursorFixup, LatexCompletions};
 use crate::overleaf;
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
-use crate::settings::{Settings, ThemeChoice};
+use crate::settings::{Settings, SpellLanguage, ThemeChoice};
 use crate::settings_window::SettingsWindow;
+use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspelling, Spell};
 use crate::theme::{self, ThemeExt};
 use crate::{
     CancelTypeset, CloneRepository, CloseTab, Commit, Fetch, ForwardSearch, NewBranch, Open,
@@ -66,6 +69,7 @@ struct Buffer {
     dirty: bool,
     last_len: usize,
     soft_wrap: bool,
+    spell: BufferSpell,
     _subscription: Subscription,
 }
 
@@ -109,6 +113,7 @@ pub struct Workspace {
     focus: FocusHandle,
     was_dark: bool,
     settings_window: Option<AnyWindowHandle>,
+    spell: Spell,
     _live: Task<()>,
     _compile_events: Task<()>,
     _diff_subscription: Option<Subscription>,
@@ -173,6 +178,7 @@ impl Workspace {
             .and_then(|label| engines.iter().position(|e| &e.label() == label))
             .unwrap_or(0);
 
+        let spell = Spell::new(&settings.spell_words);
         let mut this = Workspace {
             settings,
             project: Arc::new(RwLock::new(Project::default())),
@@ -201,6 +207,7 @@ impl Workspace {
             focus: cx.focus_handle(),
             was_dark: cx.theme_is_dark(),
             settings_window: None,
+            spell,
             _live: Task::ready(()),
             _compile_events: Task::ready(()),
             _diff_subscription: None,
@@ -292,6 +299,20 @@ impl Workspace {
         if self.settings.theme != old.theme {
             theme::apply(self.settings.theme, Some(window), cx);
             self.sync_theme(cx);
+        }
+        let s = &self.settings;
+        if (s.spell_check, &s.spell_words, &s.spell_languages)
+            != (old.spell_check, &old.spell_words, &old.spell_languages)
+        {
+            self.spell.set_words(&self.settings.spell_words);
+            for ix in 0..self.buffers.len() {
+                let path = &self.buffers[ix].path;
+                if self.settings.spell_language(path) != old.spell_language(path) {
+                    // Back to detecting it, or a new choice.
+                    self.buffers[ix].spell.language = None;
+                }
+                self.spellcheck(ix, Duration::ZERO, cx);
+            }
         }
         cx.notify();
     }
@@ -477,6 +498,7 @@ impl Workspace {
             },
         );
         let last_len = text.len();
+        let spell = BufferSpell::new(&editor, cx);
         self.buffers.push(Buffer {
             path: file,
             editor,
@@ -484,9 +506,11 @@ impl Workspace {
             dirty: false,
             last_len,
             soft_wrap,
+            spell,
             _subscription: subscription,
         });
         self.active = self.buffers.len() - 1;
+        self.spellcheck(self.active, Duration::ZERO, cx);
         self.apply_diagnostics(cx);
         let focus = self.buffers[self.active].editor.focus_handle(cx);
         window.focus(&focus, cx);
@@ -570,6 +594,7 @@ impl Workspace {
             }
         }
 
+        self.spellcheck(ix, spell::DELAY, cx);
         let delay = Duration::from_millis(self.settings.live_delay_ms);
         let live = self.settings.live_preview;
         self._live = cx.spawn_in(window, async move |this, cx| {
@@ -664,6 +689,8 @@ impl Workspace {
                 b.last_len = text.len();
                 b.saved = text;
                 changed = true;
+                // `set_value` emits no change event.
+                self.spellcheck(ix, Duration::ZERO, cx);
             }
             ix += 1;
         }
@@ -781,6 +808,8 @@ impl Workspace {
                         b.path = p;
                     }
                 }
+                self.settings.move_spell_languages(&from, &to);
+                self.settings.save();
                 if let Some(root) = self.root.as_deref().and_then(moved) {
                     self.set_root(root, cx);
                 }
@@ -1399,6 +1428,179 @@ impl Workspace {
         }
     }
 
+    // ── Spell checking ───────────────────────────────────────────────────
+
+    /// Check buffer `ix` after `delay` (replacing a pending check).
+    fn spellcheck(&mut self, ix: usize, delay: Duration, cx: &mut Context<Self>) {
+        let Some(b) = self.buffers.get_mut(ix) else {
+            return;
+        };
+        let chosen = self.settings.spell_language(&b.path);
+        if !self.settings.spell_check || chosen == Some(SpellLanguage::OFF) {
+            b.spell.language = None;
+            b.spell.clear(cx);
+            return;
+        }
+        // An unknown code (a hand-edited setting) means detecting it.
+        let chosen = chosen.and_then(catalog::get).map(|l| l.code);
+        let path = b.path.clone();
+        let editor = b.editor.clone();
+        let previous = b.spell.language;
+        let root = self.root.clone().filter(|r| *r != path);
+        let root_text = root
+            .as_ref()
+            .and_then(|r| self.buffers.iter().find(|b| &b.path == r))
+            .map(|b| b.editor.read(cx).text().to_string());
+        let (index, root_index) = {
+            let project = self.project.read().unwrap();
+            let index = project.index(&path).cloned();
+            (index, root.as_ref().and_then(|r| project.index(r).cloned()))
+        };
+        let region = self.spell.region.clone();
+        let fallback = self.spell.fallback;
+        let words = self.spell.words.clone();
+        let color = cx.theme().danger;
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let Ok(text) = this.update(cx, |_, cx| editor.read(cx).text().to_string()) else {
+                return;
+            };
+            let job = spell::Job {
+                text: text.clone(),
+                chosen,
+                previous,
+                index,
+                root,
+                root_text,
+                root_index,
+                region,
+                fallback,
+            };
+            let analysis = cx
+                .background_spawn(async move { spell::analyze(job) })
+                .await;
+            let speller = this
+                .update(cx, |this, cx| {
+                    let speller = this.dictionary(analysis.language.code, cx);
+                    let b = this.buffers.iter_mut().find(|b| b.editor == editor)?;
+                    b.spell.language = Some(analysis.language);
+                    *b.spell.speller.borrow_mut() = speller.clone();
+                    if speller.is_none() {
+                        // Underlines from another language would be wrong;
+                        // loading the dictionary checks the buffer again.
+                        b.spell.underlines.clear(cx);
+                    }
+                    cx.notify();
+                    speller
+                })
+                .ok()
+                .flatten();
+            let Some(speller) = speller else {
+                return;
+            };
+            let (checked, words_in) = (text.clone(), analysis.words);
+            let misspelled = cx
+                .background_spawn(async move { speller.misspelled(&checked, &words_in, &words) })
+                .await;
+            this.update(cx, |this, cx| {
+                let Some(b) = this.buffers.iter().find(|b| b.editor == editor) else {
+                    return;
+                };
+                // Edited meanwhile: the next check is already on its way.
+                if *b.editor.read(cx).text() != text {
+                    return;
+                }
+                b.spell
+                    .underlines
+                    .set(spell::underlines(misspelled, color), cx);
+            })
+            .ok();
+        });
+        self.buffers[ix].spell.task = task;
+    }
+
+    /// The dictionary for `code`, or `None` while it loads (and checks the
+    /// buffers in that language again once it has).
+    fn dictionary(&mut self, code: &'static str, cx: &mut Context<Self>) -> Option<Arc<Speller>> {
+        match self.spell.dictionaries.get(code) {
+            Some(Dictionary::Ready(s)) => return Some(s.clone()),
+            Some(_) => return None,
+            None => {}
+        }
+        self.spell.dictionaries.insert(code, Dictionary::Loading);
+        let store = self.spell.store.clone();
+        cx.spawn(async move |this, cx| {
+            let loaded = cx.background_spawn(async move { store.load(code) }).await;
+            this.update(cx, |this, cx| {
+                let entry = match loaded {
+                    Ok(s) => Dictionary::Ready(Arc::new(s)),
+                    Err(e) => {
+                        log::warn!("spell checking dictionary {code}: {e:#}");
+                        Dictionary::Failed(format!("{e:#}").into())
+                    }
+                };
+                this.spell.dictionaries.insert(code, entry);
+                for ix in 0..this.buffers.len() {
+                    if this.buffers[ix]
+                        .spell
+                        .language
+                        .is_some_and(|d| d.code == code)
+                    {
+                        this.spellcheck(ix, Duration::ZERO, cx);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        None
+    }
+
+    /// Try a dictionary that failed to load (offline) again.
+    fn retry_dictionary(&mut self, code: &str, cx: &mut Context<Self>) {
+        if matches!(
+            self.spell.dictionaries.get(code),
+            Some(Dictionary::Failed(_))
+        ) {
+            self.spell.dictionaries.remove(code);
+        }
+        self.spellcheck(self.active, Duration::ZERO, cx);
+    }
+
+    /// Choose the active file's language (`None`: detect it).
+    fn set_spell_language(
+        &mut self,
+        language: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.buffers.get(self.active).map(|b| b.path.clone()) else {
+            return;
+        };
+        self.update_settings(|s| s.set_spell_language(&path, language), window, cx);
+    }
+
+    fn replace_misspelling(
+        &mut self,
+        action: &ReplaceMisspelling,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(b) = self.buffers.get(self.active) else {
+            return;
+        };
+        let range = action.range.clone();
+        let text = action.text.clone();
+        b.editor.update(cx, |state, cx| {
+            if range.end > state.text().len() {
+                return;
+            }
+            state.set_selected_range(range, cx);
+            state.replace(text, window, cx);
+        });
+    }
+
     // ── Actions ──────────────────────────────────────────────────────────
 
     fn forward_search(&mut self, cx: &mut Context<Self>) {
@@ -1452,6 +1654,10 @@ impl Workspace {
         if dark != self.was_dark {
             self.was_dark = dark;
             self.pdf.update(cx, |pdf, cx| pdf.set_dark(dark, cx));
+            // Underlines take their color from the theme.
+            for ix in 0..self.buffers.len() {
+                self.spellcheck(ix, Duration::ZERO, cx);
+            }
         }
     }
 
@@ -2029,6 +2235,8 @@ impl Workspace {
     }
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let language =
+            (self.settings.spell_check && !self.diff_active).then(|| self.render_language(cx));
         let theme = cx.theme();
         let cursor = self
             .buffers
@@ -2121,6 +2329,7 @@ impl Workspace {
                 )
             })
             .child(div().flex_1())
+            .children(language)
             .child(
                 div()
                     .id("live")
@@ -2138,6 +2347,102 @@ impl Workspace {
                     .child(engine)
                     .on_click(cx.listener(|this, _, _, cx| this.next_engine(cx))),
             )
+    }
+
+    /// The active file's language, with the menu to change it.
+    fn render_language(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let b = &self.buffers[self.active];
+        let chosen = self.settings.spell_language(&b.path).map(str::to_string);
+        let language = b.spell.language;
+        let dictionary = language.and_then(|d| self.spell.dictionaries.get(d.code));
+        let (icon, tooltip): (Glyph, SharedString) = match (language, dictionary) {
+            (None, _) if chosen.as_deref() == Some(SpellLanguage::OFF) => (
+                Glyph::Languages,
+                "Spelling is not checked in this file".into(),
+            ),
+            (None, _) => (Glyph::Spinner, "Checking spelling…".into()),
+            (Some(d), Some(Dictionary::Loading)) => (
+                Glyph::Spinner,
+                format!("Getting the {} dictionary…", catalog::name(d.code)).into(),
+            ),
+            (Some(_), Some(Dictionary::Failed(e))) => (
+                Glyph::Warning,
+                format!("The dictionary could not be loaded: {e}").into(),
+            ),
+            (Some(d), _) => {
+                let why = match d.source {
+                    Source::User => "chosen for this file",
+                    Source::Magic => "set by % !TeX spellcheck",
+                    Source::Package => "set with babel/polyglossia",
+                    Source::Text => "recognized from the text",
+                    Source::Fallback => "the system language",
+                };
+                (
+                    Glyph::Languages,
+                    format!("Spelling: {}, {why}", catalog::name(d.code)).into(),
+                )
+            }
+        };
+        let label = match (&chosen, language) {
+            (Some(c), _) if c == SpellLanguage::OFF => "Spelling Off".into(),
+            (_, Some(d)) => SharedString::from(catalog::name(d.code).to_string()),
+            _ => "Spelling".into(),
+        };
+        let failed = match dictionary {
+            Some(Dictionary::Failed(_)) => language.map(|d| d.code),
+            _ => None,
+        };
+        let current = language.map(|d| d.code);
+        let weak = cx.entity().downgrade();
+        Button::new("spell-language")
+            .ghost()
+            .xsmall()
+            .icon(icon)
+            .label(label)
+            .tooltip(tooltip)
+            .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, window, _| {
+                let detected = chosen.is_none();
+                let off = chosen.as_deref() == Some(SpellLanguage::OFF);
+                let pick = |language: Option<String>| {
+                    let weak = weak.clone();
+                    move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                        let language = language.clone();
+                        weak.update(cx, |this, cx| this.set_spell_language(language, window, cx))
+                            .ok();
+                    }
+                };
+                let mut menu = menu
+                    .scrollable(true)
+                    .max_h(window.viewport_size().height * 0.7)
+                    .item(
+                        PopupMenuItem::new("Detect Automatically")
+                            .checked(detected)
+                            .on_click(pick(None)),
+                    )
+                    .item(
+                        PopupMenuItem::new("Don't Check This File")
+                            .checked(off)
+                            .on_click(pick(Some(SpellLanguage::OFF.to_string()))),
+                    );
+                if let Some(code) = failed {
+                    let weak = weak.clone();
+                    menu = menu.item(PopupMenuItem::new("Retry Loading the Dictionary").on_click(
+                        move |_, _, cx| {
+                            weak.update(cx, |this, cx| this.retry_dictionary(code, cx))
+                                .ok();
+                        },
+                    ));
+                }
+                menu = menu.separator();
+                for l in catalog::LANGUAGES {
+                    menu = menu.item(
+                        PopupMenuItem::new(l.name)
+                            .checked(!off && current == Some(l.code))
+                            .on_click(pick(Some(l.code.to_string()))),
+                    );
+                }
+                menu
+            })
     }
 
     fn toggle_live(&mut self, cx: &mut Context<Self>) {
@@ -2295,6 +2600,14 @@ impl Render for Workspace {
             let center = match self.diff.clone().filter(|_| self.diff_active) {
                 Some(diff) => diff.into_any_element(),
                 None => Editor::new(&self.buffers[self.active].editor)
+                    .context_menu({
+                        let b = &self.buffers[self.active];
+                        spell::context_menu(
+                            b.editor.clone(),
+                            b.spell.underlines.clone(),
+                            b.spell.speller.clone(),
+                        )
+                    })
                     .bordered(false)
                     .h(relative(1.))
                     .font_family(theme.mono_font_family.clone())
@@ -2418,6 +2731,12 @@ impl Render for Workspace {
                 }
             }))
             .on_action(cx.listener(|this, _: &CloseTab, _, cx| this.close_tab(cx)))
+            .on_action(cx.listener(|this, a: &ReplaceMisspelling, window, cx| {
+                this.replace_misspelling(a, window, cx)
+            }))
+            .on_action(cx.listener(|this, a: &AddToDictionary, window, cx| {
+                this.update_settings(|s| s.add_spell_word(&a.word), window, cx)
+            }))
             .child(self.render_title_bar(cx))
             .child(div().flex_1().min_h_0().child(body))
             .when(!self.buffers.is_empty(), |d| {

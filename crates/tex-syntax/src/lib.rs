@@ -96,6 +96,14 @@ pub struct UserCommand {
     pub line: u32,
 }
 
+/// A main language set with polyglossia (`\setmainlanguage[variant=uk]{english}`)
+/// or babel's `main=` option.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainLanguage {
+    pub name: String,
+    pub variant: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Index {
     pub outline: Vec<OutlineItem>,
@@ -111,6 +119,10 @@ pub struct Index {
     /// `\documentclass` — present only in root files.
     pub document_class: Option<String>,
     pub packages: Vec<String>,
+    /// Options of `\documentclass` and `babel` without a value, in order: babel
+    /// takes the last one that names a language as the main language.
+    pub language_options: Vec<String>,
+    pub main_language: Option<MainLanguage>,
 }
 
 impl Index {
@@ -168,6 +180,25 @@ impl<'a> Walk<'a> {
                     out.push(t.to_string());
                 }
             }
+        }
+        out
+    }
+
+    /// `key[=value]` pairs of a `[...]` options group.
+    fn options(&self, node: Node) -> Vec<(String, Option<String>)> {
+        let Some(group) = node.child_by_field_name("options") else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let mut cursor = group.walk();
+        for pair in group.children_by_field_name("pair", &mut cursor) {
+            let Some(key) = pair.child_by_field_name("key") else {
+                continue;
+            };
+            let value = pair
+                .child_by_field_name("value")
+                .map(|v| self.src(v).trim().to_string());
+            out.push((self.src(key).trim().to_string(), value));
         }
         out
     }
@@ -323,11 +354,43 @@ impl<'a> Walk<'a> {
             }
             "class_include" => {
                 index.document_class = self.field_texts(node, "path", "path").into_iter().next();
+                let options = self.options(node);
+                index.language_options.extend(
+                    options
+                        .into_iter()
+                        .filter(|(_, v)| v.is_none())
+                        .map(|(k, _)| k),
+                );
             }
             "package_include" => {
-                index
-                    .packages
-                    .extend(self.field_texts(node, "paths", "path"));
+                let paths = self.field_texts(node, "paths", "path");
+                if paths.iter().any(|p| p == "babel") {
+                    for (key, value) in self.options(node) {
+                        match value {
+                            None => index.language_options.push(key),
+                            Some(name) if key == "main" => {
+                                index.main_language = Some(MainLanguage {
+                                    name,
+                                    variant: None,
+                                });
+                            }
+                            Some(_) => {}
+                        }
+                    }
+                }
+                index.packages.extend(paths);
+            }
+            "generic_command" => {
+                let name = node
+                    .child_by_field_name("command")
+                    .map(|c| self.src(c))
+                    .unwrap_or_default();
+                if matches!(name, "\\setmainlanguage" | "\\setdefaultlanguage")
+                    && let Some(main) =
+                        polyglossia_language(&self.text[node.start_byte() + name.len()..])
+                {
+                    index.main_language = Some(main);
+                }
             }
             "new_command_definition" | "old_command_definition" | "let_command_definition" => {
                 if let Some(decl) = node.child_by_field_name("declaration") {
@@ -359,6 +422,27 @@ impl<'a> Walk<'a> {
         }
         pushed_env
     }
+}
+
+/// The language of polyglossia's `[variant=..]{name}` arguments, which the
+/// grammar leaves outside the command when there is an optional argument.
+fn polyglossia_language(args: &str) -> Option<MainLanguage> {
+    let mut rest = args.trim_start();
+    let mut variant = None;
+    if let Some(r) = rest.strip_prefix('[') {
+        let (opts, r) = r.split_once(']')?;
+        variant = opts.split(',').find_map(|o| {
+            let (k, v) = o.split_once('=')?;
+            (k.trim() == "variant").then(|| v.trim().to_string())
+        });
+        rest = r.trim_start();
+    }
+    let (name, _) = rest.strip_prefix('{')?.split_once('}')?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| MainLanguage {
+        name: name.to_string(),
+        variant,
+    })
 }
 
 /// First `\caption` directly inside an environment (not in nested floats).
@@ -466,6 +550,34 @@ See \ref{eq:e} and \cite{knuth, lamport}.
                 (&IncludeKind::Bib, "refs")
             ]
         );
+    }
+
+    #[test]
+    fn finds_declared_languages() {
+        let idx = Index::from_text(
+            "\\documentclass[a4paper,english,fontsize=11pt]{article}\n\
+             \\usepackage[utf8]{inputenc}\n\\usepackage[ngerman, main=italian]{babel}",
+        );
+        assert_eq!(idx.language_options, vec!["a4paper", "english", "ngerman"]);
+        assert_eq!(
+            idx.main_language,
+            Some(MainLanguage {
+                name: "italian".into(),
+                variant: None
+            })
+        );
+        assert_eq!(idx.packages, vec!["inputenc", "babel"]);
+
+        let idx = Index::from_text("\\setmainlanguage[variant=british]{english}");
+        assert_eq!(
+            idx.main_language,
+            Some(MainLanguage {
+                name: "english".into(),
+                variant: Some("british".into())
+            })
+        );
+        let idx = Index::from_text("\\setdefaultlanguage{french}");
+        assert_eq!(idx.main_language.map(|m| m.name).as_deref(), Some("french"));
     }
 
     #[test]

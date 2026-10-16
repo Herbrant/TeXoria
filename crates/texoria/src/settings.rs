@@ -33,6 +33,24 @@ pub struct Settings {
     /// Overleaf Server Pro instances (`https://latex.example.org`).
     pub overleaf_servers: Vec<String>,
     pub theme: ThemeChoice,
+    /// Underline misspelled words.
+    pub spell_check: bool,
+    /// Words never reported as misspelled.
+    pub spell_words: Vec<String>,
+    /// Languages chosen by hand, per file.
+    pub spell_languages: Vec<SpellLanguage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpellLanguage {
+    pub file: PathBuf,
+    /// A `tex_spell::catalog` code, or [`SpellLanguage::OFF`].
+    pub language: String,
+}
+
+impl SpellLanguage {
+    /// Not checked at all.
+    pub const OFF: &str = "off";
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +103,9 @@ impl Default for Settings {
             git_timeout_secs: 120,
             overleaf_servers: Vec::new(),
             theme: ThemeChoice::System,
+            spell_check: true,
+            spell_words: Vec::new(),
+            spell_languages: Vec::new(),
         }
     }
 }
@@ -157,6 +178,45 @@ impl Settings {
         }
     }
 
+    /// The language chosen for `file`, if any (exact path, like trust).
+    pub fn spell_language(&self, file: &Path) -> Option<&str> {
+        self.spell_languages
+            .iter()
+            .find(|l| l.file == file)
+            .map(|l| l.language.as_str())
+    }
+
+    /// Choose the language of `file`; `None` goes back to detecting it.
+    pub fn set_spell_language(&mut self, file: &Path, language: Option<String>) {
+        self.spell_languages.retain(|l| l.file != file);
+        if let Some(language) = language {
+            self.spell_languages.push(SpellLanguage {
+                file: file.to_path_buf(),
+                language,
+            });
+        }
+    }
+
+    /// Follow a rename of `from` (a file or a directory) to `to`.
+    pub fn move_spell_languages(&mut self, from: &Path, to: &Path) {
+        for l in &mut self.spell_languages {
+            if let Ok(rest) = l.file.strip_prefix(from) {
+                l.file = if rest.as_os_str().is_empty() {
+                    to.to_path_buf()
+                } else {
+                    to.join(rest)
+                };
+            }
+        }
+    }
+
+    pub fn add_spell_word(&mut self, word: &str) {
+        if !self.spell_words.iter().any(|w| w == word) {
+            self.spell_words.push(word.to_string());
+            self.spell_words.sort();
+        }
+    }
+
     pub fn push_recent(&mut self, file: PathBuf) {
         self.recent.retain(|p| *p != file);
         self.recent.insert(0, file);
@@ -196,6 +256,34 @@ mod tests {
 
         let s = Settings::parse("trusted_projects = [\"/p/paper\"]\nrc_allowed = []\n");
         assert!(!s.allows_rc(Path::new("/p/paper")));
+    }
+
+    #[test]
+    fn spell_languages_are_per_file_and_round_trip() {
+        let mut s = Settings::default();
+        assert!(s.spell_check);
+        s.set_spell_language(Path::new("/p/main.tex"), Some("it".into()));
+        s.set_spell_language(Path::new("/p/ch/a.tex"), Some(SpellLanguage::OFF.into()));
+        s.set_spell_language(Path::new("/p/main.tex"), Some("de".into()));
+        assert_eq!(s.spell_language(Path::new("/p/main.tex")), Some("de"));
+        assert_eq!(s.spell_language(Path::new("/p/other.tex")), None);
+        s.move_spell_languages(Path::new("/p/ch"), Path::new("/p/chapters"));
+        assert_eq!(
+            s.spell_language(Path::new("/p/chapters/a.tex")),
+            Some("off")
+        );
+        s.add_spell_word("TeXoria");
+        s.add_spell_word("TeXoria");
+        assert_eq!(s.spell_words, vec!["TeXoria"]);
+
+        let text = toml::to_string_pretty(&s).unwrap();
+        let back = Settings::parse(&text);
+        assert_eq!(back.spell_languages, s.spell_languages);
+        assert_eq!(back.spell_words, s.spell_words);
+        assert_eq!(back.theme, s.theme);
+
+        s.set_spell_language(Path::new("/p/main.tex"), None);
+        assert_eq!(s.spell_language(Path::new("/p/main.tex")), None);
     }
 
     #[test]

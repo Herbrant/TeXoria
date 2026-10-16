@@ -1,0 +1,20 @@
+[package]
+name = "tex-spell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tex-syntax.workspace = true
+# Must match the tree-sitter major used by tex-syntax.
+tree-sitter = "0.26"
+anyhow.workspace = true
+log.workspace = true
+tempfile.workspace = true
+# Hunspell-compatible checker (pure Rust).
+spellbook = "0.4"
+whatlang = "0.18"
+# Dictionaries are downloaded on demand; system Hunspell files may be in a legacy charset.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+sha2 = "0.10"
+encoding_rs = "0.8"
