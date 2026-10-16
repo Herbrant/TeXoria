@@ -441,8 +441,8 @@ impl GitPanel {
             cx.emit(GitPanelEvent::WorktreeChanged);
         }
         match result {
-            Ok(Outcome::Initialized(git, repo)) => {
-                self.git = Some(Some(git));
+            Ok(Outcome::Initialized(repo)) => {
+                self.git = Some(Some(repo.git().clone()));
                 self.state = RepoState::Ready(repo);
                 self.history_loaded = false;
                 cx.emit(GitPanelEvent::Trust);
@@ -1590,7 +1590,7 @@ struct OpContext {
 
 enum Outcome {
     Done,
-    Initialized(Git, Repo),
+    Initialized(Repo),
 }
 
 fn run_op(op: GitOp, ctx: OpContext) -> tex_git::Result<Outcome> {
@@ -1603,8 +1603,7 @@ fn run_op(op: GitOp, ctx: OpContext) -> tex_git::Result<Outcome> {
         let dir = ctx
             .dir
             .ok_or_else(|| Error::Invalid("No project is open".into()))?;
-        let repo = git.init(&dir)?;
-        return Ok(Outcome::Initialized(git, repo));
+        return Ok(Outcome::Initialized(git.init(&dir)?));
     }
     let repo = ctx
         .repo

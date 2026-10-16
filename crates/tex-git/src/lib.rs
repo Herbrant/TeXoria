@@ -169,11 +169,12 @@ impl Git {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
+        let target = plain(dest);
         let args: [&std::ffi::OsStr; 4] = [
             "clone".as_ref(),
             "--".as_ref(),
             url.as_ref(),
-            dest.as_os_str(),
+            target.as_os_str(),
         ];
         self.run(
             parent,
@@ -191,7 +192,7 @@ impl Git {
 
     fn command(&self, dir: &Path) -> Command {
         let mut c = Command::new(&self.program);
-        c.current_dir(dir)
+        c.current_dir(plain(dir))
             .args([
                 "--no-pager",
                 "-c",
@@ -268,7 +269,20 @@ fn classify(command: String, output: String) -> Error {
 
 fn canon(path: &str) -> PathBuf {
     let p = PathBuf::from(path);
-    std::fs::canonicalize(&p).unwrap_or(p)
+    plain(&std::fs::canonicalize(&p).unwrap_or(p))
+}
+
+/// `\\?\C:\dir` as `C:\dir`. `canonicalize` returns such verbatim paths on
+/// Windows, and git does not understand them as a working directory or an
+/// argument.
+pub(crate) fn plain(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix(r"\\?\"))
+        && rest.as_bytes().get(1) == Some(&b':')
+    {
+        return PathBuf::from(rest);
+    }
+    path.to_path_buf()
 }
 
 fn fallback_dirs() -> Vec<PathBuf> {

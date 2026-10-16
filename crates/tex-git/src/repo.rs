@@ -51,6 +51,11 @@ impl Repo {
         Repo { git, root, git_dir }
     }
 
+    /// The git executable this repository is driven with.
+    pub fn git(&self) -> &Git {
+        &self.git
+    }
+
     /// The top-level directory of the working tree.
     pub fn root(&self) -> &Path {
         &self.root
@@ -65,6 +70,7 @@ impl Repo {
 
     /// The repository-relative, `/`-separated form of an absolute path.
     pub fn rel_path(&self, abs: &Path) -> Option<String> {
+        let abs = crate::plain(abs);
         let rel = abs.strip_prefix(&self.root).ok()?;
         let parts: Vec<_> = rel
             .components()
