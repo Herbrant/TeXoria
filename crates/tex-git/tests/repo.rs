@@ -291,10 +291,11 @@ fn sync_commits_rebases_and_pushes() {
     b.push(&b.status().unwrap(), &cancel).unwrap();
 
     // Uncommitted edits and a new file on a, while the remote moved on.
-    a.exclude_build_artifacts().unwrap();
-    a.exclude_build_artifacts().unwrap();
+    a.exclude_local_files().unwrap();
+    a.exclude_local_files().unwrap();
     let exclude = std::fs::read_to_string(tmp.path().join("a/.git/info/exclude")).unwrap();
     assert_eq!(exclude.matches("*.aux").count(), 1);
+    assert_eq!(exclude.matches(".DS_Store").count(), 1);
     write(&a, "main.tex", "one\ntwo\n");
     write(&a, "a.tex", "from a\n");
     write(&a, "main.aux", "build artifact\n");
@@ -356,8 +357,12 @@ fn excluded_build_artifacts_stay_local() {
     std::fs::remove_file(repo.abs_path(".gitignore")).unwrap();
     write(&repo, "main.aux", "build artifact\n");
     write(&repo, ".texoria/build/main.pdf", "pdf\n");
-    assert_eq!(repo.status().unwrap().entries.len(), 2);
-    repo.exclude_build_artifacts().unwrap();
+    write(&repo, ".DS_Store", "finder\n");
+    write(&repo, "figs/.DS_Store", "finder\n");
+    write(&repo, "main.tex~", "backup\n");
+    write(&repo, "_minted-main/x.pygtex", "cache\n");
+    assert_eq!(repo.status().unwrap().entries.len(), 6);
+    repo.exclude_local_files().unwrap();
     assert!(repo.status().unwrap().is_clean());
     assert!(!repo.abs_path(".gitignore").exists());
 }

@@ -31,8 +31,53 @@ use crate::assets::Glyph;
 use crate::diff_view::DiffSource;
 use crate::overleaf;
 
-/// The message of the commit a Sync makes.
+/// The message of the commit a Sync makes when the message box is empty.
 const SYNC_MESSAGE: &str = "Update from TeXoria";
+/// Files listed by name before a Sync; the rest are counted.
+const SYNC_REVIEW_ROWS: usize = 12;
+
+/// The files a Sync would add to or delete from the project. Reviewed by
+/// the user first: once pushed, collaborators see them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncReview {
+    added: Vec<String>,
+    deleted: Vec<String>,
+}
+
+impl SyncReview {
+    fn of(status: &Status) -> SyncReview {
+        let mut review = SyncReview::default();
+        for e in &status.entries {
+            let sides = [e.index, e.worktree];
+            if e.is_untracked() || sides.contains(&Change::Added) || sides.contains(&Change::Copied)
+            {
+                review.added.push(e.path.clone());
+            }
+            if sides.contains(&Change::Deleted) {
+                review.deleted.push(e.path.clone());
+            }
+            if sides.contains(&Change::Renamed) {
+                review.added.push(e.path.clone());
+                review.deleted.extend(e.orig_path.clone());
+            }
+        }
+        review.added.sort();
+        review.added.dedup();
+        review.deleted.sort();
+        review.deleted.dedup();
+        review
+    }
+
+    fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.deleted.is_empty()
+    }
+
+    /// Everything in `self` was reviewed in `seen`.
+    fn within(&self, seen: &SyncReview) -> bool {
+        self.added.iter().all(|p| seen.added.contains(p))
+            && self.deleted.iter().all(|p| seen.deleted.contains(p))
+    }
+}
 
 const HISTORY_PAGE: usize = 200;
 /// Rows rendered per section; a repository full of untracked files would
@@ -58,7 +103,12 @@ pub enum GitOp {
     Pull,
     Push,
     /// Commit everything, pull with rebase and push (Overleaf projects).
-    Sync,
+    Sync {
+        /// From the message box, else [`SYNC_MESSAGE`].
+        message: Option<String>,
+        /// The files the user agreed to add or delete.
+        review: SyncReview,
+    },
     Abort(Operation),
     ContinueRebase,
     Switch(Branch),
@@ -85,7 +135,7 @@ impl GitOp {
             GitOp::Fetch => "Fetch",
             GitOp::Pull => "Pull",
             GitOp::Push => "Push",
-            GitOp::Sync => "Sync",
+            GitOp::Sync { .. } => "Sync",
             GitOp::Abort(_) => "Abort",
             GitOp::ContinueRebase => "Continue rebase",
             GitOp::Switch(_) => "Switch branch",
@@ -97,7 +147,10 @@ impl GitOp {
     }
 
     fn is_network(&self) -> bool {
-        matches!(self, GitOp::Fetch | GitOp::Pull | GitOp::Push | GitOp::Sync)
+        matches!(
+            self,
+            GitOp::Fetch | GitOp::Pull | GitOp::Push | GitOp::Sync { .. }
+        )
     }
 
     /// git may rewrite files on disk, so open buffers must be reloaded.
@@ -106,7 +159,7 @@ impl GitOp {
             self,
             GitOp::Discard { .. }
                 | GitOp::Pull
-                | GitOp::Sync
+                | GitOp::Sync { .. }
                 | GitOp::Abort(_)
                 | GitOp::ContinueRebase
                 | GitOp::Switch(_)
@@ -410,6 +463,15 @@ impl GitPanel {
         let Some(server) = server else {
             return;
         };
+        // Also for projects cloned outside TeXoria.
+        if let Some(repo) = self.repo().cloned() {
+            cx.background_spawn(async move {
+                if let Err(e) = repo.exclude_local_files() {
+                    log::warn!("{e}");
+                }
+            })
+            .detach();
+        }
         let token = overleaf::load_token(&server, cx);
         cx.spawn(async move |this, cx| {
             let token = token.await;
@@ -447,10 +509,46 @@ impl GitPanel {
         if self.repo().is_none() || self.overleaf.is_none() {
             return;
         }
-        match self.check_overleaf_branch() {
-            Ok(()) => self.request(GitOp::Sync, cx),
-            Err(msg) => window.push_notification(Notification::info(msg), cx),
+        if let Err(msg) = self.check_overleaf_branch() {
+            window.push_notification(Notification::info(msg), cx);
+            return;
         }
+        let typed = self.message.read(cx).value().trim().to_string();
+        let message = (!typed.is_empty()).then_some(typed);
+        let review = SyncReview::of(&self.status);
+        if review.is_empty() {
+            self.request(GitOp::Sync { message, review }, cx);
+        } else {
+            self.confirm_sync(message, review, window, cx);
+        }
+    }
+
+    /// List the files a Sync would add or delete, and ask before going on.
+    fn confirm_sync(
+        &mut self,
+        message: Option<String>,
+        review: SyncReview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let weak = cx.entity().downgrade();
+        let body_review = review.clone();
+        open_form(
+            window,
+            cx,
+            "Sync with Overleaf?",
+            "Sync",
+            None,
+            move |_, cx| render_sync_review(&body_review, cx),
+            move |_, cx| {
+                let op = GitOp::Sync {
+                    message: message.clone(),
+                    review: review.clone(),
+                };
+                weak.update(cx, |this, cx| this.request(op, cx)).ok();
+                true
+            },
+        );
     }
 
     /// Ask for a new token, then retry `op` with it. The old one stays in
@@ -598,6 +696,18 @@ impl GitPanel {
                 _ => {}
             },
             Ok(Outcome::Synced(done)) => {
+                if done.committed
+                    && matches!(
+                        op,
+                        GitOp::Sync {
+                            message: Some(_),
+                            ..
+                        }
+                    )
+                {
+                    self.message.update(cx, |s, cx| s.set_value("", window, cx));
+                    self.amend = false;
+                }
                 let note = if done == SyncOutcome::default() {
                     Notification::info("Already up to date")
                 } else {
@@ -612,7 +722,9 @@ impl GitPanel {
             Err(Error::Auth { .. }) if self.overleaf.is_some() && op.is_network() => {
                 self.prompt_overleaf_token(op, window, cx);
             }
-            Err(Error::Unreachable { .. } | Error::TimedOut(_)) if matches!(op, GitOp::Sync) => {
+            Err(Error::Unreachable { .. } | Error::TimedOut(_))
+                if matches!(op, GitOp::Sync { .. }) =>
+            {
                 window.push_notification(
                     Notification::warning(
                         "Your changes are kept on this computer: sync again when you are back \
@@ -629,7 +741,7 @@ impl GitPanel {
                     .map(|r| r.operation())
                     .filter(|o| *o != Operation::None);
                 match (&op, stopped) {
-                    (GitOp::Pull | GitOp::Sync, Some(o)) => window.push_notification(
+                    (GitOp::Pull | GitOp::Sync { .. }, Some(o)) => window.push_notification(
                         Notification::warning(
                             "Resolve the conflicts below, then commit to finish.",
                         )
@@ -1815,7 +1927,16 @@ fn run_op(op: GitOp, ctx: OpContext) -> tex_git::Result<Outcome> {
         GitOp::Fetch => repo.fetch(&ctx.cancel)?,
         GitOp::Pull => repo.pull(ctx.rebase, &ctx.cancel)?,
         GitOp::Push => repo.push(&ctx.status, &ctx.cancel)?,
-        GitOp::Sync => return Ok(Outcome::Synced(repo.sync(SYNC_MESSAGE, &ctx.cancel)?)),
+        GitOp::Sync { message, review } => {
+            // Files may have come or gone since the user looked.
+            if !SyncReview::of(&repo.status()?).within(&review) {
+                return Err(Error::Invalid(
+                    "Files were added or deleted in the meantime: Sync again to review them".into(),
+                ));
+            }
+            let message = message.as_deref().unwrap_or(SYNC_MESSAGE);
+            return Ok(Outcome::Synced(repo.sync(message, &ctx.cancel)?));
+        }
         GitOp::Abort(op) => repo.abort(op)?,
         GitOp::ContinueRebase => repo.continue_rebase()?,
         GitOp::Switch(branch) => repo.switch(&branch)?,
@@ -1829,6 +1950,56 @@ fn run_op(op: GitOp, ctx: OpContext) -> tex_git::Result<Outcome> {
         GitOp::Init => unreachable!(),
     }
     Ok(Outcome::Done)
+}
+
+fn render_sync_review(review: &SyncReview, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let rows = review
+        .added
+        .iter()
+        .map(|p| ("+", p, theme.success))
+        .chain(review.deleted.iter().map(|p| ("−", p, theme.danger)));
+    let total = review.added.len() + review.deleted.len();
+    let mut list = v_flex()
+        .id("sync-review")
+        .max_h(px(240.))
+        .overflow_y_scroll()
+        .p_2()
+        .rounded(theme.radius)
+        .bg(theme.muted)
+        .font_family(theme.mono_font_family.clone())
+        .text_xs();
+    for (sign, path, color) in rows.take(SYNC_REVIEW_ROWS) {
+        list = list.child(
+            h_flex()
+                .gap_2()
+                .child(div().text_color(color).child(sign))
+                .child(div().truncate().child(path.clone())),
+        );
+    }
+    if total > SYNC_REVIEW_ROWS {
+        list = list.child(
+            div()
+                .text_color(theme.muted_foreground)
+                .child(format!("and {} more", total - SYNC_REVIEW_ROWS)),
+        );
+    }
+    let summary = match (review.added.len(), review.deleted.len()) {
+        (a, 0) => format!("{a} new file{} will be added", plural(a)),
+        (0, d) => format!("{d} file{} will be deleted", plural(d)),
+        (a, d) => format!(
+            "{a} new file{} will be added and {d} file{} deleted",
+            plural(a),
+            plural(d)
+        ),
+    };
+    v_flex()
+        .gap_2()
+        .child(div().text_sm().child(format!(
+            "{summary} on Overleaf, for every collaborator of the project."
+        )))
+        .child(list)
+        .into_any_element()
 }
 
 /// The remote the branch tracks, else `origin`, else the only one.
@@ -1972,8 +2143,50 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{civil_from_days, inside_repo, main_remote};
-    use tex_git::Status;
+    use super::{SyncReview, civil_from_days, inside_repo, main_remote};
+    use tex_git::{Change, Entry, Status};
+
+    fn entry(path: &str, index: Change, worktree: Change) -> Entry {
+        Entry {
+            path: path.into(),
+            orig_path: None,
+            index,
+            worktree,
+            conflicted: false,
+        }
+    }
+
+    #[test]
+    fn sync_review_lists_new_and_deleted_files() {
+        use Change::*;
+        let mut renamed = entry("new.tex", Renamed, Unmodified);
+        renamed.orig_path = Some("old.tex".into());
+        let status = Status {
+            entries: vec![
+                entry("main.tex", Unmodified, Modified),
+                entry("fig.png", Unmodified, Untracked),
+                entry("staged.tex", Added, Unmodified),
+                entry("gone.tex", Unmodified, Deleted),
+                entry("removed.tex", Deleted, Unmodified),
+                renamed,
+            ],
+            ..Default::default()
+        };
+        let review = SyncReview::of(&status);
+        assert_eq!(review.added, ["fig.png", "new.tex", "staged.tex"]);
+        assert_eq!(review.deleted, ["gone.tex", "old.tex", "removed.tex"]);
+
+        let edits_only = Status {
+            entries: vec![entry("main.tex", Modified, Modified)],
+            ..Default::default()
+        };
+        assert!(SyncReview::of(&edits_only).is_empty());
+
+        // A file that appeared after the review was not agreed to.
+        assert!(SyncReview::of(&edits_only).within(&review));
+        assert!(review.within(&review));
+        assert!(!review.within(&SyncReview::default()));
+    }
 
     #[test]
     fn picks_the_tracked_remote() {

@@ -833,7 +833,7 @@ impl Workspace {
                     let repo = git.clone_repo(&url, &dest, &cancel)?;
                     // Overleaf compiles on its side: local build files must not
                     // reach the collaborators.
-                    if overleaf && let Err(e) = repo.exclude_build_artifacts() {
+                    if overleaf && let Err(e) = repo.exclude_local_files() {
                         log::warn!("{e}");
                     }
                     Ok(repo.root().to_path_buf())

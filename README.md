@@ -143,14 +143,16 @@ a premium feature: the project's owner needs a paid plan.
    TeXoria asks for a new one when Overleaf rejects it.
 3. Pick where to put the project.
 
-Edit offline as usual. *Sync* in the Source Control panel commits your changes (as "Update from
-TeXoria"), pulls what changed on Overleaf and pushes; you can also commit with your own messages
-and Sync afterwards. Overleaf has no branches or tags, and its comments and tracked changes do not
+Edit offline as usual. *Sync* in the Source Control panel commits your changes (with the message
+in the commit box, or "Update from TeXoria"), pulls what changed on Overleaf and pushes; you can
+also commit with your own messages and Sync afterwards. When files would be added to or deleted
+from the project, Sync lists them and asks first. Overleaf has no branches or tags, and its comments and tracked changes do not
 travel through Git. The compiler and main document chosen on Overleaf are not part of the project
 either: pick them in TeXoria.
 
-LaTeX build files (`*.aux`, `*.log`, …) are kept out of Sync through the clone's
-`.git/info/exclude`, so nothing new appears in the project on Overleaf. For Overleaf Server Pro,
+LaTeX build files (`*.aux`, `*.log`, …), system and editor files (`.DS_Store`, `*~`, …) and
+package caches (`_minted-*`) are kept out of Sync through the project's `.git/info/exclude`, so
+they never reach your collaborators. For Overleaf Server Pro,
 add your instance to `overleaf_servers`: it must use HTTPS, or TeXoria will not send it the token.
 
 ## Configuration

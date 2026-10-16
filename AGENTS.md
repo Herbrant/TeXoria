@@ -114,8 +114,10 @@ texoria ─┬─ tex-compile ── tex-log
     keychain fails). A typed token is saved only once Overleaf accepted it, and a rejected one is
     never deleted (the refusal may concern one project only). The Git panel detects an Overleaf
     remote on refresh, passes the token as a `Credential`, offers `GitOp::Sync`, and asks for a
-    new token on `Error::Auth`. Overleaf clones get the LaTeX artifacts in `.git/info/exclude`
-    (a `.gitignore` would be pushed to the collaborators).
+    new token on `Error::Auth`. Before a Sync that adds or deletes files it shows them
+    (`SyncReview`), and `run_op` refuses the Sync if new ones appeared since. Overleaf projects
+    get `Repo::exclude_local_files` (build artifacts, system/editor files, package caches in
+    `.git/info/exclude`: a `.gitignore` would be pushed to the collaborators).
   - `diff_view.rs` is a single "preview" diff tab built on `gpui_kit::component::diff`
     (`DiffFile::parse` of git's patch, `parse_conflicts` for merge conflicts). It does not support
     combined diffs, so commits are shown against their first parent. The gpui-kit editor has no

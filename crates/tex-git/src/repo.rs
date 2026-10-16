@@ -29,6 +29,25 @@ pub(crate) const LATEX_GITIGNORE: &str = "\
 .texoria/
 ";
 
+/// Files that only make sense on this computer: system and editor files,
+/// and caches of packages that run external tools.
+const LOCAL_FILES: &str = "\
+# System and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+*.swo
+.#*
+.vscode/
+.idea/
+# Package caches
+_minted*/
+svg-inkscape/
+*.synctex(busy)
+";
+
 /// Untracked files larger than this are shown as binary.
 const MAX_TEXT_PREVIEW: u64 = 8 << 20;
 
@@ -302,19 +321,30 @@ impl Repo {
 
     // ── Changing the working tree and index ─────────────────────────────
 
-    /// Keep LaTeX build artifacts out of commits through `.git/info/exclude`,
-    /// for projects where a `.gitignore` would be unwelcome (it would be
-    /// pushed to the other collaborators, on Overleaf say).
-    pub fn exclude_build_artifacts(&self) -> Result<()> {
+    /// Keep LaTeX build artifacts, system and editor files out of commits
+    /// through `.git/info/exclude`, for projects where a `.gitignore` would
+    /// be unwelcome (it would be pushed to the other collaborators, on
+    /// Overleaf say). Adds only the patterns that are missing.
+    pub fn exclude_local_files(&self) -> Result<()> {
         let path = self.git_dir.join("info").join("exclude");
         let mut text = std::fs::read_to_string(&path).unwrap_or_default();
-        if text.contains(LATEX_GITIGNORE) {
+        let present: Vec<&str> = text.lines().map(str::trim).collect();
+        let missing: Vec<&str> = LATEX_GITIGNORE
+            .lines()
+            .chain(LOCAL_FILES.lines())
+            .filter(|l| !l.starts_with('#') && !l.is_empty() && !present.contains(l))
+            .collect();
+        if missing.is_empty() {
             return Ok(());
         }
         if !text.is_empty() && !text.ends_with('\n') {
             text.push('\n');
         }
-        text.push_str(LATEX_GITIGNORE);
+        text.push_str("# Local files, kept out of commits by TeXoria\n");
+        for pattern in missing {
+            text.push_str(pattern);
+            text.push('\n');
+        }
         let write = |path: &Path| {
             std::fs::create_dir_all(path.parent().unwrap_or(path))?;
             std::fs::write(path, &text)
