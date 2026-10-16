@@ -26,6 +26,9 @@ lsp-types = { version = "0.97", features = ["proposed"] }
 smol = "2"
 image = { version = "0.25", default-features = false }
 
+[build-dependencies]
+embed-resource = "3"
+
 # `cargo packager --release` (https://github.com/crabnebula-dev/cargo-packager).
 # Run scripts/fetch-pdfium.sh and scripts/fetch-tectonic.sh first.
 [package.metadata.packager]
@@ -36,6 +39,8 @@ description = "An elegant, fast LaTeX editor"
 before-packaging-command = "cargo build -p texoria --release"
 out-dir = "../../target/dist"
 binaries = [{ path = "texoria", main = true }]
+# Generated from assets/logo by scripts/gen-icons.sh.
+icons = ["packaging/icons/*.png", "packaging/texoria.icns", "packaging/texoria.ico"]
 formats = ["app", "dmg", "nsis", "deb", "appimage"]
 resources = [
   { src = "../../vendor/pdfium/*", target = "." },

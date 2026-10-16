@@ -6504,6 +6504,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "directories",
+ "embed-resource",
  "env_logger",
  "gpui-kit",
  "image",

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- TeXoria app icon: LaTeX source (Ink theme) on the left, typeset page (Paper theme) on the right. -->
+  <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2E2C29"/>
+      <stop offset="1" stop-color="#1B1A19"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FDFCF9"/>
+      <stop offset="1" stop-color="#EEEAE1"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="100" y="100" width="824" height="824" rx="184"/>
+    </clipPath>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity=".25"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="#1B1A19" filter="url(#shadow)"/>
+  <g clip-path="url(#tile)">
+    <rect x="100" y="100" width="412" height="824" fill="url(#ink)"/>
+    <rect x="512" y="100" width="412" height="824" fill="url(#paper)"/>
+    <!-- Source: syntax-coloured tokens, indented like an environment body. -->
+    <g fill="none" stroke-width="30" stroke-linecap="round">
+      <path d="M190 300 H262" stroke="#E07A6A"/>
+      <path d="M316 300 H420" stroke="#8DB57F"/>
+      <path d="M230 380 H300" stroke="#82A9CC"/>
+      <path d="M354 380 H430" stroke="#8F897E"/>
+      <path d="M230 460 H420" stroke="#8F897E"/>
+      <path d="M230 540 H350" stroke="#8F897E"/>
+      <path d="M190 620 H246" stroke="#E07A6A"/>
+      <path d="M300 620 H400" stroke="#77BDB3"/>
+      <path d="M190 700 H430" stroke="#8F897E"/>
+    </g>
+    <rect x="374" y="512" width="12" height="56" rx="6" fill="#82A9CC"/>
+    <!-- Page: title, author, two paragraphs and a plotted curve. -->
+    <g fill="#2B2A27">
+      <rect x="652" y="286" width="132" height="28" rx="4"/>
+      <rect x="678" y="336" width="80" height="12" rx="6" opacity=".45"/>
+      <rect x="592" y="404" width="252" height="12" rx="6" opacity=".4"/>
+      <rect x="592" y="436" width="252" height="12" rx="6" opacity=".4"/>
+      <rect x="592" y="468" width="184" height="12" rx="6" opacity=".4"/>
+      <rect x="592" y="524" width="252" height="12" rx="6" opacity=".4"/>
+      <rect x="592" y="556" width="216" height="12" rx="6" opacity=".4"/>
+    </g>
+    <path d="M604 624 V744 H836" fill="none" stroke="#2B2A27" stroke-opacity=".35" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M620 728 C660 640 700 636 732 676 S800 724 830 640" fill="none" stroke="#3E6A8C" stroke-width="14" stroke-linecap="round"/>
+  </g>
+  <rect x="102" y="102" width="820" height="820" rx="182" fill="none" stroke="#000" stroke-opacity=".08" stroke-width="4"/>
+</svg>

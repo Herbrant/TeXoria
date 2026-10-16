@@ -1,0 +1,2 @@
+// GPUI loads the window icon from resource ID 1; Explorer uses it for the executable too.
+1 ICON "texoria.ico"

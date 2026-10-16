@@ -21,6 +21,7 @@ cargo test -p synctex inverse                  # tests matching a name filter
 cargo test -p tex-compile -- --include-ignored # also runs the Tectonic e2e test (downloads TeX bundle first time)
 
 cargo packager --release -p texoria  # .app/.dmg, NSIS, .deb, AppImage into target/dist
+./scripts/gen-icons.sh               # assets/logo/*.svg → crates/texoria/packaging (macOS only)
 ```
 
 CI (`.github/workflows/ci.yml`, macOS/Ubuntu/Windows) runs fmt check, clippy with `-D warnings`,
@@ -67,6 +68,9 @@ texoria ─┬─ tex-compile ── tex-log
     bridges `tex-complete` items (byte range + insert text + cursor offset) to the editor;
     the post-insert cursor move is done in `Workspace::on_buffer_changed` via "fixups".
   - Actions/keybindings/menus are declared in `main.rs` (`secondary-*` = ⌘ on macOS, Ctrl elsewhere).
+  - The app icon's sources are `assets/logo/texoria.svg` (and `texoria-small.svg` for ≤ 48 px);
+    the rasterized PNG/`.icns`/`.ico` in `crates/texoria/packaging` are committed. `build.rs`
+    embeds the `.ico` as Windows resource ID 1, which is where GPUI loads the window icon from.
   - Settings are TOML in the OS config dir (`directories::ProjectDirs("app","TeXoria","TeXoria")`).
     Themes ("Paper" light, "Ink" dark) are in `assets/themes.json`; icons/fonts are embedded via
     `assets.rs`.

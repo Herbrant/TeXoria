@@ -102,6 +102,8 @@ fn main() {
                 titlebar: Some(component::TitleBar::title_bar_options()),
                 window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
                 window_min_size: Some(size(px(720.), px(480.))),
+                // Matches the packaged `texoria.desktop`, so Linux shells pick up its icon.
+                app_id: Some("texoria".into()),
                 ..Default::default()
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
