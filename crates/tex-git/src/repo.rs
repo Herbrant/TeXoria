@@ -39,6 +39,14 @@ pub struct CommitOptions {
     pub all: bool,
 }
 
+/// What [`Repo::sync`] did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SyncOutcome {
+    pub committed: bool,
+    pub pulled: bool,
+    pub pushed: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Repo {
     git: Git,
@@ -98,6 +106,7 @@ impl Repo {
             Options {
                 timeout: self.git.network_timeout,
                 cancel: Some(cancel),
+                network: true,
                 ..Default::default()
             },
         )
@@ -264,6 +273,27 @@ impl Repo {
             .collect())
     }
 
+    /// The URL of remote `name`, or `None` if there is no such remote.
+    pub fn remote_url(&self, name: &str) -> Result<Option<String>> {
+        if name.is_empty() || name.starts_with('-') {
+            return Ok(None);
+        }
+        match self.run(["remote", "get-url", name]) {
+            Ok(out) => Ok(Some(String::from_utf8_lossy(&out).trim().to_string())),
+            Err(Error::Failed { output, .. }) if output.contains("No such remote") => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The commit `rev` names, or `None` if it does not exist.
+    fn resolve(&self, rev: &str) -> Result<Option<String>> {
+        match self.run(["rev-parse", "--verify", "--quiet", rev]) {
+            Ok(out) => Ok(Some(String::from_utf8_lossy(&out).trim().to_string())),
+            Err(Error::Failed { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     // ── Changing the working tree and index ─────────────────────────────
 
     pub fn stage(&self, paths: &[String]) -> Result<()> {
@@ -404,6 +434,43 @@ impl Repo {
         }
         self.run_network(["push", "--quiet", "-u", remote, "HEAD"], cancel)
             .map(drop)
+    }
+
+    /// Commit every change with `message`, rebase onto the upstream and
+    /// push: one step that leaves the branch equal to its upstream.
+    pub fn sync(&self, message: &str, cancel: &Cancel) -> Result<SyncOutcome> {
+        let status = self.status()?;
+        if status.operation != Operation::None {
+            return Err(Error::Invalid(format!(
+                "Finish the {} first",
+                status.operation.label().to_lowercase()
+            )));
+        }
+        if status.conflicts().next().is_some() {
+            return Err(Error::Invalid("Resolve the conflicts first".into()));
+        }
+        if status.branch.is_none() {
+            return Err(Error::Invalid("Check out a branch to sync it".into()));
+        }
+        if status.upstream.is_none() {
+            return Err(Error::Invalid(
+                "The branch has no upstream to sync with".into(),
+            ));
+        }
+        let mut outcome = SyncOutcome::default();
+        if !status.is_clean() {
+            self.stage(&[".".to_string()])?;
+            self.commit(message, CommitOptions::default())?;
+            outcome.committed = true;
+        }
+        let upstream = self.resolve("@{upstream}")?;
+        self.pull(true, cancel)?;
+        outcome.pulled = self.resolve("@{upstream}")? != upstream;
+        if self.status()?.ahead > 0 {
+            self.run_network(["push", "--quiet"], cancel)?;
+            outcome.pushed = true;
+        }
+        Ok(outcome)
     }
 
     /// Stop the merge, rebase, cherry-pick or revert in progress.

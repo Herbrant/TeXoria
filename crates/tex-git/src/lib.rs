@@ -9,18 +9,20 @@
 //! `git status` (`core.fsmonitor`, filter drivers, …): callers must only use a
 //! [`Repo`] for projects the user trusts.
 
+pub mod overleaf;
 mod parse;
 mod process;
 mod repo;
 
 use std::ffi::OsString;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 pub use parse::{Branch, Change, Commit, Entry, Operation, Status};
 pub use process::Cancel;
-pub use repo::{CommitOptions, Repo, clone_dir_name, untracked_patch};
+pub use repo::{CommitOptions, Repo, SyncOutcome, clone_dir_name, untracked_patch};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -36,6 +38,8 @@ pub enum Error {
     Auth { output: String },
     #[error("No remote repository is configured")]
     NoRemote,
+    #[error("Cannot reach the remote: check your connection")]
+    Unreachable { output: String },
     #[error("Cancelled")]
     Cancelled,
     #[error("Timed out after {0} s")]
@@ -48,9 +52,10 @@ impl Error {
     /// git's full output, for a "details" view.
     pub fn details(&self) -> Option<&str> {
         match self {
-            Error::Failed { output, .. } | Error::Rejected { output } | Error::Auth { output } => {
-                Some(output)
-            }
+            Error::Failed { output, .. }
+            | Error::Rejected { output }
+            | Error::Auth { output }
+            | Error::Unreachable { output } => Some(output),
             _ => None,
         }
     }
@@ -58,12 +63,36 @@ impl Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// A username and password for the remotes under one URL prefix
+/// (`https://host`), given to git in place of the user's credential helpers.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Credential {
+    pub url: String,
+    pub username: String,
+    pub password: String,
+}
+
+impl fmt::Debug for Credential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credential")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A credential helper that answers `get` from the environment, so the
+/// password never appears in a command line, a URL or a config file.
+const CREDENTIAL_HELPER: &str = "!f() { if test \"$1\" = get; then \
+    printf 'username=%s\\npassword=%s\\n' \"$TEXORIA_GIT_USERNAME\" \"$TEXORIA_GIT_PASSWORD\"; fi; }; f";
+
 /// A git executable and the environment it runs with.
 #[derive(Debug, Clone)]
 pub struct Git {
     program: PathBuf,
     env: Vec<(OsString, OsString)>,
     network_timeout: Option<Duration>,
+    credential: Option<Credential>,
 }
 
 impl Git {
@@ -91,6 +120,7 @@ impl Git {
             program: program.into(),
             env: Vec::new(),
             network_timeout: Some(Duration::from_secs(120)),
+            credential: None,
         }
     }
 
@@ -104,6 +134,13 @@ impl Git {
     /// Kill fetch/pull/push after this long (`None`: never).
     pub fn network_timeout(mut self, timeout: Option<Duration>) -> Git {
         self.network_timeout = timeout;
+        self
+    }
+
+    /// Credentials for fetch, pull, push and clone from `credential.url`;
+    /// other remotes keep using the user's helpers.
+    pub fn credential(mut self, credential: Option<Credential>) -> Git {
+        self.credential = credential;
         self
     }
 
@@ -183,6 +220,7 @@ impl Git {
                 // A large clone takes a while: only an explicit cancel stops it.
                 timeout: None,
                 cancel: Some(cancel),
+                network: true,
                 ..Default::default()
             },
         )?;
@@ -223,6 +261,18 @@ impl Git {
         S: AsRef<std::ffi::OsStr>,
     {
         let mut cmd = self.command(dir);
+        if opts.network
+            && let Some(c) = &self.credential
+        {
+            // An empty value drops the helpers configured so far for this URL.
+            let key = format!("credential.{}.helper", c.url);
+            cmd.arg("-c")
+                .arg(format!("{key}="))
+                .arg("-c")
+                .arg(format!("{key}={CREDENTIAL_HELPER}"))
+                .env("TEXORIA_GIT_USERNAME", &c.username)
+                .env("TEXORIA_GIT_PASSWORD", &c.password);
+        }
         let args: Vec<OsString> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
         cmd.args(&args);
         let out = process::run(cmd, opts)?;
@@ -255,6 +305,17 @@ fn classify(command: String, output: String) -> Error {
         && (has("[rejected]") || has("non-fast-forward") || has("fetch first"))
     {
         Error::Rejected { output }
+    } else if matches!(command.as_str(), "clone" | "fetch" | "pull" | "push")
+        && (has("Could not resolve host")
+            || has("Couldn't resolve host")
+            || has("Failed to connect")
+            || has("Couldn't connect to server")
+            || has("Network is unreachable")
+            || has("Connection timed out")
+            || has("Operation timed out")
+            || has("Connection refused"))
+    {
+        Error::Unreachable { output }
     } else if has("Authentication failed")
         || has("could not read Username")
         || has("could not read Password")
@@ -315,4 +376,77 @@ fn has_clt() -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_replaces_helpers_for_its_url_only() {
+        let Some(found) = Git::find() else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("gitconfig");
+        // The user's own helper, with a stale password.
+        std::fs::write(
+            &config,
+            "[credential]\n\thelper = \"!f() { echo username=me; echo password=stale; }; f\"\n",
+        )
+        .unwrap();
+        let git = Git::at(found.program())
+            .env("GIT_CONFIG_GLOBAL", &config)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", tmp.path())
+            .credential(Some(Credential {
+                url: "https://git.overleaf.com".into(),
+                username: "git".into(),
+                password: "olp_secret".into(),
+            }));
+        let fill = |host: &str, network: bool| {
+            let input = format!("protocol=https\nhost={host}\npath=abc\n\n");
+            let out = git
+                .run(
+                    tmp.path(),
+                    ["credential", "fill"],
+                    process::Options {
+                        stdin: Some(input.as_bytes()),
+                        network,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        let out = fill("git.overleaf.com", true);
+        assert!(out.contains("username=git\n"), "{out}");
+        assert!(out.contains("password=olp_secret\n"), "{out}");
+        assert!(fill("github.com", true).contains("password=stale\n"));
+        // Only network commands get it.
+        assert!(fill("git.overleaf.com", false).contains("password=stale\n"));
+    }
+
+    #[test]
+    fn credential_debug_hides_password() {
+        let c = Credential {
+            url: "https://git.overleaf.com".into(),
+            username: "git".into(),
+            password: "olp_secret".into(),
+        };
+        assert!(!format!("{c:?}").contains("olp_secret"));
+    }
+
+    #[test]
+    fn classifies_unreachable_remotes() {
+        let out = "fatal: unable to access 'https://x/': Could not resolve host: x".to_string();
+        assert!(matches!(
+            classify("fetch".into(), out.clone()),
+            Error::Unreachable { .. }
+        ));
+        assert!(matches!(
+            classify("status".into(), out),
+            Error::Failed { .. }
+        ));
+    }
 }

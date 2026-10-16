@@ -37,6 +37,8 @@ pub(crate) struct Options<'a> {
     pub stdin: Option<&'a [u8]>,
     pub timeout: Option<Duration>,
     pub cancel: Option<&'a Cancel>,
+    /// The command talks to a remote: [`crate::Credential`]s apply.
+    pub network: bool,
 }
 
 pub(crate) struct Output {

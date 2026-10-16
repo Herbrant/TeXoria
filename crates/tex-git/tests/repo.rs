@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use tex_git::{Cancel, CommitOptions, Error, Git, Operation, Repo};
+use tex_git::{Cancel, CommitOptions, Error, Git, Operation, Repo, SyncOutcome};
 
 /// git with the user's own configuration out of the way.
 fn git(home: &Path) -> Option<Git> {
@@ -256,4 +256,85 @@ fn cancel_stops_network_operations() {
         )
         .unwrap_err();
     assert!(matches!(err, Error::Cancelled), "{err:?}");
+}
+
+#[test]
+fn sync_commits_rebases_and_pushes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(git) = git(tmp.path()) else {
+        return;
+    };
+    let cancel = Cancel::new();
+    let remote = tmp.path().join("remote.git");
+    let bare = std::process::Command::new(git.program())
+        .args(["init", "--bare", "--quiet", "-b", "main"])
+        .arg(&remote)
+        .status()
+        .unwrap();
+    assert!(bare.success());
+
+    let a = git.init(&tmp.path().join("a")).unwrap();
+    write(&a, "main.tex", "one\n");
+    commit_all(&a, "first");
+    // Nothing to sync with yet.
+    assert!(matches!(a.sync("Sync", &cancel), Err(Error::Invalid(_))));
+    a.add_remote("origin", remote.to_str().unwrap()).unwrap();
+    a.push(&a.status().unwrap(), &cancel).unwrap();
+    assert_eq!(a.remote_url("origin").unwrap().as_deref(), remote.to_str());
+    assert_eq!(a.remote_url("nope").unwrap(), None);
+
+    let b = git
+        .clone_repo(remote.to_str().unwrap(), &tmp.path().join("b"), &cancel)
+        .unwrap();
+    write(&b, "b.tex", "from b\n");
+    commit_all(&b, "b edits");
+    b.push(&b.status().unwrap(), &cancel).unwrap();
+
+    // Uncommitted edits and a new file on a, while the remote moved on.
+    write(&a, "main.tex", "one\ntwo\n");
+    write(&a, "a.tex", "from a\n");
+    let done = a.sync("Sync", &cancel).unwrap();
+    assert_eq!(
+        done,
+        SyncOutcome {
+            committed: true,
+            pulled: true,
+            pushed: true
+        }
+    );
+    let st = a.status().unwrap();
+    assert!(st.is_clean());
+    assert_eq!((st.ahead, st.behind), (0, 0));
+    let log: Vec<_> = a
+        .log(0, 10, None)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.subject)
+        .collect();
+    assert_eq!(log, ["Sync", "b edits", "first"]);
+    assert_eq!(a.sync("Sync", &cancel).unwrap(), SyncOutcome::default());
+
+    // A commit made by hand is pushed too.
+    b.pull(true, &cancel).unwrap();
+    write(&b, "b.tex", "from b again\n");
+    commit_all(&b, "by hand");
+    let done = b.sync("Sync", &cancel).unwrap();
+    assert!(!done.committed && !done.pulled && done.pushed);
+}
+
+#[test]
+fn unreachable_remote() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(git) = git(tmp.path()) else {
+        return;
+    };
+    // Nothing listens on the discard port.
+    let err = git
+        .clone_repo(
+            "https://127.0.0.1:9/x.git",
+            &tmp.path().join("x"),
+            &Cancel::new(),
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::Unreachable { .. }), "{err:?}");
 }
