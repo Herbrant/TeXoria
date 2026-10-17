@@ -33,6 +33,9 @@ pub struct Project {
     root: PathBuf,
     files: HashMap<PathBuf, Index>,
     bibs: HashMap<PathBuf, Vec<BibEntry>>,
+    /// Files indexed from a buffer with `update`: kept even when no file of the project
+    /// includes them, for `index`.
+    buffers: HashSet<PathBuf>,
 }
 
 impl Project {
@@ -64,8 +67,9 @@ impl Project {
     }
 
     /// Re-index `path` from an in-memory buffer (the editor's unsaved text),
-    /// pulling in any newly referenced files from disk. A bibliography of
-    /// the project is re-parsed instead.
+    /// pulling in any newly referenced files from disk and forgetting the files
+    /// and bibliographies no longer referenced. A bibliography of the project is
+    /// re-parsed instead.
     pub fn update(&mut self, path: &Path, text: &str) {
         if let Some(entries) = self.bibs.get_mut(path) {
             *entries = bib::parse(text);
@@ -74,7 +78,27 @@ impl Project {
         let index = Index::from_text(text);
         let includes = index.includes.clone();
         self.files.insert(path.to_path_buf(), index);
+        self.buffers.insert(path.to_path_buf());
         self.load_includes(&includes);
+        self.prune();
+    }
+
+    /// Drop the files read from disk that the root no longer reaches, and the
+    /// bibliographies its files no longer name.
+    fn prune(&mut self) {
+        let reachable: HashSet<PathBuf> = self.files().into_iter().collect();
+        let buffers = &self.buffers;
+        self.files
+            .retain(|p, _| reachable.contains(p) || buffers.contains(p));
+        let dir = self.root_dir();
+        let named: HashSet<PathBuf> = reachable
+            .iter()
+            .filter_map(|f| self.files.get(f))
+            .flat_map(|i| &i.includes)
+            .filter(|i| i.kind == IncludeKind::Bib)
+            .map(|i| resolve_bib(dir, &i.path))
+            .collect();
+        self.bibs.retain(|p, _| named.contains(p));
     }
 
     /// Re-read every `.bib` file (call when one changes on disk).
@@ -144,7 +168,7 @@ impl Project {
     /// The folders of every `\graphicspath` in the project.
     pub fn graphics_paths(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        for i in self.files.values() {
+        for (_, i) in self.indexes() {
             for g in &i.graphics_paths {
                 if !out.contains(g) {
                     out.push(g.clone());
@@ -154,25 +178,27 @@ impl Project {
         out
     }
 
-    /// Indexed `.tex` files with their index, in no particular order.
+    /// The `.tex` files of the project with their index, in document order
+    /// (like [`Project::files`]).
     pub fn indexes(&self) -> impl Iterator<Item = (&Path, &Index)> {
-        self.files.iter().map(|(p, i)| (p.as_path(), i))
+        self.files()
+            .into_iter()
+            .filter_map(|f| self.files.get_key_value(&f))
+            .map(|(p, i)| (p.as_path(), i))
     }
 
     pub fn commands(&self) -> impl Iterator<Item = &UserCommand> {
-        self.files.values().flat_map(|i| i.commands.iter())
+        self.indexes().flat_map(|(_, i)| i.commands.iter())
     }
 
     pub fn environments(&self) -> impl Iterator<Item = &str> {
-        self.files
-            .values()
-            .flat_map(|i| i.environments.iter().map(|e| e.name.as_str()))
+        self.indexes()
+            .flat_map(|(_, i)| i.environments.iter().map(|e| e.name.as_str()))
     }
 
     pub fn packages(&self) -> impl Iterator<Item = &str> {
-        self.files
-            .values()
-            .flat_map(|i| i.packages.iter().map(String::as_str))
+        self.indexes()
+            .flat_map(|(_, i)| i.packages.iter().map(String::as_str))
     }
 
     /// Depth-first traversal in document order. Calls `f(file, None)` when
@@ -468,6 +494,47 @@ mod tests {
         ]);
         let p = Project::open(dir.path().join("main.tex"));
         assert_eq!(titles(&p), ["A", "B", "C", "D", "E", "F"]);
+    }
+
+    #[test]
+    fn forgets_files_and_bibliographies_no_longer_included() {
+        let dir = project(&[
+            ("main.tex", "\\input{a}\\bibliography{refs}\\cite{k}"),
+            (
+                "a.tex",
+                "\\label{x}\\newcommand\\fromA{}\\graphicspath{{a/}}",
+            ),
+            ("b.tex", "\\label{x}"),
+            ("refs.bib", "@misc{k, title={T}}"),
+        ]);
+        let main = dir.path().join("main.tex");
+        let mut p = Project::open(&main);
+        // Typed one letter at a time: neither `b`'s predecessor nor `r.bib` stay.
+        for text in ["\\input{a}\\input{b}", "\\input{b}\\bibliography{r}"] {
+            p.update(&main, text);
+        }
+        p.update(&main, "\\input{b}\\bibliography{refs}\\cite{k}\\cite{nope}");
+        let names = |p: &Project| -> Vec<String> {
+            p.indexes()
+                .map(|(f, _)| f.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(names(&p), ["main.tex", "b.tex"]);
+        assert!(!p.contains(&dir.path().join("a.tex")));
+        assert_eq!(p.commands().count(), 0);
+        assert!(p.graphics_paths().is_empty());
+        let bibs: Vec<_> = p.bib_files().map(|(f, _)| f.to_path_buf()).collect();
+        assert_eq!(bibs, [dir.path().join("refs.bib")]);
+        let codes: Vec<_> = check::run(&p).iter().map(|i| i.code).collect();
+        assert_eq!(codes, ["undefined-citation"]);
+
+        // A buffer outside the project keeps its index, but does not count.
+        let other = dir.path().join("other.tex");
+        p.update(&other, "\\label{x}\\newcommand\\other{}");
+        assert!(p.index(&other).is_some());
+        assert_eq!(names(&p), ["main.tex", "b.tex"]);
+        assert_eq!(p.commands().count(), 0);
+        assert!(check::run(&p).iter().all(|i| i.code != "duplicate-label"));
     }
 
     #[cfg(unix)]
