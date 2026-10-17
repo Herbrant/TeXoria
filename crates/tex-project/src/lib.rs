@@ -195,10 +195,10 @@ impl Project {
             .iter()
             .filter(|i| i.kind == IncludeKind::Tex)
             .collect();
-        includes.sort_by_key(|i| i.line);
+        includes.sort_by_key(|i| i.range.start);
         let mut inc = includes.into_iter().peekable();
         for item in &index.outline {
-            while let Some(i) = inc.next_if(|i| i.line < item.line) {
+            while let Some(i) = inc.next_if(|i| i.range.start < item.byte) {
                 self.walk(&resolve_tex(self.root_dir(), &i.path), seen, f);
             }
             f(file, Some(item));
@@ -438,6 +438,36 @@ mod tests {
             outline,
             vec!["Introduction", "Approach", "Results", "Discussion"]
         );
+    }
+
+    /// Write `files` (path, text) into a new temporary folder.
+    fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (path, text) in files {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        dir
+    }
+
+    fn titles(p: &Project) -> Vec<String> {
+        p.outline().into_iter().map(|o| o.item.title).collect()
+    }
+
+    #[test]
+    fn splices_includes_on_the_line_of_a_section() {
+        let dir = project(&[
+            (
+                "main.tex",
+                "\\section{A}\\input{b}\\section{C}\n\\input{d}\\section{E}\\input{f}",
+            ),
+            ("b.tex", "\\section{B}"),
+            ("d.tex", "\\section{D}"),
+            ("f.tex", "\\section{F}"),
+        ]);
+        let p = Project::open(dir.path().join("main.tex"));
+        assert_eq!(titles(&p), ["A", "B", "C", "D", "E", "F"]);
     }
 
     #[cfg(unix)]
