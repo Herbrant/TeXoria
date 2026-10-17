@@ -427,4 +427,56 @@ mod tests {
         let m = &find(&query("needle").compile().unwrap(), &text, 10)[0];
         assert_eq!(&m.preview[m.highlight.clone()], "needle");
     }
+
+    #[test]
+    fn stops_at_max_matches_and_when_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let per_file = MAX_MATCHES * 3 / 5;
+        for name in ["a.tex", "b.tex", "c.tex"] {
+            std::fs::write(dir.path().join(name), "x ".repeat(per_file)).unwrap();
+        }
+        let re = query("x").compile().unwrap();
+        let none = HashMap::new();
+        let results = search(dir.path(), &re, &none, &AtomicBool::new(false));
+        assert!(results.truncated);
+        assert_eq!(results.count(), MAX_MATCHES);
+        let counts: Vec<_> = results.files.iter().map(|f| f.matches.len()).collect();
+        assert_eq!(counts, [per_file, MAX_MATCHES - per_file]);
+
+        let results = search(dir.path(), &re, &none, &AtomicBool::new(true));
+        assert_eq!(results, Results::default());
+    }
+
+    #[test]
+    fn previews_show_the_first_line_of_a_match() {
+        let re = Query {
+            text: r"b\s+c".into(),
+            regex: true,
+            ..Default::default()
+        }
+        .compile()
+        .unwrap();
+        let text = "a\r\n  b\r\n c d\r\nb c";
+        let m = find(&re, text, MAX_MATCHES);
+        assert_eq!(m.len(), 2);
+        assert_eq!((m[0].line, m[0].preview.as_str()), (1, "b"));
+        assert_eq!(&m[0].preview[m[0].highlight.clone()], "b");
+        assert_eq!(&text[m[0].range.clone()], "b\r\n c");
+        assert_eq!((m[1].line, m[1].preview.as_str()), (3, "b c"));
+        assert_eq!(&m[1].preview[m[1].highlight.clone()], "b c");
+        assert!(find(&re, text, 1).len() == 1 && find(&re, text, 0).is_empty());
+    }
+
+    #[test]
+    fn invalid_or_huge_patterns_are_errors() {
+        let regex = |text: &str| Query {
+            text: text.into(),
+            regex: true,
+            ..Default::default()
+        };
+        assert!(regex("(").compile().is_err());
+        assert!(regex(r"\w{1000}{1000}").compile().is_err());
+        // Escaped when not a regex.
+        assert!(query("(").compile().unwrap().is_match("f(x)"));
+    }
 }

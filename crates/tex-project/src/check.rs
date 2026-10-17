@@ -410,4 +410,60 @@ mod tests {
             assert!(!valid_doi(not), "{not}");
         }
     }
+
+    #[test]
+    fn bibitems_pictures_and_macro_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("main.tex");
+        std::fs::create_dir(dir.path().join("img")).unwrap();
+        std::fs::write(dir.path().join("img/plot.png"), "").unwrap();
+        std::fs::write(
+            &root,
+            "\\graphicspath{{img/}}\\includegraphics{plot}\\includegraphics{gone}\n\
+             \\begin{thebibliography}{9}\\bibitem{k} K.\\end{thebibliography}\n\
+             \\cite{k}\\cite{nope}\\ref{#1}\\ref{\\x}\\label{a*}\\label{a*}\\input{#1}\n\
+             \\bibliography{missing}",
+        )
+        .unwrap();
+        let issues = run(&Project::open(&root));
+        let got: Vec<_> = issues.iter().map(|i| (i.code, i.level, i.line)).collect();
+        // `\bibitem` keys are known, but a missing .bib stops citation checks.
+        assert_eq!(
+            got,
+            [
+                ("missing-file", Level::Warning, 0),
+                ("missing-file", Level::Warning, 3),
+            ]
+        );
+        assert_eq!(issues[0].message, "Picture gone not found");
+        assert_eq!(issues[1].message, "Bibliography missing not found");
+
+        // With only `\bibitem`s, citations are checked against them.
+        std::fs::write(&root, "\\bibitem{k} K.\n\\cite{k,nope}").unwrap();
+        let issues = run(&Project::open(&root));
+        assert_eq!(codes(&issues), [("undefined-citation", Some("nope"))]);
+        assert_eq!(issues[0].line, 1);
+    }
+
+    #[test]
+    fn knows_the_fields_each_entry_type_needs() {
+        let src = "@book{b, editor={E}, title={T}, publisher={P}, date={2020}}\n\
+                   @inproceedings{i, author={A}, title={T}, year={2020}}\n\
+                   @phdthesis{p, author={A}, title={T}, institution={I}, year={2020}}\n\
+                   @thesis{t, author={A}, title={T}, institution={I}, year={2020}}\n\
+                   @report{r, author={A}, title={T}, type={T}, institution={}, year={2020}}\n\
+                   @unknown{u}\n@misc{m}";
+        let issues = check_bib(Path::new("refs.bib"), &bib::parse(src));
+        let messages: Vec<_> = issues.iter().map(|i| i.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "@inproceedings i has no booktitle",
+                "@thesis t has no type",
+                "@report r has no institution",
+            ]
+        );
+        assert_eq!(issues[0].line, 1);
+        assert!(issues.iter().all(|i| i.level == Level::Warning));
+    }
 }
