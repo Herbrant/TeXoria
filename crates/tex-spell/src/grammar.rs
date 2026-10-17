@@ -353,12 +353,9 @@ pub fn pick_language(code: &str, supported: &[String]) -> Option<String> {
 
 /// A URL of the machine itself, where TeXoria may start a server.
 pub fn local_port(url: &str) -> Option<u16> {
-    let rest = url.strip_prefix("http://")?;
-    let host_port = rest.split('/').next()?;
-    let (host, port) = host_port.rsplit_once(':')?;
-    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
-        .then(|| port.parse().ok())
-        .flatten()
+    let (host, port) = host_and_port(url.strip_prefix("http://")?)?;
+    let local = host.eq_ignore_ascii_case("localhost") || matches!(host, "127.0.0.1" | "[::1]");
+    local.then(|| port?.parse().ok()).flatten()
 }
 
 /// Whether `url` points to this machine (nothing leaves it).
@@ -367,8 +364,45 @@ pub fn is_local(url: &str) -> bool {
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"))
         .unwrap_or(url);
-    let host = rest.split(['/', ':']).next().unwrap_or("");
-    matches!(host, "localhost" | "127.0.0.1" | "[")
+    let Some((host, _)) = host_and_port(rest) else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let ip = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        Some(v6) => v6
+            .parse::<std::net::Ipv6Addr>()
+            .ok()
+            .map(std::net::IpAddr::V6),
+        None => host
+            .parse::<std::net::Ipv4Addr>()
+            .ok()
+            .map(std::net::IpAddr::V4),
+    };
+    ip.is_some_and(|ip| ip.to_canonical().is_loopback())
+}
+
+/// The host (IPv6 addresses in brackets) and the port of what follows a URL's
+/// `scheme://`: its authority, without the user info.
+fn host_and_port(rest: &str) -> Option<(&str, Option<&str>)> {
+    // Browsers and URL parsers read a backslash as a slash.
+    let authority = rest.split(['/', '\\', '?', '#']).next()?;
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let (host, port) = if host_port.starts_with('[') {
+        let end = host_port.find(']')? + 1;
+        let port = match &host_port[end..] {
+            "" => None,
+            p => Some(p.strip_prefix(':')?),
+        };
+        (&host_port[..end], port)
+    } else {
+        match host_port.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (host_port, None),
+        }
+    };
+    (!host.is_empty()).then_some((host, port))
 }
 
 /// Fail early on a URL that is not one.
@@ -446,6 +480,69 @@ mod tests {
         assert_eq!(local_port("https://api.languagetool.org"), None);
         assert!(is_local("http://localhost:8081"));
         assert!(!is_local("https://api.languagetool.org/v2"));
+    }
+
+    #[test]
+    fn local_means_loopback_only() {
+        for url in [
+            "http://localhost:8081",
+            "http://LOCALHOST:8081/v2",
+            "http://localhost",
+            "https://127.0.0.1/",
+            "http://127.0.0.2:8010",
+            "http://[::1]:8081/",
+            "http://[::ffff:127.0.0.1]:8081",
+            "http://user:pw@localhost:8081/",
+            "localhost:8081",
+        ] {
+            assert!(is_local(url), "{url}");
+        }
+        for url in [
+            // The host is what follows the user info.
+            "http://localhost:pw@evil.com/",
+            "http://localhost@evil.com:8081/",
+            "http://127.0.0.1:8081@evil.com/",
+            // Not loopback, though in brackets.
+            "http://[::ffff:8.8.8.8]:8081/",
+            "http://[2001:db8::1]/",
+            "http://[/",
+            "http://[::1/",
+            "http://localhost.evil.com/",
+            "http://127.0.0.1.evil.com/",
+            "http://0.0.0.0:8081/",
+            "http://evil.com\\@localhost/",
+            "http://",
+            "",
+        ] {
+            assert!(!is_local(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn local_ports_need_a_local_host_and_a_port() {
+        assert_eq!(local_port("http://[::1]:8081/v2"), Some(8081));
+        assert_eq!(local_port("http://localhost:8081?x=1"), Some(8081));
+        assert_eq!(local_port("http://localhost:8081#top"), Some(8081));
+        assert_eq!(local_port("http://user@localhost:8081"), Some(8081));
+        assert_eq!(local_port("http://localhost"), None);
+        assert_eq!(local_port("http://localhost:"), None);
+        assert_eq!(local_port("http://localhost:99999"), None);
+        assert_eq!(local_port("http://[::1]"), None);
+        // TeXoria would start a server for an address it cannot listen on.
+        assert_eq!(local_port("https://localhost:8081"), None);
+        assert_eq!(local_port("http://example.com:8081"), None);
+        assert_eq!(local_port("http://localhost:8081@evil.com/"), None);
+        assert_eq!(local_port("http://localhost:pw@evil.com:8081/"), None);
+    }
+
+    #[test]
+    fn validates_urls() {
+        assert!(validate_url("http://localhost:8081").is_ok());
+        assert!(validate_url("https://api.languagetool.org").is_ok());
+        for bad in ["localhost:8081", "ftp://x", "", "HTTP:/x"] {
+            let e = validate_url(bad).unwrap_err();
+            assert!(e.to_string().contains("is not an http(s) URL"), "{e}");
+        }
     }
 }
 
