@@ -12,7 +12,8 @@ pub struct BibEntry {
     pub year: Option<String>,
     /// Every field in order, `name` lower-cased.
     pub fields: Vec<BibField>,
-    /// Bytes from the `@` to the closing delimiter (or the end of the file).
+    /// Bytes from the `@` to the closing delimiter (or, if it is missing, to
+    /// the end of the line before the next entry or to the end of the file).
     pub range: Range<usize>,
     pub key_range: Range<usize>,
     /// 0-based row of the key.
@@ -62,13 +63,15 @@ pub fn parse(src: &str) -> Vec<BibEntry> {
             continue;
         }
         let body_start = j + 1;
-        let close = matching_close(b, j);
-        let body_end = close.unwrap_or(b.len());
-        i = body_end.min(b.len());
+        let (body_end, close) = match entry_end(b, j) {
+            Ok(close) => (close, Some(close)),
+            Err(end) => (end, None),
+        };
+        i = body_end;
         if matches!(kind.as_str(), "comment" | "preamble" | "string") {
             continue;
         }
-        let body = &src[body_start..body_end.min(src.len())];
+        let body = &src[body_start..body_end];
         let (raw_key, fields) = body.split_once(',').unwrap_or((body, ""));
         let key = raw_key.trim();
         if key.is_empty() || key.contains(char::is_whitespace) {
@@ -83,7 +86,7 @@ pub fn parse(src: &str) -> Vec<BibEntry> {
             author: None,
             year: None,
             fields: Vec::new(),
-            range: entry_start..close.map_or(src.len(), |c| c + 1),
+            range: entry_start..close.map_or(body_end, |c| c + 1),
             key_range: key_start..key_start + key.len(),
             line: rows.row_of(key_start),
             truncated: close.is_none(),
@@ -135,6 +138,45 @@ impl Rows<'_> {
         self.at = offset;
         self.row
     }
+}
+
+/// Where the entry whose body opens at `open` ends: the index of its closing
+/// delimiter, or if there is none, `Err` with the index of the newline before
+/// the next entry (an `@type{` at the start of a line) or the text's length.
+/// In an `@type(...)` entry, `)` inside braces or quotes does not close it.
+fn entry_end(b: &[u8], open: usize) -> Result<usize, usize> {
+    let parens = b[open] == b'(';
+    let mut depth = 0usize;
+    let mut quoted = false;
+    for k in open + 1..b.len() {
+        match b[k] {
+            b'{' => depth += 1,
+            b'}' if depth > 0 => depth -= 1,
+            b'}' if !parens => return Ok(k),
+            b'"' if parens && depth == 0 => quoted = !quoted,
+            b')' if parens && depth == 0 && !quoted => return Ok(k),
+            b'\n' if starts_entry(&b[k + 1..]) => return Err(k),
+            _ => {}
+        }
+    }
+    Err(b.len())
+}
+
+/// Whether `line` starts with `@type{` or `@type(`, after blanks.
+fn starts_entry(line: &[u8]) -> bool {
+    let start = line
+        .iter()
+        .position(|&c| c != b' ' && c != b'\t')
+        .unwrap_or(line.len());
+    let Some(rest) = line[start..].strip_prefix(b"@") else {
+        return false;
+    };
+    let kind = rest
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .count();
+    let after = rest[kind..].trim_ascii_start();
+    kind > 0 && matches!(after.first(), Some(b'{' | b'('))
 }
 
 /// Index of the delimiter closing the one at `open`, honoring nesting.
@@ -276,5 +318,37 @@ mod tests {
             parse("@misc{k, title = {café").remove(0).title.as_deref(),
             Some("café")
         );
+    }
+
+    fn keys(entries: &[BibEntry]) -> Vec<&str> {
+        entries.iter().map(|e| e.key.as_str()).collect()
+    }
+
+    #[test]
+    fn paren_entries_may_hold_parens_in_braces_and_quotes() {
+        let src = "@article(k, title={a)b}, note=\"(c))\", year=2000)\n@misc{m, title={M}}";
+        let e = parse(src);
+        assert_eq!(keys(&e), ["k", "m"]);
+        assert!(!e[0].truncated);
+        assert_eq!(e[0].title.as_deref(), Some("a)b"));
+        assert_eq!(e[0].field("note"), Some("(c))"));
+        assert_eq!(e[0].year.as_deref(), Some("2000"));
+        assert!(src[e[0].range.clone()].ends_with("2000)"));
+    }
+
+    #[test]
+    fn an_unterminated_entry_ends_where_the_next_one_starts() {
+        let src = "@misc{a, title={x}\n@book{b, title={y}}\n  @misc{c, title={unclosed\n\t@misc{d}";
+        let e = parse(src);
+        assert_eq!(keys(&e), ["a", "b", "c", "d"]);
+        let truncated: Vec<_> = e.iter().map(|e| e.truncated).collect();
+        assert_eq!(truncated, [true, false, true, false]);
+        assert_eq!(&src[e[0].range.clone()], "@misc{a, title={x}");
+        assert_eq!(e[2].title.as_deref(), Some("unclosed"));
+        assert_eq!((e[1].line, e[3].line), (1, 3));
+        // An `@` inside a value is no new entry.
+        let e = parse("@misc{a, note={write to me@example.org\n @ home}}");
+        assert_eq!(keys(&e), ["a"]);
+        assert!(!e[0].truncated);
     }
 }
