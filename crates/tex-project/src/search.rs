@@ -27,15 +27,31 @@ pub struct Query {
 impl Query {
     /// The query as a regular expression.
     pub fn compile(&self) -> Result<Regex, String> {
-        let pattern = if self.regex {
-            self.text.clone()
-        } else {
-            regex::escape(&self.text)
-        };
-        let pattern = if self.whole_word {
-            format!(r"\b(?:{pattern})\b")
-        } else {
-            pattern
+        let pattern = match (self.regex, self.whole_word) {
+            (true, false) => self.text.clone(),
+            // Not glued to a word character on either side (`\b` would require
+            // one before a match starting with `\`, as in `\\section`).
+            (true, true) => format!(r"\b{{start-half}}(?:{})\b{{end-half}}", self.text),
+            (false, false) => regex::escape(&self.text),
+            // A word boundary on each side that is a word character: `\section`
+            // is a whole word in `x\section{}`, `section` is not.
+            (false, true) => {
+                let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+                format!(
+                    "{}{}{}",
+                    if word(self.text.chars().next()) {
+                        r"\b"
+                    } else {
+                        ""
+                    },
+                    regex::escape(&self.text),
+                    if word(self.text.chars().last()) {
+                        r"\b"
+                    } else {
+                        ""
+                    },
+                )
+            }
         };
         RegexBuilder::new(&pattern)
             .case_insensitive(!self.case_sensitive)
@@ -238,6 +254,28 @@ mod tests {
             .compile()
             .is_err()
         );
+    }
+
+    #[test]
+    fn whole_words_may_start_or_end_with_a_symbol() {
+        let text = "\\section{A} \\sections \\subsection{B} x\\section";
+        let word = |text: &str, regex| Query {
+            whole_word: true,
+            regex,
+            ..query(text)
+        };
+        let found = |q: Query| {
+            find(&q.compile().unwrap(), text, 10)
+                .into_iter()
+                .map(|m| m.range)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(found(word("\\section", false)), vec![0..8, 38..46]);
+        assert_eq!(found(word("{A}", false)), vec![8..11]);
+        assert_eq!(found(word(r"\\sub\w+", true)), vec![22..33]);
+        // Still a word boundary between word characters.
+        assert_eq!(found(word("section", false)), vec![1..8, 39..46]);
+        assert_eq!(found(word("x", false)), vec![37..38]);
     }
 
     #[test]
