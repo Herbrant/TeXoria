@@ -9,6 +9,7 @@ mod diff_view;
 mod edit;
 mod file_tree;
 mod git_panel;
+mod grammar;
 mod latex;
 mod overleaf;
 mod pdf_pane;

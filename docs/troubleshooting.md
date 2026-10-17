@@ -40,6 +40,14 @@ TeXoria never asks for passwords in a terminal: set up a
 `git push` works in a terminal without prompting, and it will work in TeXoria too. For Overleaf,
 TeXoria asks for a new token when the old one is rejected.
 
+## Grammar is not checked
+
+The status bar's *Grammar* item says why. *Connecting* or *Starting LanguageTool* lasts a few
+seconds the first time. *Not available* means no server answers at the address in Settings:
+install LanguageTool (see [Grammar](writing.md#grammar)) or start it yourself, then click the
+item to try again. TeXoria starts only a `languagetool-server` program it finds; if yours is
+installed differently, start it before TeXoria.
+
 ## The preview stays blank
 
 The preview needs PDFium, which every package bundles. If you built TeXoria yourself, run

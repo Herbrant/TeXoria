@@ -224,11 +224,49 @@ fn document_start(root: Node, text: &str) -> usize {
 /// Byte ranges of the words of the prose that `keep` accepts.
 fn collect(tree: &Tree, text: &str, keep: fn(&str) -> bool) -> Vec<Range<usize>> {
     let mut out = Vec::new();
+    walk_prose(tree, text, |node, stack| {
+        text_words(node, text, keep, &mut out, stack)
+    });
+    out.sort_by_key(|r| r.start);
+    out
+}
+
+/// Stretches of prose: runs of words (punctuation and the spaces between
+/// them included) not interrupted by a command, math or anything else.
+pub fn prose_runs(tree: &Tree, text: &str) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    walk_prose(tree, text, |node, stack| {
+        let mut run: Option<Range<usize>> = None;
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "word" {
+                let r = child.byte_range();
+                run = Some(run.map_or(r.clone(), |run| run.start..r.end));
+                continue;
+            }
+            out.extend(run.take());
+            if is_prose(child, text) {
+                stack.push(child);
+            }
+        }
+        out.extend(run);
+    });
+    out.sort_by_key(|r| r.start);
+    out
+}
+
+/// Visit the `text` nodes of the prose; `on_text` pushes on the stack the
+/// children it wants visited too.
+fn walk_prose<'t>(
+    tree: &'t Tree,
+    text: &str,
+    mut on_text: impl FnMut(Node<'t>, &mut Vec<Node<'t>>),
+) {
     // Iterative: the tree is as deep as the document's nesting.
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         if node.kind() == "text" {
-            text_words(node, text, keep, &mut out, &mut stack);
+            on_text(node, &mut stack);
             continue;
         }
         let env = node.kind() == "generic_environment";
@@ -263,8 +301,6 @@ fn collect(tree: &Tree, text: &str, keep: fn(&str) -> bool) -> Vec<Range<usize>>
             }
         }
     }
-    out.sort_by_key(|r| r.start);
-    out
 }
 
 /// The words joined by spaces, for language detection.

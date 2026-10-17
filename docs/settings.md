@@ -13,6 +13,10 @@ Open the Settings window with ⌘, (Ctrl+,). Every change applies right away.
 | Check references | On | Underline undefined references and citations, duplicate labels, missing files and flaws of the `.bib` files as you type (see [Diagnostics](writing.md#diagnostics)). |
 | Check spelling | On | See [Spell checking](writing.md#spell-checking). |
 | Dictionary | | The words you added to your dictionary; remove them from here. |
+| Check grammar | Off | Underline grammar and style mistakes found by LanguageTool (see [Grammar](writing.md#grammar)). |
+| LanguageTool server | `http://localhost:8081` | The server's address. With a server on another computer, your text is sent to it. |
+| Start the server | On | Run `languagetool-server` when the server is local and not running, and stop it on quit. |
+| Ignored rules | | The LanguageTool rules you ignored; remove them from here. |
 
 ## Build
 

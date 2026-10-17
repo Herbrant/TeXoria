@@ -131,3 +131,27 @@ the first time they are needed and verified against a pinned checksum.
 
 Turn spell checking off entirely, or remove words from your dictionary, in
 [Settings](settings.md) → *Editor*.
+
+## Grammar
+
+With [LanguageTool](https://languagetool.org) installed, TeXoria also underlines grammar and
+style mistakes, in a different color from spelling ones, in the language of the file's
+spelling. Hover a mistake to read why; right-click it, or press ⌘. (Ctrl+.), to apply a
+correction or ignore that rule from then on. Only the prose is checked: commands are read as
+what they stand for (a formula as a noun, a citation as a number), so they do not count as
+mistakes.
+
+Turn it on in [Settings](settings.md) → *Editor* → *Check grammar*. LanguageTool runs on your
+computer, so your text stays there:
+
+- macOS: `brew install languagetool`;
+- elsewhere: download the server from [languagetool.org](https://languagetool.org/download/)
+  (it needs Java) and start it with
+  `java -cp languagetool-server.jar org.languagetool.server.HTTPServer --port 8081`, or install
+  your distribution's package.
+
+If the server is not running, TeXoria starts `languagetool-server` itself (and stops it when it
+quits); the first check takes a few seconds while it loads. The status bar's *Grammar* item
+shows whether LanguageTool is ready; click it to try again after an error. Another server, like
+your organization's or LanguageTool Premium's, can be set in *LanguageTool server*: your text is
+then sent to it as you type.

@@ -41,6 +41,7 @@ use crate::diff_view::{DiffSource, DiffView, DiffViewEvent};
 use crate::edit;
 use crate::file_tree::{FileOp, FileTree, FileTreeEvent};
 use crate::git_panel::{self, GitOp, GitPanel, GitPanelEvent};
+use crate::grammar::{self, BufferGrammar, Grammar, IgnoreGrammarRule, ServerState};
 use crate::latex::{
     self, CursorFixup, LatexCompletions, LatexNavigation, OpenExternal, OpenLocation, PackageDocs,
 };
@@ -85,6 +86,7 @@ struct Buffer {
     last_len: usize,
     soft_wrap: bool,
     spell: BufferSpell,
+    grammar: BufferGrammar,
     checks: BufferChecks,
     _subscription: Subscription,
 }
@@ -159,6 +161,8 @@ pub struct Workspace {
     was_dark: bool,
     settings_window: Option<AnyWindowHandle>,
     spell: Spell,
+    grammar: Grammar,
+    _grammar_start: Task<()>,
     updater: Entity<Updater>,
     _live: Task<()>,
     _checks: Task<()>,
@@ -222,6 +226,7 @@ impl Workspace {
         // Never lose edits made since the last (debounced) save.
         subscriptions.push(cx.on_app_quit(|this, cx| {
             this.save_all(cx);
+            this.grammar.stop();
             async {}
         }));
         let weak = cx.entity().downgrade();
@@ -309,6 +314,8 @@ impl Workspace {
             was_dark: cx.theme_is_dark(),
             settings_window: None,
             spell,
+            grammar: Grammar::default(),
+            _grammar_start: Task::ready(()),
             updater,
             _live: Task::ready(()),
             _checks: Task::ready(()),
@@ -321,6 +328,7 @@ impl Workspace {
         };
         this.configure_git(cx);
         this.start_compiler(cx);
+        this.start_grammar(Duration::ZERO, cx);
         this.schedule_update_checks(cx);
         if this.engines.is_empty() {
             this.state = CompileState::Failed(
@@ -419,6 +427,21 @@ impl Workspace {
         }
         if self.settings.agent_projects != old.agent_projects {
             self.sync_agent(cx);
+        }
+        let s = &self.settings;
+        if (s.grammar_check, &s.languagetool_url, s.languagetool_start)
+            != (
+                old.grammar_check,
+                &old.languagetool_url,
+                old.languagetool_start,
+            )
+        {
+            // The URL changes as it is typed.
+            self.start_grammar(Duration::from_secs(1), cx);
+        } else if s.grammar_rules_off != old.grammar_rules_off {
+            for ix in 0..self.buffers.len() {
+                self.grammar_check(ix, Duration::ZERO, cx);
+            }
         }
         if self.settings.live_checks != old.live_checks {
             self.reindex(cx);
@@ -694,8 +717,10 @@ impl Workspace {
             fixups: self.fixups.clone(),
         });
         let checks = BufferChecks::new(&editor, cx);
+        let grammar = BufferGrammar::new(&editor, cx);
         let mut navigation = LatexNavigation::new(self.project.clone());
         navigation.notes.push(checks.hover_note(&editor));
+        navigation.notes.push(grammar.hover_note(&editor));
         let navigation = Rc::new(navigation);
         let busy = self.agent_busy;
         editor.update(cx, |state, cx| {
@@ -732,6 +757,7 @@ impl Workspace {
             last_len,
             soft_wrap,
             spell,
+            grammar,
             checks,
             _subscription: subscription,
         });
@@ -740,6 +766,7 @@ impl Workspace {
         self.underline_issues(self.active, cx);
         self.remember_session();
         self.spellcheck(self.active, Duration::ZERO, cx);
+        self.grammar_check(self.active, Duration::ZERO, cx);
         self.apply_diagnostics(cx);
         let focus = self.buffers[self.active].editor.focus_handle(cx);
         window.focus(&focus, cx);
@@ -889,6 +916,7 @@ impl Workspace {
         }
 
         self.spellcheck(ix, spell::DELAY, cx);
+        self.grammar_check(ix, grammar::DELAY, cx);
         let delay = Duration::from_millis(self.settings.live_delay_ms);
         let live = self.settings.live_preview;
         self._live = cx.spawn_in(window, async move |this, cx| {
@@ -1169,6 +1197,7 @@ impl Workspace {
                 changed = true;
                 // `set_value` emits no change event.
                 self.spellcheck(ix, Duration::ZERO, cx);
+                self.grammar_check(ix, Duration::ZERO, cx);
             }
             ix += 1;
         }
@@ -2546,7 +2575,15 @@ impl Workspace {
             let speller = this
                 .update(cx, |this, cx| {
                     let speller = this.dictionary(analysis.language.code, cx);
-                    let b = this.buffers.iter_mut().find(|b| b.editor == editor)?;
+                    let ix = this.buffers.iter().position(|b| b.editor == editor)?;
+                    let changed = this.buffers[ix].spell.language.map(|d| d.code)
+                        != Some(analysis.language.code);
+                    if changed {
+                        // Grammar is checked in the spelling's language.
+                        this.buffers[ix].spell.language = Some(analysis.language);
+                        this.grammar_check(ix, Duration::ZERO, cx);
+                    }
+                    let b = &mut this.buffers[ix];
                     b.spell.language = Some(analysis.language);
                     *b.spell.speller.borrow_mut() = speller.clone();
                     if speller.is_none() {
@@ -2726,6 +2763,164 @@ impl Workspace {
             state.set_selected_range(range, cx);
             state.replace(text, window, cx);
         });
+    }
+
+    // ── Grammar ──────────────────────────────────────────────────────────
+
+    /// Connect to the LanguageTool server (after `delay`), starting it if
+    /// allowed, then check every buffer.
+    fn start_grammar(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        self.grammar.stop();
+        for b in &mut self.buffers {
+            b.grammar.clear(cx);
+        }
+        if !self.settings.grammar_check {
+            self._grammar_start = Task::ready(());
+            cx.notify();
+            return;
+        }
+        let url = self.settings.languagetool_url.trim().to_string();
+        if let Err(e) = tex_spell::grammar::validate_url(&url) {
+            self.grammar.state = ServerState::Unreachable(e.to_string().into());
+            cx.notify();
+            return;
+        }
+        let server = Arc::new(tex_spell::grammar::Server::new(&url));
+        self.grammar.server = Some(server.clone());
+        self.grammar.state = ServerState::Connecting;
+        let start = self.settings.languagetool_start;
+        self._grammar_start = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let probe = server.clone();
+            let running = cx.background_spawn(async move { probe.languages() }).await;
+            let languages = match running {
+                Ok(l) => Ok(l),
+                Err(e) => {
+                    let port = tex_spell::grammar::local_port(&url).filter(|_| start);
+                    let spawned = this.update(cx, |this, _| match port {
+                        Some(port) => this.grammar.spawn(port),
+                        None => Err(format!("{e:#}")),
+                    });
+                    match spawned {
+                        Ok(Ok(())) => {
+                            cx.background_spawn(async move { grammar::wait_for(&server) })
+                                .await
+                        }
+                        Ok(Err(e)) => Err(e),
+                        Err(_) => return,
+                    }
+                }
+            };
+            this.update(cx, |this, cx| {
+                this.grammar.state = match languages {
+                    Ok(l) => ServerState::Ready(Arc::new(l)),
+                    Err(e) => {
+                        log::warn!("LanguageTool: {e}");
+                        ServerState::Unreachable(e.into())
+                    }
+                };
+                for ix in 0..this.buffers.len() {
+                    this.grammar_check(ix, Duration::ZERO, cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        cx.notify();
+    }
+
+    /// Check buffer `ix`'s grammar after `delay` (replacing a pending check).
+    fn grammar_check(&mut self, ix: usize, delay: Duration, cx: &mut Context<Self>) {
+        let ServerState::Ready(languages) = &self.grammar.state else {
+            return;
+        };
+        let Some(server) = self.grammar.server.clone() else {
+            return;
+        };
+        let Some(b) = self.buffers.get_mut(ix) else {
+            return;
+        };
+        let off = self.settings.spell_language(&b.path) == Some(SpellLanguage::OFF);
+        if !self.settings.grammar_check || off || !is_tex(&b.path) {
+            b.grammar.clear(cx);
+            return;
+        }
+        let languages = languages.clone();
+        let cache = self.grammar.cache.clone();
+        let disabled = self.settings.grammar_rules_off.clone();
+        let editor = b.editor.clone();
+        let color = cx.theme().info;
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            // The spelling's language, once known.
+            let Ok((text, code)) = this.update(cx, |this, cx| {
+                let b = this.buffers.iter().find(|b| b.editor == editor);
+                let code = b.and_then(|b| b.spell.language).map(|d| d.code);
+                (editor.read(cx).text().to_string(), code)
+            }) else {
+                return;
+            };
+            let language = code
+                .and_then(|c| tex_spell::grammar::pick_language(c, &languages))
+                .unwrap_or_else(|| "auto".to_string());
+            let checked = text.clone();
+            let found = cx
+                .background_spawn(async move {
+                    grammar::check(&server, &cache, &checked, &language, &disabled)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let Some(b) = this.buffers.iter().find(|b| b.editor == editor) else {
+                    return;
+                };
+                // Edited meanwhile: the next check is already on its way.
+                if *b.editor.read(cx).text() != text {
+                    return;
+                }
+                match found {
+                    Ok(problems) => b.grammar.set(&b.editor, problems, color, cx),
+                    Err(e) => {
+                        log::warn!("LanguageTool: {e:#}");
+                        this.grammar.state = ServerState::Unreachable(format!("{e:#}").into());
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        });
+        self.buffers[ix].grammar.task = task;
+    }
+
+    /// The status bar item of grammar checking, when it is on.
+    fn render_grammar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.settings.grammar_check {
+            return None;
+        }
+        let (icon, tooltip): (Glyph, SharedString) = match &self.grammar.state {
+            ServerState::Off => return None,
+            ServerState::Connecting if self.grammar.started_server() => {
+                (Glyph::Spinner, "Starting LanguageTool…".into())
+            }
+            ServerState::Connecting => (Glyph::Spinner, "Connecting to LanguageTool…".into()),
+            ServerState::Ready(_) => (Glyph::Check, "Grammar checked by LanguageTool".into()),
+            ServerState::Unreachable(e) => (
+                Glyph::Warning,
+                format!("LanguageTool is not available: {e}. Click to try again.").into(),
+            ),
+        };
+        Some(
+            Button::new("grammar")
+                .ghost()
+                .icon(icon)
+                .label("Grammar")
+                .tooltip(tooltip)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    if matches!(this.grammar.state, ServerState::Unreachable(_)) {
+                        this.start_grammar(Duration::ZERO, cx);
+                    }
+                }))
+                .into_any_element(),
+        )
     }
 
     // ── Updates ──────────────────────────────────────────────────────────
@@ -2953,6 +3148,7 @@ impl Workspace {
             // Underlines take their color from the theme.
             for ix in 0..self.buffers.len() {
                 self.spellcheck(ix, Duration::ZERO, cx);
+                self.grammar_check(ix, Duration::ZERO, cx);
             }
             self.reindex(cx);
         }
@@ -3619,6 +3815,7 @@ impl Workspace {
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let update = self.render_update(cx);
+        let grammar = self.render_grammar(cx);
         let language =
             (self.settings.spell_check && !self.diff_active).then(|| self.render_language(cx));
         let theme = cx.theme();
@@ -3740,6 +3937,7 @@ impl Workspace {
                 )
             })
             .children(update)
+            .children(grammar)
             .children(language)
             .child(
                 item("live")
@@ -4011,9 +4209,11 @@ impl Render for Workspace {
                             b.spell.speller.clone(),
                         );
                         let editor = b.editor.clone();
+                        let grammar = b.grammar.context_menu(b.editor.clone());
                         move |menu, window, cx| {
                             let selected = !editor.read(cx).selected_range().is_empty();
                             let mut menu = if selected { agent_menu(menu) } else { menu };
+                            menu = grammar(menu, cx);
                             if let Some(name) = latex::package_at_cursor(&editor, cx) {
                                 menu = menu
                                     .menu(
@@ -4210,6 +4410,18 @@ impl Render for Workspace {
             )
             .on_action(cx.listener(|this, a: &ReplaceMisspelling, window, cx| {
                 this.replace_misspelling(a, window, cx)
+            }))
+            .on_action(cx.listener(|this, a: &IgnoreGrammarRule, window, cx| {
+                let rule = a.rule.clone();
+                this.update_settings(
+                    |s| {
+                        if !s.grammar_rules_off.contains(&rule) {
+                            s.grammar_rules_off.push(rule);
+                        }
+                    },
+                    window,
+                    cx,
+                )
             }))
             .on_action(cx.listener(|this, a: &AddToDictionary, window, cx| {
                 this.update_settings(|s| s.add_spell_word(&a.word), window, cx)

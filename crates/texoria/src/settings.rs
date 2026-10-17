@@ -45,6 +45,14 @@ pub struct Settings {
     pub live_checks: bool,
     /// Underline misspelled words.
     pub spell_check: bool,
+    /// Check grammar and style with LanguageTool.
+    pub grammar_check: bool,
+    /// The LanguageTool server (`http://localhost:8081`).
+    pub languagetool_url: String,
+    /// Start `languagetool-server` when the server is local and not running.
+    pub languagetool_start: bool,
+    /// LanguageTool rules not to report (`EN_QUOTES`…).
+    pub grammar_rules_off: Vec<String>,
     /// Words never reported as misspelled.
     pub spell_words: Vec<String>,
     /// Languages chosen by hand, per file.
@@ -144,6 +152,10 @@ impl Default for Settings {
             theme: ThemeChoice::System,
             live_checks: true,
             spell_check: true,
+            grammar_check: false,
+            languagetool_url: Settings::DEFAULT_LANGUAGETOOL.to_string(),
+            languagetool_start: true,
+            grammar_rules_off: Vec::new(),
             spell_words: Vec::new(),
             spell_languages: Vec::new(),
             agent: None,
@@ -338,6 +350,8 @@ impl Settings {
         self.recent.insert(0, file);
         self.recent.truncate(10);
     }
+
+    pub const DEFAULT_LANGUAGETOOL: &str = "http://localhost:8081";
 
     pub fn session(&self, root: &Path) -> Option<&Session> {
         self.sessions.iter().find(|s| s.root == root)

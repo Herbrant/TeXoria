@@ -209,6 +209,7 @@ impl SettingsWindow {
     fn editor_page(&self, cx: &App) -> SettingPage {
         let t = self.target.clone();
         let words = t.get(cx, |s| s.spell_words.clone());
+        let rules = t.get(cx, |s| s.grammar_rules_off.clone());
         let themes = ThemeChoice::ALL
             .iter()
             .map(|c| (c.key().into(), c.label().into()))
@@ -312,6 +313,57 @@ impl SettingsWindow {
                     {
                         let t = t.clone();
                         move |word, cx| t.set(cx, |s| s.spell_words.retain(|w| *w != word))
+                    },
+                )),
+            SettingGroup::new()
+                .title("Grammar")
+                .item(
+                    SettingItem::new(
+                        "Check grammar",
+                        bool_field(&t, |s| s.grammar_check, |s, v| s.grammar_check = v)
+                            .default_value(Settings::default().grammar_check),
+                    )
+                    .description(
+                        "Underline grammar and style mistakes found by LanguageTool, in the \
+                         language of the spelling. LanguageTool runs on your computer: install \
+                         it (brew install languagetool, or the server from languagetool.org).",
+                    ),
+                )
+                .item(
+                    SettingItem::new("LanguageTool server", {
+                        let (t1, t2) = (t.clone(), t.clone());
+                        SettingField::input(
+                            move |cx| t1.get(cx, |s| s.languagetool_url.clone()).into(),
+                            move |v: SharedString, cx| {
+                                t2.set(cx, |s| s.languagetool_url = v.trim().to_string())
+                            },
+                        )
+                        .default_value(Settings::DEFAULT_LANGUAGETOOL)
+                    })
+                    .description(
+                        "Its address. Text is sent to it as you type: with a server that is \
+                         not on this computer, it leaves it.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
+                        "Start the server",
+                        bool_field(&t, |s| s.languagetool_start, |s, v| s.languagetool_start = v)
+                            .default_value(Settings::default().languagetool_start),
+                    )
+                    .description(
+                        "Run languagetool-server when the server is on this computer and not \
+                         running yet, and stop it when TeXoria quits.",
+                    ),
+                )
+                .item(removable_list(
+                    "grammar-rule",
+                    rules,
+                    String::clone,
+                    "Rules you ignore (right-click a mistake) appear here.",
+                    {
+                        let t = t.clone();
+                        move |rule, cx| t.set(cx, |s| s.grammar_rules_off.retain(|r| *r != rule))
                     },
                 )),
         ])

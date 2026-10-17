@@ -22,5 +22,5 @@ pub use agent_client_protocol_schema::v1 as acp;
 pub use catalog::{AgentSpec, CustomAgent};
 pub use checkpoint::{Change, ChangeKind, Checkpoint};
 pub use client::{Agent, Event, Reply};
-pub use process::search_path;
+pub use process::{find as find_program, search_path};
 pub use rpc::RpcError;
