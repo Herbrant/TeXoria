@@ -142,10 +142,14 @@ impl InstallKind {
                         _ => Self::Manual("The AppImage is in a folder you cannot write to."),
                     };
                 }
-                if exe.starts_with("/usr") || exe.starts_with("/opt") {
+                // The distributions' packages (deb, rpm, the AUR) install to
+                // `/usr`, which only root could write to anyway.
+                let system = |p: &Path| p.starts_with("/usr") && !p.starts_with("/usr/local");
+                if system(exe) {
                     return Self::Managed(Manager::System);
                 }
-                // <prefix>/bin/texoria, <prefix>/lib/texoria
+                // <prefix>/bin/texoria, <prefix>/lib/texoria: `install.sh`'s
+                // layout, in any prefix the user owns (`/usr/local`, `/opt/x`...).
                 let prefix = dir
                     .parent()
                     .filter(|_| dir.file_name() == Some("bin".as_ref()));
@@ -160,6 +164,9 @@ impl InstallKind {
                         Self::Tarball {
                             prefix: prefix.to_path_buf(),
                         }
+                    }
+                    _ if exe.starts_with("/usr/local") || exe.starts_with("/opt") => {
+                        Self::Managed(Manager::System)
                     }
                     _ => Self::Manual("TeXoria is not installed where it can update itself."),
                 }
@@ -395,6 +402,49 @@ mod tests {
             classify("/srv/me/bin/texoria", "linux", &fs),
             InstallKind::Manual(_)
         ));
+    }
+
+    /// `install.sh` takes any prefix the user owns (`TEXORIA_PREFIX`), even
+    /// under `/usr/local` or `/opt`; the distributions' packages are in `/usr`.
+    #[test]
+    fn tarball_installs_under_system_folders() {
+        let prefix = |p: &str| {
+            Fake::default()
+                .with(p, true)
+                .with(&format!("{p}/bin"), true)
+                .with(&format!("{p}/lib"), true)
+                .with(&format!("{p}/lib/texoria"), true)
+        };
+        for p in ["/usr/local", "/opt/texoria", "/opt"] {
+            assert_eq!(
+                classify(&format!("{p}/bin/texoria"), "linux", &prefix(p)),
+                InstallKind::Tarball { prefix: p.into() },
+                "{p}"
+            );
+        }
+        // deb, rpm and the AUR, even for root, who can write there.
+        assert_eq!(
+            classify("/usr/bin/texoria", "linux", &prefix("/usr")),
+            InstallKind::Managed(Manager::System)
+        );
+        // Someone else's package, or a copy the user cannot replace.
+        let fs = Fake::default()
+            .with("/opt/texoria", false)
+            .with("/opt/texoria/bin", false)
+            .with("/opt/texoria/lib", false)
+            .with("/opt/texoria/lib/texoria", false);
+        for exe in [
+            "/opt/texoria/bin/texoria",
+            "/opt/texoria/texoria",
+            "/usr/local/bin/texoria",
+            "/usr/lib/texoria/texoria",
+        ] {
+            assert_eq!(
+                classify(exe, "linux", &fs),
+                InstallKind::Managed(Manager::System),
+                "{exe}"
+            );
+        }
     }
 
     #[test]
