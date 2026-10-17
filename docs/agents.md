@@ -80,7 +80,13 @@ stop the agent. When it is done, the panel shows how many files changed:
 - **Keep** accepts them.
 
 The next message keeps the changes of the previous turn. Undo only covers the project folder
-(not `.git` or `.texoria`), and files larger than 8 MB cannot be put back.
+(not `.git` or `.texoria`), and files larger than 8 MB cannot be put back. If the agent changes
+Git's configuration or hooks, which can run programs, the chat says so: check them before using
+Git in the project.
+
+When an agent reads or writes files through TeXoria, it can only reach the project folder, not
+its `.git`, and it cannot write `latexmkrc` (a program that runs when typesetting): change that
+file yourself. Agents can still run commands of their own, with your permission.
 
 ## TeXoria's tools
 

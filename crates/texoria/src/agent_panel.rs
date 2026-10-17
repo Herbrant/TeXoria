@@ -27,6 +27,7 @@ use tex_agent::{
     Agent, AgentSpec, Change, ChangeKind, Checkpoint, CustomAgent, Event, Reply, RpcError, acp,
     checkpoint, prompt,
 };
+use tex_project::files;
 
 use crate::assets::Glyph;
 use crate::atomic;
@@ -184,6 +185,8 @@ pub struct AgentPanel {
     turn: Task<()>,
     checkpoint: Option<Arc<Checkpoint>>,
     changes: Vec<Change>,
+    /// Git configuration and hooks changed since the checkpoint, once told.
+    git_changes: Vec<PathBuf>,
     /// Sign-in methods, while the agent asks for one.
     auth: Option<Vec<acp::AuthMethod>>,
     signing_in: bool,
@@ -232,6 +235,7 @@ impl AgentPanel {
             turn: Task::ready(()),
             checkpoint: None,
             changes: Vec::new(),
+            git_changes: Vec::new(),
             auth: None,
             signing_in: false,
             pending: None,
@@ -487,6 +491,7 @@ impl AgentPanel {
                     return None;
                 }
                 this.checkpoint = Some(Arc::new(snapshot));
+                this.git_changes.clear();
                 if !this.changes.is_empty() {
                     // The previous turn's changes are kept.
                     this.changes.clear();
@@ -716,10 +721,25 @@ impl AgentPanel {
         };
         let generation = self.generation;
         cx.spawn(async move |this, cx| {
-            let changes = cx.background_spawn(async move { cp.changes() }).await;
+            let (changes, git) = cx
+                .background_spawn(async move { (cp.changes(), cp.git_changes()) })
+                .await;
             this.update(cx, |this, cx| {
                 if this.generation != generation {
                     return;
+                }
+                if !git.is_empty() && git != this.git_changes {
+                    let list: Vec<String> = git.iter().map(|p| p.display().to_string()).collect();
+                    this.entries.push(Entry::Error(
+                        format!(
+                            "The agent changed Git's configuration or hooks, which can run \
+                             programs on the next Git command. Check them before using Git \
+                             here:\n{}",
+                            list.join("\n")
+                        )
+                        .into(),
+                    ));
+                    this.git_changes = git;
                 }
                 let patch = checkpoint::patch(&changes);
                 this.changes = changes;
@@ -744,10 +764,7 @@ impl AgentPanel {
             let abs = dir.join(&c.path);
             let result = match (c.kind, cp.original(&c.path)) {
                 (ChangeKind::Added, _) => std::fs::remove_file(&abs),
-                (_, Some(bytes)) => abs
-                    .parent()
-                    .map_or(Ok(()), std::fs::create_dir_all)
-                    .and_then(|()| atomic::write(&abs, bytes)),
+                (_, Some(bytes)) => restore(&dir, &abs, bytes),
                 (_, None) => continue,
             };
             if let Err(e) = result {
@@ -810,10 +827,12 @@ impl AgentPanel {
                 }));
                 self.scroll.scroll_to_bottom();
             }
-            Event::ReadFile(req, reply) => {
-                cx.background_spawn(async move { read_file(req, reply) })
-                    .detach();
-            }
+            Event::ReadFile(req, reply) => match self.dir.clone() {
+                Some(dir) => cx
+                    .background_spawn(async move { read_file(&dir, req, reply) })
+                    .detach(),
+                None => reply.err(RpcError::internal("No project is open")),
+            },
             Event::WriteFile(req, reply) => self.write_file(req, reply, cx),
             Event::Exited(stderr) => {
                 let name = self.agent_name().unwrap_or_else(|| "The agent".into());
@@ -992,11 +1011,8 @@ impl AgentPanel {
         let Some(dir) = self.dir.clone() else {
             return reply.err(RpcError::internal("No project is open"));
         };
-        if !inside(&dir, &req.path) {
-            return reply.err(RpcError::internal(format!(
-                "TeXoria only lets agents write inside the project ({})",
-                dir.display()
-            )));
+        if let Err(e) = writable(&dir, &req.path) {
+            return reply.err(RpcError::internal(e));
         }
         let result = req
             .path
@@ -1824,7 +1840,51 @@ impl Render for AgentPanel {
     }
 }
 
-/// Whether `path` is inside `dir` (once resolved, for what exists of it).
+/// Files that run programs when typesetting (latexmk's Perl rc files): an
+/// agent's edits are often approved as edits, not as commands, so these are
+/// left to the user.
+const RUNS_PROGRAMS: [&str; 2] = ["latexmkrc", ".latexmkrc"];
+
+/// Whether an agent may write `path` through TeXoria: inside the project,
+/// not in `.git`, not a file that runs programs.
+fn writable(dir: &Path, path: &Path) -> Result<(), String> {
+    if !inside(dir, path) {
+        return Err(format!(
+            "TeXoria only lets agents write inside the project ({}), outside .git",
+            dir.display()
+        ));
+    }
+    let name = path.file_name().unwrap_or_default();
+    if RUNS_PROGRAMS.iter().any(|n| name.eq_ignore_ascii_case(n)) {
+        return Err(format!(
+            "TeXoria does not let agents write {}, which runs programs when typesetting: \
+             ask the user to change it",
+            name.to_string_lossy()
+        ));
+    }
+    Ok(())
+}
+
+/// Put `bytes` back at `abs`, a file of the project. A link the agent put
+/// in its place is removed, not followed: it may point outside.
+fn restore(dir: &Path, abs: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if abs
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        std::fs::remove_file(abs)?;
+    }
+    if !inside(dir, abs) {
+        return Err(std::io::Error::other("it is no longer inside the project"));
+    }
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    atomic::write(abs, bytes)
+}
+
+/// Whether `path` is inside `dir` (once resolved, for what exists of it),
+/// and not in its `.git` (in any case: disks are often case-insensitive).
 fn inside(dir: &Path, path: &Path) -> bool {
     if !path.is_absolute() {
         return false;
@@ -1850,11 +1910,27 @@ fn inside(dir: &Path, path: &Path) -> bool {
         resolved.push(part);
     }
     let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-    resolved.starts_with(&dir) && !resolved.starts_with(dir.join(".git"))
+    resolved.strip_prefix(&dir).is_ok_and(|rel| {
+        !rel.components()
+            .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+    })
 }
 
-fn read_file(req: acp::ReadTextFileRequest, reply: Reply<acp::ReadTextFileResponse>) {
+/// Agents read through TeXoria what is in the project, like they write.
+fn read_file(dir: &Path, req: acp::ReadTextFileRequest, reply: Reply<acp::ReadTextFileResponse>) {
+    if !inside(dir, &req.path) {
+        return reply.err(RpcError::new(
+            RpcError::NOT_FOUND,
+            format!(
+                "TeXoria only lets agents read files of the project ({})",
+                dir.display()
+            ),
+        ));
+    }
     let text = match std::fs::metadata(&req.path) {
+        Ok(m) if m.is_file() && m.len() > files::MAX_TEXT_BYTES => Err(std::io::Error::other(
+            format!("the file is too large ({} MB)", m.len() >> 20),
+        )),
         Ok(m) if m.is_file() => std::fs::read(&req.path),
         Ok(_) => Err(std::io::Error::other("not a regular file")),
         Err(e) => Err(e),
@@ -1925,7 +2001,7 @@ fn detail(content: &[acp::ToolCallContent]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detail, inside};
+    use super::{detail, inside, restore, writable};
     use tex_agent::acp;
 
     #[test]
@@ -1938,7 +2014,27 @@ mod tests {
         assert!(!inside(&d, &d.join("../elsewhere.tex")));
         assert!(!inside(&d, &d.join("ch/../../x.tex")));
         assert!(!inside(&d, &d.join(".git/config")));
+        assert!(!inside(&d, &d.join(".GIT/hooks/pre-commit")));
+        assert!(!inside(&d, &d.join("ch/.Git/config")));
         assert!(!inside(&d, std::path::Path::new("main.tex")));
+        assert!(writable(&d, &d.join("ch/intro.tex")).is_ok());
+        assert!(writable(&d, &d.join("latexmkrc")).is_err());
+        assert!(writable(&d, &d.join("ch/.LatexMkRc")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn undo_replaces_links_instead_of_following_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let d = std::fs::canonicalize(dir.path()).unwrap();
+        let target = outside.path().join("victim.txt");
+        std::fs::write(&target, "theirs").unwrap();
+        std::os::unix::fs::symlink(&target, d.join("main.tex")).unwrap();
+        restore(&d, &d.join("main.tex"), b"mine").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"theirs");
+        assert_eq!(std::fs::read(d.join("main.tex")).unwrap(), b"mine");
+        assert!(!d.join("main.tex").symlink_metadata().unwrap().is_symlink());
     }
 
     #[test]

@@ -24,7 +24,7 @@ const MAX_ENTRIES: usize = 10_000;
 /// How much of a file is read to tell text from binary.
 const SNIFF_BYTES: usize = 8 << 10;
 /// Larger files are never opened in the editor.
-const MAX_TEXT_BYTES: u64 = 20 << 20;
+pub const MAX_TEXT_BYTES: u64 = 20 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileNode {

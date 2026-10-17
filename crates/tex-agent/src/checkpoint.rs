@@ -24,6 +24,9 @@ pub struct Checkpoint {
     dir: PathBuf,
     /// By path relative to `dir`.
     files: BTreeMap<PathBuf, Snapshot>,
+    /// Git's configuration and hooks (absolute paths), which run programs.
+    /// `.git` is not part of the review, so changes there are told apart.
+    git: BTreeMap<PathBuf, Option<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,10 +79,29 @@ impl Checkpoint {
             };
             files.insert(rel, snapshot);
         }
+        let git = git_files(dir)
+            .into_iter()
+            .map(|p| {
+                let bytes = std::fs::read(&p).ok();
+                (p, bytes)
+            })
+            .collect();
         Checkpoint {
             dir: dir.to_path_buf(),
             files,
+            git,
         }
+    }
+
+    /// Git configuration files and hooks that differ now (created, changed
+    /// or deleted): they can run programs on the next Git command. Blocking.
+    pub fn git_changes(&self) -> Vec<PathBuf> {
+        let mut paths: BTreeSet<PathBuf> = git_files(&self.dir).into_iter().collect();
+        paths.extend(self.git.keys().cloned());
+        paths
+            .into_iter()
+            .filter(|p| self.git.get(p).cloned().flatten() != std::fs::read(p).ok())
+            .collect()
     }
 
     pub fn dir(&self) -> &Path {
@@ -171,6 +193,23 @@ impl Checkpoint {
             }
         }
     }
+}
+
+/// The configuration and hooks of the repository `dir` is in (not the
+/// `.sample` hooks git ships, which never run).
+fn git_files(dir: &Path) -> Vec<PathBuf> {
+    let Some(git) = dir.ancestors().map(|d| d.join(".git")).find(|g| g.is_dir()) else {
+        return Vec::new();
+    };
+    let mut out = vec![git.join("config")];
+    let hooks = std::fs::read_dir(git.join("hooks")).into_iter().flatten();
+    out.extend(
+        hooks
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_none_or(|e| e != "sample")),
+    );
+    out
 }
 
 fn bytes(s: &Snapshot) -> Option<Vec<u8>> {
@@ -301,6 +340,29 @@ mod tests {
         cp.keep(Path::new("main.tex"));
         cp.keep(Path::new("ch/gone.tex"));
         cp.keep(Path::new("ch/new.tex"));
+        assert!(cp.changes().is_empty());
+    }
+
+    #[test]
+    fn tells_git_configuration_and_hooks_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join(".git/hooks")).unwrap();
+        std::fs::write(d.join(".git/config"), "[core]\n").unwrap();
+        std::fs::write(d.join(".git/hooks/pre-commit.sample"), "#!/bin/sh\n").unwrap();
+        std::fs::create_dir(d.join("paper")).unwrap();
+        let cp = Checkpoint::take(&d.join("paper"));
+        assert!(cp.git_changes().is_empty());
+
+        std::fs::write(d.join(".git/hooks/pre-commit.sample"), "changed\n").unwrap();
+        assert!(cp.git_changes().is_empty());
+        std::fs::write(d.join(".git/config"), "[core]\n\tfsmonitor = x\n").unwrap();
+        std::fs::write(d.join(".git/hooks/post-checkout"), "#!/bin/sh\n").unwrap();
+        assert_eq!(
+            cp.git_changes(),
+            [d.join(".git/config"), d.join(".git/hooks/post-checkout")]
+        );
+        // Not part of the files to review or undo.
         assert!(cp.changes().is_empty());
     }
 
