@@ -117,9 +117,15 @@ texoria ─┬─ tex-compile ── tex-log
   shell's `PATH` plus the usual install folders, used both to find agents and to run them (Node
   scripts need it). Agents write files on their own whatever the client offers, so changes are
   found by comparing the project with a `Checkpoint` taken before each turn (not `.git` nor
-  `.texoria`), which drives the review patch and the undo. `mcp.rs` serves TeXoria's tools
-  (`typeset`, `problems`, `outline`) on a loopback port; agents start `texoria --mcp-bridge`
-  (handled in `main.rs` before the UI), which relays stdio there after a random token.
+  `.texoria`), which drives the review patch and the undo. It walks the project on its own
+  (never the Files view's capped scan) and knows when it could not see everything: undo only
+  deletes an added file when the walk was complete and the file is newer than the checkpoint.
+  It also watches `.git/config` and the hooks (`git_changes`), which the review does not show.
+  Through `fs/*` an agent reaches only the project, outside `.git`, and cannot write
+  `latexmkrc` (`agent_panel::writable`). `mcp.rs` serves TeXoria's tools (`typeset`,
+  `problems`, `outline`) on a loopback port; agents start `texoria --mcp-bridge` (handled in
+  `main.rs` before the UI), which relays stdio there after a random token (`getrandom`; before
+  it, a connection gets little time, memory and company).
   `cargo run -p tex-agent --example probe -- <id> <prompt>` talks to an installed agent.
 - **tex-spell**: spell checking. `extract::words` walks the tree-sitter tree and keeps only prose
   (allow-list of node kinds, deny-lists of commands/environments, no preamble but `\title`);
@@ -155,7 +161,9 @@ texoria ─┬─ tex-compile ── tex-log
     rows). Changes are emitted as `FileTreeEvent::Request(FileOp)` and run by
     `Workspace::run_file_op` after saving buffers: tabs follow a rename (a renamed root file
     goes through `set_root`) and close on delete. Git colors come from `GitPanel::file_marks`.
-    Files that are not text (`files::looks_like_text`) open with the system app.
+    Files that are not text (`files::looks_like_text`) open with the system app only if they
+    are documents or pictures (`files::safe_to_open`), since a clone's files are not
+    quarantined; anything else is revealed in its folder.
   - `diff_view.rs` is a single "preview" diff tab built on `gpui_kit::component::diff`
     (`DiffFile::parse` of git's patch, `parse_conflicts` for merge conflicts). It does not support
     combined diffs, so commits are shown against their first parent. The gpui-kit editor has no
@@ -166,6 +174,9 @@ texoria ─┬─ tex-compile ── tex-log
     `Duration::ZERO`.
   - Compiler events come from the scheduler's thread via a `smol` channel and are applied in a
     `cx.spawn` loop (`on_compile_event`).
+  - A PDF in the build folder is shown only for projects opened before (`recent`) or once a
+    run wrote it (`Output::pdf_written`); until then typesetting is forced (latexmk `-g`), so
+    build files shipped with a project are never handed to PDFium.
   - `pdf_pane.rs` keeps old bitmaps on screen until the new PDF's pages are rasterized (no flash)
     and only materializes pages near the viewport. SyncTeX forward/inverse search goes through the
     `synctex` crate, whose coordinates are PDF points with a top-left origin, y downwards.
