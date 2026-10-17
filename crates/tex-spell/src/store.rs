@@ -31,17 +31,31 @@ pub struct Store {
     /// Downloads, one directory per language, under a directory per commit.
     cache: PathBuf,
     system: Vec<PathBuf>,
+    /// Where downloads come from, and what they must hash to (tests replace
+    /// them with a local server and its files).
+    base: String,
+    hashes: fn(&str) -> Option<(&'static str, &'static str)>,
+    max_size: u64,
 }
 
 impl Store {
     pub fn new(cache_dir: &Path) -> Self {
-        Self::with_dirs(cache_dir, system_dirs())
+        Self::with_dirs(
+            cache_dir,
+            system_dirs(
+                std::env::var_os("DICPATH"),
+                std::env::var_os("HOME").map(PathBuf::from),
+            ),
+        )
     }
 
     pub fn with_dirs(cache_dir: &Path, system: Vec<PathBuf>) -> Self {
         Self {
             cache: cache_dir.join(&COMMIT[..12]),
             system,
+            base: BASE.to_string(),
+            hashes: catalog::hashes,
+            max_size: MAX_SIZE,
         }
     }
 
@@ -77,7 +91,7 @@ impl Store {
     /// Download the dictionary for `code` into the cache. Blocking.
     pub fn download(&self, code: &str) -> Result<Files> {
         let (aff_sha, dic_sha) =
-            catalog::hashes(code).ok_or_else(|| anyhow!("no dictionary for {code}"))?;
+            (self.hashes)(code).ok_or_else(|| anyhow!("no dictionary for {code}"))?;
         let files = self.cached(code);
         let dir = files.aff.parent().expect("cache file has a parent");
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -90,13 +104,13 @@ impl Store {
         // holds half a dictionary.
         let mut temps = Vec::new();
         for (name, sha) in [("index.aff", aff_sha), ("index.dic", dic_sha)] {
-            let url = format!("{BASE}/{COMMIT}/dictionaries/{code}/{name}");
+            let url = format!("{}/{COMMIT}/dictionaries/{code}/{name}", self.base);
             log::info!("downloading {url}");
             let mut resp = agent
                 .get(&url)
                 .call()
                 .with_context(|| format!("downloading {url}"))?;
-            let reader = resp.body_mut().with_config().limit(MAX_SIZE).reader();
+            let reader = resp.body_mut().with_config().limit(self.max_size).reader();
             let tmp = tempfile::NamedTempFile::new_in(dir)?;
             temps.push(
                 copy_verified(reader, tmp, sha).with_context(|| format!("downloading {url}"))?,
@@ -174,14 +188,15 @@ fn decode(bytes: &[u8], aff: &[u8]) -> Result<String> {
 }
 
 /// Hunspell's usual locations (`DICPATH` first).
-fn system_dirs() -> Vec<PathBuf> {
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn system_dirs(dicpath: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Vec<PathBuf> {
     #[cfg_attr(not(unix), allow(unused_mut))]
-    let mut dirs: Vec<PathBuf> = std::env::var_os("DICPATH")
+    let mut dirs: Vec<PathBuf> = dicpath
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
     #[cfg(unix)]
     {
-        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        if let Some(home) = home {
             dirs.push(home.join(".local/share/hunspell"));
             #[cfg(target_os = "macos")]
             dirs.push(home.join("Library/Spelling"));
@@ -256,6 +271,7 @@ fn system_names(code: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_support::http::{Response, Server, serve, serve_paths};
 
     #[test]
     fn verifies_downloads() {
@@ -338,6 +354,182 @@ mod tests {
         assert_eq!(system_names("en-GB"), vec!["en_GB"]);
         assert_eq!(system_names("sr-Latn"), vec!["sr_Latn_RS"]);
         assert!(system_names("ca-valencia").is_empty());
+    }
+
+    const AFF: &str = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwz\n\nSFX S Y 1\nSFX S 0 s .\n";
+    const DIC: &str = "2\nciao/S\nmondo\n";
+
+    fn pinned(code: &str) -> Option<(&'static str, &'static str)> {
+        (code == "it").then_some((
+            "31878ab6a4c657d92168c40e6754abe514117ae8cbe4c828cc3ee40067aac6e3",
+            "fbfd2b585cefe1e426f39cbfdb041949df618c402243a2a8d54fa43247af4ec0",
+        ))
+    }
+
+    fn path(name: &str) -> String {
+        format!("/{COMMIT}/dictionaries/it/{name}")
+    }
+
+    /// A store downloading from `server`, and its cache folder.
+    fn store(server: &Server) -> (Store, tempfile::TempDir) {
+        let cache = tempfile::tempdir().unwrap();
+        let mut store = Store::with_dirs(cache.path(), Vec::new());
+        store.base = server.url().to_string();
+        store.hashes = pinned;
+        (store, cache)
+    }
+
+    /// Everything in the cache folder: nothing is left behind by a failure.
+    fn cache_files(store: &Store) -> Vec<String> {
+        let mut out: Vec<String> = fs::read_dir(store.cache.join("it"))
+            .into_iter()
+            .flatten()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn downloads_pinned_files_and_loads_them() {
+        let server = serve_paths(vec![
+            (&path("index.aff"), Response::ok(AFF)),
+            (&path("index.dic"), Response::ok(DIC)),
+        ]);
+        let (store, _cache) = store(&server);
+        assert_eq!(store.local("it"), None);
+        let speller = store.load("it").unwrap();
+        assert!(speller.check("ciaos") && speller.check("mondo") && !speller.check("mondi"));
+        assert_eq!(store.local("it"), Some(store.cached("it")));
+        assert_eq!(cache_files(&store), ["index.aff", "index.dic"]);
+        let paths: Vec<_> = server.requests().into_iter().map(|r| r.path).collect();
+        assert_eq!(paths, [path("index.aff"), path("index.dic")]);
+        // Loaded from the cache from now on.
+        store.load("it").unwrap();
+        assert_eq!(server.requests().len(), 2);
+    }
+
+    #[test]
+    fn failed_downloads_leave_nothing_behind() {
+        let tampered = serve_paths(vec![
+            (&path("index.aff"), Response::ok(AFF)),
+            (&path("index.dic"), Response::ok("2\nciao/S\nmondi\n")),
+        ]);
+        let missing = serve_paths(vec![(&path("index.aff"), Response::ok(AFF))]);
+        let huge = serve_paths(vec![
+            (&path("index.aff"), Response::ok(AFF)),
+            (&path("index.dic"), Response::ok(DIC)),
+        ]);
+        for (server, max_size, error) in [
+            (&tampered, MAX_SIZE, "SHA-256 mismatch"),
+            (&missing, MAX_SIZE, "404"),
+            (&huge, 16, "downloading"),
+        ] {
+            let (mut store, _cache) = store(server);
+            store.max_size = max_size;
+            let e = store.download("it").unwrap_err();
+            assert!(format!("{e:#}").contains(error), "{e:#}");
+            assert!(cache_files(&store).is_empty(), "{:?}", cache_files(&store));
+            assert_eq!(store.local("it"), None);
+            assert!(store.load("it").is_err());
+        }
+    }
+
+    #[test]
+    fn only_catalog_languages_are_downloaded() {
+        let server = serve(|_| Response::ok(""));
+        let (mut store, _cache) = store(&server);
+        store.hashes = catalog::hashes;
+        let e = store.download("tlh-Piqad").unwrap_err();
+        assert!(e.to_string().contains("no dictionary for tlh-Piqad"), "{e}");
+        assert!(server.requests().is_empty());
+        assert!(!store.cache.exists());
+    }
+
+    #[test]
+    fn half_a_dictionary_in_place_is_not_used() {
+        let server = serve_paths(vec![
+            (&path("index.aff"), Response::ok(AFF)),
+            (&path("index.dic"), Response::ok(DIC)),
+        ]);
+        let (store, _cache) = store(&server);
+        // The second file cannot be put in place.
+        let files = store.cached("it");
+        fs::create_dir_all(files.dic.join("in-the-way")).unwrap();
+        assert!(store.download("it").is_err());
+        // The `.aff` is there, but alone it is not a dictionary...
+        assert_eq!(store.local("it"), None);
+        // ...and the next download replaces it.
+        fs::remove_dir_all(&files.dic).unwrap();
+        assert_eq!(store.download("it").unwrap(), files);
+        assert!(store.load("it").unwrap().check("mondo"));
+    }
+
+    #[test]
+    fn load_reports_broken_dictionaries() {
+        let system = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let store = Store::with_dirs(cache.path(), vec![system.path().to_path_buf()]);
+        let install = |aff: &[u8], dic: &[u8]| {
+            fs::write(system.path().join("it_IT.aff"), aff).unwrap();
+            fs::write(system.path().join("it_IT.dic"), dic).unwrap();
+        };
+        install(AFF.as_bytes(), DIC.as_bytes());
+        assert!(store.load("it").unwrap().check("ciaos"));
+        // Not UTF-8 and no charset.
+        install(b"TRY abc\n", b"1\ncitt\xe0\n");
+        let e = store.load("it").err().unwrap();
+        assert!(e.to_string().contains("neither UTF-8"), "{e}");
+        install(b"SET KOI-9\n\xff\n", b"1\nx\n");
+        let e = store.load("it").err().unwrap();
+        assert!(
+            e.to_string()
+                .contains("unsupported dictionary charset KOI-9"),
+            "{e}"
+        );
+        // Parsed but refused.
+        install(AFF.as_bytes(), b"");
+        let e = store.load("it").err().unwrap();
+        assert!(e.to_string().contains("parsing the it dictionary"), "{e}");
+        // A BOM and a legacy charset are fine.
+        install(b"SET ISO8859-1\n", b"1\ncitt\xe0\n");
+        assert!(store.load("it").unwrap().check("città"));
+        install(b"\xEF\xBB\xBFSET UTF-8\n", "\u{feff}1\ncittà\n".as_bytes());
+        assert!(store.load("it").unwrap().check("città"));
+    }
+
+    #[test]
+    fn system_dirs_start_with_dicpath() {
+        let dicpath = std::env::join_paths(["/a", "/b"]).unwrap();
+        let dirs = system_dirs(Some(dicpath), Some(PathBuf::from("/home/me")));
+        assert_eq!(dirs[..2], [PathBuf::from("/a"), PathBuf::from("/b")]);
+        if cfg!(unix) {
+            assert_eq!(dirs[2], Path::new("/home/me/.local/share/hunspell"));
+            assert!(dirs.contains(&PathBuf::from("/usr/share/hunspell")));
+            let homeless = system_dirs(None, None);
+            assert!(homeless.iter().all(|d| !d.starts_with("/home/me")));
+            assert_eq!(
+                homeless[0],
+                Path::new(if cfg!(target_os = "macos") {
+                    "/Library/Spelling"
+                } else {
+                    "/usr/share/hunspell"
+                })
+            );
+        } else {
+            assert_eq!(dirs.len(), 2);
+            assert!(system_dirs(None, None).is_empty());
+        }
+        assert!(dirs.contains(&PathBuf::from("/a")));
+    }
+
+    #[test]
+    fn new_reads_the_environment() {
+        let cache = tempfile::tempdir().unwrap();
+        let store = Store::new(cache.path());
+        assert_eq!(store.cache, cache.path().join(&COMMIT[..12]));
+        assert_eq!(store.base, BASE);
+        assert_eq!(store.max_size, MAX_SIZE);
     }
 
     /// Downloads a real dictionary: `cargo test -p tex-spell -- --include-ignored`.
