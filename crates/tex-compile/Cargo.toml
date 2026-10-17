@@ -16,3 +16,10 @@ libc = "0.2"
 test-support.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
+
+# A stand-in for a TeX engine, for the scheduler's tests.
+[[bin]]
+name = "fake-engine"
+path = "tests/bin/fake_engine.rs"
+test = false
+doc = false
