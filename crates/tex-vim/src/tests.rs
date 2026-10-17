@@ -281,7 +281,8 @@ fn visual_mode_survives_a_text_that_changed() {
     let mut vim = Vim::new();
     vim.key(&ctx("aé€b", 6), Key::Char('v'));
     let a = vim.key(&ctx("a€", 4), Key::Char('h'));
-    assert_eq!(a, vec![Action::Select(4..1)]);
+    // The head is before the anchor: the selection goes backwards.
+    assert_eq!(a, vec![Action::Select(Range { start: 4, end: 1 })]);
     // Ends inside what is now a multibyte character.
     let mut vim = Vim::new();
     vim.key(&ctx("aé", 1), Key::Char('v'));
