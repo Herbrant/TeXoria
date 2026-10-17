@@ -218,28 +218,70 @@ fn fields_of(s: &str) -> Vec<(String, String, Range<usize>)> {
         if j >= b.len() {
             break;
         }
-        let (range, next) = match b[j] {
-            b'{' => {
-                let end = matching_close(b, j).unwrap_or(b.len());
-                (j + 1..end, end + 1)
+        // A value is one or more pieces joined with `#`.
+        let mut raw = String::new();
+        let mut range: Option<Range<usize>> = None;
+        let next = loop {
+            let (piece, next) = value_piece(s, j);
+            let start = range.map_or(piece.start, |r| r.start);
+            range = Some(start..piece.end);
+            raw.push_str(&s[piece]);
+            let mut k = next;
+            while k < b.len() && b[k].is_ascii_whitespace() {
+                k += 1;
             }
-            b'"' => {
-                let end = s[j + 1..].find('"').map_or(b.len(), |e| j + 1 + e);
-                (j + 1..end.min(s.len()), end + 1)
+            if b.get(k) != Some(&b'#') {
+                break next;
             }
-            _ => {
-                let end = s[j..].find(',').map_or(b.len(), |e| j + e);
-                let raw = &s[j..end];
-                (j..j + raw.trim_end().len(), end)
+            j = k + 1;
+            while j < b.len() && b[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j >= b.len() {
+                break b.len();
             }
         };
-        out.push((name, clean(&s[range.clone()]), range));
+        out.push((name, clean(&raw), range.unwrap_or(j..j)));
         i = next;
         while i < b.len() && (b[i].is_ascii_whitespace() || b[i] == b',') {
             i += 1;
         }
     }
     out
+}
+
+/// The piece of a value starting at `j` (`{...}`, `"..."` or a bare number or
+/// macro name): its bytes without delimiters, and where the text after it starts.
+fn value_piece(s: &str, j: usize) -> (Range<usize>, usize) {
+    let b = s.as_bytes();
+    match b[j] {
+        b'{' => {
+            let end = matching_close(b, j).unwrap_or(b.len());
+            (j + 1..end, end + 1)
+        }
+        b'"' => {
+            // A quote inside braces (`{"}`) does not end the value.
+            let mut depth = 0usize;
+            let end = (j + 1..b.len())
+                .find(|&k| match b[k] {
+                    b'{' => {
+                        depth += 1;
+                        false
+                    }
+                    b'}' => {
+                        depth = depth.saturating_sub(1);
+                        false
+                    }
+                    c => c == b'"' && depth == 0,
+                })
+                .unwrap_or(b.len());
+            (j + 1..end, end + 1)
+        }
+        _ => {
+            let end = s[j..].find([',', '#']).map_or(b.len(), |e| j + e);
+            (j..j + s[j..end].trim_end().len(), end)
+        }
+    }
 }
 
 /// Drop braces used for case protection and collapse whitespace.
@@ -334,6 +376,25 @@ mod tests {
         assert_eq!(e[0].field("note"), Some("(c))"));
         assert_eq!(e[0].year.as_deref(), Some("2000"));
         assert!(src[e[0].range.clone()].ends_with("2000)"));
+    }
+
+    #[test]
+    fn quoted_values_may_hold_quotes_in_braces() {
+        let e = parse("@misc{k, title = \"a {\"} b\", year = 2000}");
+        assert_eq!(e[0].title.as_deref(), Some("a \" b"));
+        assert_eq!(e[0].year.as_deref(), Some("2000"));
+    }
+
+    #[test]
+    fn reads_concatenated_values() {
+        let src = "@misc{k, title = \"a\" # { b} # mac, month = jan # \"~1\", year = 2000}";
+        let e = parse(src);
+        let names: Vec<_> = e[0].fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["title", "month", "year"]);
+        assert_eq!(e[0].title.as_deref(), Some("a bmac"));
+        assert_eq!(e[0].field("month"), Some("jan~1"));
+        assert_eq!(&src[e[0].fields[1].range.clone()], "jan # \"~1");
+        assert_eq!(e[0].year.as_deref(), Some("2000"));
     }
 
     #[test]
