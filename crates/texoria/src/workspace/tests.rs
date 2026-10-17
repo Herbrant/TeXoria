@@ -153,7 +153,7 @@ fn replace_all_goes_through_every_file_when_the_search_stopped(cx: &mut TestAppC
     workspace.read_with(cx, |ws, _| {
         assert_eq!(
             ws.replace_targets(std::slice::from_ref(&main), false),
-            [main.clone()]
+            std::slice::from_ref(&main)
         );
         let all = ws.replace_targets(std::slice::from_ref(&main), true);
         for f in ["main.tex", "refs.bib", "chapters/methods.tex"] {
