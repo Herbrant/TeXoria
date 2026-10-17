@@ -6742,6 +6742,7 @@ dependencies = [
  "nucleo-matcher",
  "serde",
  "serde_json",
+ "tempfile",
  "tex-project",
 ]
 

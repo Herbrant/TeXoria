@@ -1,10 +1,11 @@
 //! Context-aware LaTeX completion: commands, environments, labels,
-//! citations and packages, ranked with fuzzy matching.
+//! citations, packages and file paths, ranked with fuzzy matching.
 //!
 //! The output is editor-agnostic: each [`Item`] says which byte range of the
 //! document to replace, the text to insert and where the cursor should end.
 
 use std::ops::Range;
+use std::path::Path;
 use std::sync::LazyLock;
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
@@ -13,6 +14,8 @@ use serde::Deserialize;
 use tex_project::Project;
 
 const MAX_ITEMS: usize = 100;
+/// Entries read from a folder for path completion, as a guard against huge ones.
+const MAX_DIR_ENTRIES: usize = 2000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemKind {
@@ -22,6 +25,38 @@ pub enum ItemKind {
     Label,
     Citation,
     Package,
+    File,
+    Folder,
+}
+
+/// The files a path argument expects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathKind {
+    /// `\input`, `\include`: `.tex` files, written without the extension.
+    Tex,
+    /// `\includegraphics`: pictures and PDFs, with their extension.
+    Graphics,
+    /// `\bibliography`: `.bib` files, without the extension.
+    Bib,
+    /// `\addbibresource`: `.bib` files, with the extension.
+    BibResource,
+}
+
+impl PathKind {
+    const GRAPHICS: &[&str] = &["pdf", "png", "jpg", "jpeg", "eps", "svg"];
+
+    fn accepts(self, ext: &str) -> bool {
+        let ext = ext.to_ascii_lowercase();
+        match self {
+            PathKind::Tex => ext == "tex",
+            PathKind::Graphics => Self::GRAPHICS.contains(&ext.as_str()),
+            PathKind::Bib | PathKind::BibResource => ext == "bib",
+        }
+    }
+
+    fn keeps_extension(self) -> bool {
+        matches!(self, PathKind::Graphics | PathKind::BibResource)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +87,11 @@ pub enum Context {
     Citation { prefix: Range<usize> },
     /// `\usepackage{ams|`
     Package { prefix: Range<usize> },
+    /// `\input{chapters/me|`, relative to the root file's folder.
+    Path {
+        prefix: Range<usize>,
+        kind: PathKind,
+    },
 }
 
 #[derive(Deserialize)]
@@ -105,13 +145,23 @@ pub fn context(text: &str, offset: usize) -> Option<Context> {
         {
             return None;
         }
-        // For lists (`\cite{a,b|`) only the last element is the prefix.
+        let base = cmd.trim_end_matches('*');
+        let path = path_kind(base);
+        // For lists (`\cite{a,b|`) only the last element is the prefix; a
+        // file name may contain commas, unless the command takes a list.
         let arg = &before[open + 1..];
-        let item_start = arg.rfind(',').map_or(0, |i| i + 1);
+        let list = !matches!(path, Some((_, false)));
+        let item_start = if list {
+            arg.rfind(',').map_or(0, |i| i + 1)
+        } else {
+            0
+        };
         let item_start =
             item_start + (arg[item_start..].len() - arg[item_start..].trim_start().len());
         let prefix = line_start + open + 1 + item_start..offset;
-        let base = cmd.trim_end_matches('*');
+        if let Some((kind, _)) = path {
+            return Some(Context::Path { prefix, kind });
+        }
         return match base {
             "\\begin" => Some(Context::Begin { prefix }),
             "\\end" => Some(Context::End { prefix }),
@@ -151,6 +201,18 @@ fn unclosed_brace(s: &str) -> Option<usize> {
     None
 }
 
+/// The files a command's argument names, and whether it is a list.
+fn path_kind(cmd: &str) -> Option<(PathKind, bool)> {
+    Some(match cmd {
+        "\\input" | "\\include" | "\\subfile" | "\\subfileinclude" => (PathKind::Tex, false),
+        "\\includeonly" => (PathKind::Tex, true),
+        "\\includegraphics" | "\\includepdf" | "\\includesvg" => (PathKind::Graphics, false),
+        "\\bibliography" => (PathKind::Bib, true),
+        "\\addbibresource" | "\\addglobalbib" => (PathKind::BibResource, false),
+        _ => return None,
+    })
+}
+
 fn is_ref_command(c: &str) -> bool {
     let c = c.trim_start_matches('\\').to_ascii_lowercase();
     c.ends_with("ref") || c.ends_with("refs") || c == "labelcref"
@@ -166,6 +228,12 @@ pub fn complete(text: &str, offset: usize, project: Option<&Project>, indent: &s
     let Some(ctx) = context(text, offset) else {
         return Vec::new();
     };
+    if let Context::Path { prefix, kind } = &ctx {
+        return match project {
+            Some(p) => complete_path(p.root_dir(), &text[prefix.clone()], prefix.clone(), *kind),
+            None => Vec::new(),
+        };
+    }
     // If an auto-inserted `}` follows the cursor, swallow it.
     let closing = text[offset..].starts_with('}');
 
@@ -336,6 +404,8 @@ pub fn complete(text: &str, offset: usize, project: Option<&Project>, indent: &s
                 ));
             }
         }
+        // Handled above.
+        Context::Path { .. } => {}
     }
 
     let typed = match &ctx {
@@ -344,9 +414,75 @@ pub fn complete(text: &str, offset: usize, project: Option<&Project>, indent: &s
         | Context::End { prefix }
         | Context::Label { prefix }
         | Context::Citation { prefix }
-        | Context::Package { prefix } => &text[prefix.clone()],
+        | Context::Package { prefix }
+        | Context::Path { prefix, .. } => &text[prefix.clone()],
     };
     rank(typed, candidates)
+}
+
+/// The folders and files of `kind` in the folder that `typed` points into,
+/// relative to `root_dir` (TeX's working directory).
+fn complete_path(root_dir: &Path, typed: &str, replace: Range<usize>, kind: PathKind) -> Vec<Item> {
+    let (folder, name) = match typed.rfind('/') {
+        Some(i) => (&typed[..=i], &typed[i + 1..]),
+        None => ("", typed),
+    };
+    let dir = if Path::new(folder).is_absolute() {
+        Path::new(folder).to_path_buf()
+    } else {
+        root_dir.join(folder)
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    for entry in entries.flatten().take(MAX_DIR_ENTRIES) {
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        // Hidden files, and TeXoria's build folder.
+        if file_name.starts_with('.') {
+            continue;
+        }
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        let (label, insert, item_kind) = if is_dir {
+            let label = format!("{file_name}/");
+            (label.clone(), format!("{folder}{label}"), ItemKind::Folder)
+        } else {
+            let path = Path::new(&file_name);
+            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            if !kind.accepts(ext) {
+                continue;
+            }
+            let written = if kind.keeps_extension() {
+                file_name.clone()
+            } else {
+                file_name[..file_name.len() - ext.len() - 1].to_string()
+            };
+            (
+                file_name.clone(),
+                format!("{folder}{written}"),
+                ItemKind::File,
+            )
+        };
+        let cursor = insert.len();
+        candidates.push((
+            label.clone(),
+            Item {
+                kind: item_kind,
+                label,
+                detail: None,
+                replace: replace.clone(),
+                insert,
+                cursor,
+            },
+        ));
+    }
+    // Folders first, then by name, before fuzzy ranking keeps that order on ties.
+    candidates.sort_by(|a, b| {
+        (a.1.kind != ItemKind::Folder, &a.0).cmp(&(b.1.kind != ItemKind::Folder, &b.0))
+    });
+    rank(name, candidates)
 }
 
 fn rank(typed: &str, candidates: Vec<(String, Item)>) -> Vec<Item> {
@@ -477,6 +613,9 @@ mod tests {
             ("% \\sec|", None),
             ("plain text|", None),
             ("\\textbf{bold|", None),
+            ("\\input{chapters/me|", Some("path")),
+            ("\\includegraphics[width=3cm]{fig|", Some("path")),
+            ("\\bibliography{a,b|", Some("path")),
         ];
         for (src, want) in cases {
             let (t, o) = at(src);
@@ -487,11 +626,74 @@ mod tests {
                 Context::Label { .. } => "label",
                 Context::Citation { .. } => "citation",
                 Context::Package { .. } => "package",
+                Context::Path { .. } => "path",
             });
             assert_eq!(got, want, "{src}");
         }
         let (t, o) = at("\\cref{a, b|");
         assert_eq!(context(&t, o), Some(Context::Label { prefix: 9..10 }));
+    }
+
+    #[test]
+    fn path_prefix() {
+        let (t, o) = at("\\input{a, b|");
+        assert_eq!(
+            context(&t, o),
+            Some(Context::Path {
+                prefix: 7..11,
+                kind: PathKind::Tex
+            })
+        );
+        let (t, o) = at("\\bibliography{refs, mo|");
+        assert_eq!(
+            context(&t, o),
+            Some(Context::Path {
+                prefix: 20..22,
+                kind: PathKind::Bib
+            })
+        );
+    }
+
+    #[test]
+    fn completes_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("chapters")).unwrap();
+        std::fs::create_dir_all(root.join(".texoria")).unwrap();
+        for f in [
+            "main.tex",
+            "chapters/intro.tex",
+            "chapters/plot.png",
+            "refs.bib",
+        ] {
+            std::fs::write(root.join(f), "").unwrap();
+        }
+        let labels = |items: Vec<Item>| {
+            items
+                .into_iter()
+                .map(|i| (i.label, i.insert))
+                .collect::<Vec<_>>()
+        };
+        let all = complete_path(root, "", 0..0, PathKind::Tex);
+        assert_eq!(
+            labels(all),
+            vec![
+                ("chapters/".to_string(), "chapters/".to_string()),
+                ("main.tex".to_string(), "main".to_string()),
+            ]
+        );
+        let inside = complete_path(root, "chapters/in", 0..11, PathKind::Tex);
+        assert_eq!(
+            labels(inside),
+            vec![("intro.tex".to_string(), "chapters/intro".to_string())]
+        );
+        let pictures = complete_path(root, "chapters/", 0..9, PathKind::Graphics);
+        assert_eq!(
+            labels(pictures),
+            vec![("plot.png".to_string(), "chapters/plot.png".to_string())]
+        );
+        let bib = complete_path(root, "", 0..0, PathKind::BibResource);
+        assert!(labels(bib).contains(&("refs.bib".to_string(), "refs.bib".to_string())));
     }
 
     #[test]

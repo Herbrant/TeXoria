@@ -9,3 +9,6 @@ tex-project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 nucleo-matcher = "0.3"
+
+[dev-dependencies]
+tempfile.workspace = true

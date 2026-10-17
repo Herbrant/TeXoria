@@ -11,7 +11,11 @@ Suggestions appear as you type and depend on where the cursor is:
 | `\ref{…}`, `\eqref{…}`, … | The labels defined anywhere in the project |
 | `\cite{…}` | The entries of the project's `.bib` files, matched by key, title or author |
 | `\usepackage{…}` | Package names |
+| `\input{…}`, `\include{…}` | The project's folders and `.tex` files (without the extension) |
+| `\includegraphics{…}` | Folders, pictures and PDFs |
+| `\bibliography{…}`, `\addbibresource{…}` | Folders and `.bib` files |
 
+Paths are relative to the root file's folder, like TeX's; pick a folder to see what is inside.
 Ranking is fuzzy, so `\sec` finds `\section` and `\subsection`. Completions follow unsaved
 changes in every open tab.
 

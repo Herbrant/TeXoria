@@ -87,7 +87,9 @@ impl CompletionProvider for LatexCompletions {
                         ItemKind::Environment => CompletionItemKind::MODULE,
                         ItemKind::Label => CompletionItemKind::REFERENCE,
                         ItemKind::Citation => CompletionItemKind::VALUE,
-                        ItemKind::Package => CompletionItemKind::FILE,
+                        ItemKind::Package => CompletionItemKind::MODULE,
+                        ItemKind::File => CompletionItemKind::FILE,
+                        ItemKind::Folder => CompletionItemKind::FOLDER,
                     }),
                     detail: item.detail,
                     text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
@@ -108,6 +110,6 @@ impl CompletionProvider for LatexCompletions {
         // token; `complete` itself decides whether the context applies.
         let mut chars = new_text.chars();
         matches!((chars.next(), chars.next()), (Some(c), None)
-            if c.is_alphanumeric() || matches!(c, '\\' | '{' | ',' | ':' | '-' | '_' | '*'))
+            if c.is_alphanumeric() || matches!(c, '\\' | '{' | ',' | ':' | '-' | '_' | '*' | '/' | '.'))
     }
 }
