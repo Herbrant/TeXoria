@@ -139,6 +139,19 @@ impl Project {
         self.bibs.iter().map(|(p, e)| (p.as_path(), e.as_slice()))
     }
 
+    /// The folders of every `\graphicspath` in the project.
+    pub fn graphics_paths(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for i in self.files.values() {
+            for g in &i.graphics_paths {
+                if !out.contains(g) {
+                    out.push(g.clone());
+                }
+            }
+        }
+        out
+    }
+
     /// Indexed `.tex` files with their index, in no particular order.
     pub fn indexes(&self) -> impl Iterator<Item = (&Path, &Index)> {
         self.files.iter().map(|(p, i)| (p.as_path(), i))
@@ -216,7 +229,7 @@ impl Project {
                 }
                 IncludeKind::Bib => {
                     // `\bibliography{a,b}` arrives as separate includes already.
-                    let p = resolve_with_ext(&dir, &inc.path, "bib");
+                    let p = resolve_bib(&dir, &inc.path);
                     if let std::collections::hash_map::Entry::Vacant(slot) = self.bibs.entry(p) {
                         let entries = read_bib(slot.key());
                         slot.insert(entries);
@@ -247,6 +260,42 @@ pub fn read_regular(path: &Path) -> Option<String> {
 /// file's), appending `.tex` when there is no extension.
 pub fn resolve_tex(root_dir: &Path, path: &str) -> PathBuf {
     resolve_with_ext(root_dir, path, "tex")
+}
+
+/// A `\bibliography` / `\addbibresource` path, with `.bib` added if missing.
+pub fn resolve_bib(root_dir: &Path, path: &str) -> PathBuf {
+    resolve_with_ext(root_dir, path, "bib")
+}
+
+/// Extensions tried, in order, for an `\includegraphics` without one.
+pub const GRAPHICS_EXTENSIONS: &[&str] = &["pdf", "png", "jpg", "jpeg", "eps", "svg"];
+
+/// The file of an `\includegraphics{name}`: `name` as is or with one of
+/// [`GRAPHICS_EXTENSIONS`], in the root file's folder, then in each folder of
+/// `\graphicspath`.
+pub fn resolve_graphics(root_dir: &Path, graphics_paths: &[String], name: &str) -> Option<PathBuf> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let dirs = std::iter::once(root_dir.to_path_buf())
+        .chain(graphics_paths.iter().map(|g| root_dir.join(g)));
+    for dir in dirs {
+        let base = normalize(&dir.join(name));
+        if base.is_file() {
+            return Some(base);
+        }
+        for ext in GRAPHICS_EXTENSIONS {
+            let mut s = base.as_os_str().to_owned();
+            s.push(".");
+            s.push(ext);
+            let p = PathBuf::from(s);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
 }
 
 fn resolve_with_ext(root_dir: &Path, path: &str, ext: &str) -> PathBuf {

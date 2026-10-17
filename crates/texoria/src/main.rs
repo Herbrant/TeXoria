@@ -94,6 +94,11 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-k", EditWithAgent, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-/", ToggleComment, Some("Input")),
+        KeyBinding::new(
+            "f12",
+            gpui_kit::component::input::GoToDefinition,
+            Some("Input"),
+        ),
     ]);
 }
 

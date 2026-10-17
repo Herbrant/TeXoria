@@ -19,6 +19,22 @@ Paths are relative to the root file's folder, like TeX's; pick a folder to see w
 Ranking is fuzzy, so `\sec` finds `\section` and `\subsection`. Completions follow unsaved
 changes in every open tab.
 
+## Definitions and hover
+
+⌘-click (Ctrl-click) a name, or press F12 with the cursor on it, to go where it is defined:
+
+| On | Goes to |
+|---|---|
+| `\ref{…}`, `\eqref{…}`, `\cref{…}`… | its `\label` |
+| `\cite{…}` | the entry in the `.bib` file (or the `\bibitem`) |
+| `\input{…}`, `\include{…}`, `\bibliography{…}` | that file |
+| `\includegraphics{…}` | the picture, opened in its app |
+| a command or environment of your own | its `\newcommand` / `\newenvironment` |
+
+Hovering shows what a name stands for: a citation's authors, title and year, what a label is
+attached to, how many times a label is referenced, a file's size, what a command does, and a
+link to a package's documentation.
+
 ## Comments
 
 ⌘/ (Ctrl+/) comments the lines of the selection out with `%`, at the indentation of the

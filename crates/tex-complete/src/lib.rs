@@ -13,6 +13,8 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Deserialize;
 use tex_project::Project;
 
+pub mod nav;
+
 const MAX_ITEMS: usize = 100;
 /// Entries read from a folder for path completion, as a guard against huge ones.
 const MAX_DIR_ENTRIES: usize = 2000;
@@ -95,27 +97,27 @@ pub enum Context {
 }
 
 #[derive(Deserialize)]
-struct Database {
-    commands: Vec<CommandSpec>,
-    environments: Vec<EnvSpec>,
+pub(crate) struct Database {
+    pub(crate) commands: Vec<CommandSpec>,
+    pub(crate) environments: Vec<EnvSpec>,
     packages: Vec<String>,
 }
 
 #[derive(Deserialize)]
-struct CommandSpec {
-    name: String,
+pub(crate) struct CommandSpec {
+    pub(crate) name: String,
     snippet: String,
-    detail: String,
+    pub(crate) detail: String,
 }
 
 #[derive(Deserialize)]
-struct EnvSpec {
-    name: String,
+pub(crate) struct EnvSpec {
+    pub(crate) name: String,
     body: String,
-    detail: String,
+    pub(crate) detail: String,
 }
 
-static DB: LazyLock<Database> = LazyLock::new(|| {
+pub(crate) static DB: LazyLock<Database> = LazyLock::new(|| {
     serde_json::from_str(include_str!("../data/latex.json")).expect("valid latex.json")
 });
 
@@ -183,12 +185,12 @@ pub fn context(text: &str, offset: usize) -> Option<Context> {
     None
 }
 
-fn in_comment(before: &str) -> bool {
+pub(crate) fn in_comment(before: &str) -> bool {
     let b = before.as_bytes();
     (0..b.len()).any(|i| b[i] == b'%' && (i == 0 || b[i - 1] != b'\\'))
 }
 
-fn unclosed_brace(s: &str) -> Option<usize> {
+pub(crate) fn unclosed_brace(s: &str) -> Option<usize> {
     let mut depth = 0i32;
     for (i, ch) in s.char_indices().rev() {
         match ch {
@@ -202,7 +204,7 @@ fn unclosed_brace(s: &str) -> Option<usize> {
 }
 
 /// The files a command's argument names, and whether it is a list.
-fn path_kind(cmd: &str) -> Option<(PathKind, bool)> {
+pub(crate) fn path_kind(cmd: &str) -> Option<(PathKind, bool)> {
     Some(match cmd {
         "\\input" | "\\include" | "\\subfile" | "\\subfileinclude" => (PathKind::Tex, false),
         "\\includeonly" => (PathKind::Tex, true),
@@ -213,12 +215,12 @@ fn path_kind(cmd: &str) -> Option<(PathKind, bool)> {
     })
 }
 
-fn is_ref_command(c: &str) -> bool {
+pub(crate) fn is_ref_command(c: &str) -> bool {
     let c = c.trim_start_matches('\\').to_ascii_lowercase();
     c.ends_with("ref") || c.ends_with("refs") || c == "labelcref"
 }
 
-fn is_cite_command(c: &str) -> bool {
+pub(crate) fn is_cite_command(c: &str) -> bool {
     let c = c.trim_start_matches('\\').to_ascii_lowercase();
     c.contains("cite") || c == "citetext"
 }

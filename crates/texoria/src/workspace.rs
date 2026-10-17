@@ -40,7 +40,9 @@ use crate::diff_view::{DiffSource, DiffView, DiffViewEvent};
 use crate::edit;
 use crate::file_tree::{FileOp, FileTree, FileTreeEvent};
 use crate::git_panel::{self, GitOp, GitPanel, GitPanelEvent};
-use crate::latex::{self, CursorFixup, LatexCompletions};
+use crate::latex::{
+    self, CursorFixup, LatexCompletions, LatexNavigation, OpenExternal, OpenLocation,
+};
 use crate::overleaf;
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
 use crate::settings::{Session, Settings, SpellLanguage, ThemeChoice};
@@ -658,10 +660,15 @@ impl Workspace {
             project: self.project.clone(),
             fixups: self.fixups.clone(),
         });
+        let navigation = Rc::new(LatexNavigation::new(self.project.clone()));
         let busy = self.agent_busy;
         editor.update(cx, |state, cx| {
             state.set_readonly(busy, cx);
-            state.lsp_mut().completion_provider = Some(provider);
+            let lsp = state.lsp_mut();
+            lsp.completion_provider = Some(provider);
+            lsp.show_document = Some(navigation.show_document());
+            lsp.definition_provider = Some(navigation.clone());
+            lsp.hover_provider = Some(navigation);
             state.set_editor_paddings(Edges {
                 top: px(18.),
                 right: px(24.),
@@ -712,6 +719,48 @@ impl Workspace {
             state.set_cursor_position(Position::new(line, 0), window, cx);
             state.focus(window, cx);
         });
+    }
+
+    /// Select bytes of `file` (a definition, a search result).
+    fn reveal_range(
+        &mut self,
+        file: PathBuf,
+        range: std::ops::Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let file = std::fs::canonicalize(&file).unwrap_or(file);
+        let Some(ix) = self.activate_file(file, window, cx) else {
+            return;
+        };
+        let editor = self.buffers[ix].editor.clone();
+        editor.update(cx, |state, cx| {
+            let len = state.text().len();
+            let range = range.start.min(len)..range.end.min(len);
+            // Scroll to it: moving the cursor brings it into view.
+            let start = state.text().offset_to_position(range.start);
+            state.set_cursor_position(start, window, cx);
+            state.set_selected_range(range, cx);
+            state.focus(window, cx);
+        });
+    }
+
+    /// Open a file with its app, if it is a document or a picture.
+    fn open_external(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if files::safe_to_open(path) {
+            cx.open_with_system(path);
+        } else {
+            // It could be a program: let the user decide in the file manager
+            // rather than start it.
+            cx.reveal_path(path);
+            window.push_notification(
+                Notification::info(
+                    "TeXoria opens only documents and pictures with other apps: the file is \
+                     shown in its folder instead.",
+                ),
+                cx,
+            );
+        }
     }
 
     fn prompt_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -949,19 +998,8 @@ impl Workspace {
             FileTreeEvent::Open(path) => {
                 if files::looks_like_text(path) {
                     self.activate_file(path.clone(), window, cx);
-                } else if files::safe_to_open(path) {
-                    cx.open_with_system(path);
                 } else {
-                    // It could be a program: let the user decide in the file
-                    // manager rather than start it.
-                    cx.reveal_path(path);
-                    window.push_notification(
-                        Notification::info(
-                            "TeXoria opens only documents and pictures with other apps: the \
-                             file is shown in its folder instead.",
-                        ),
-                        cx,
-                    );
+                    self.open_external(path, window, cx);
                 }
             }
             FileTreeEvent::Request(op) => self.run_file_op(op.clone(), window, cx),
@@ -3637,6 +3675,12 @@ impl Render for Workspace {
             )
             .on_action(cx.listener(|this, a: &RewriteSelection, window, cx| {
                 this.rewrite_selection(a.how.clone(), window, cx)
+            }))
+            .on_action(cx.listener(|this, a: &OpenLocation, window, cx| {
+                this.reveal_range(a.file.clone(), a.range.clone(), window, cx)
+            }))
+            .on_action(cx.listener(|this, a: &OpenExternal, window, cx| {
+                this.open_external(&a.path, window, cx)
             }))
             .on_action(
                 cx.listener(|this, _: &ToggleComment, window, cx| this.toggle_comment(window, cx)),

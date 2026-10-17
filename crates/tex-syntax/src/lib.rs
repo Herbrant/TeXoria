@@ -142,6 +142,8 @@ pub struct Index {
     /// `\documentclass` — present only in root files.
     pub document_class: Option<String>,
     pub packages: Vec<String>,
+    /// Each package name of `\usepackage`, with where it is.
+    pub package_uses: Vec<KeyRef>,
     /// Options of `\documentclass` and `babel` without a value, in order: babel
     /// takes the last one that names a language as the main language.
     pub language_options: Vec<String>,
@@ -446,6 +448,9 @@ impl<'a> Walk<'a> {
                     }
                 }
                 index.packages.extend(paths);
+                index
+                    .package_uses
+                    .extend(self.key_refs(node, "paths", "path"));
             }
             "generic_command" => {
                 let name = node
