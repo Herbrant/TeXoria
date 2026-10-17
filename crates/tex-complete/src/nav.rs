@@ -229,15 +229,16 @@ pub fn definition(project: &Project, symbol: &Symbol) -> Option<Target> {
 /// What to show about `symbol` on hover, as Markdown.
 pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
     let dir = project.root_dir();
-    let place = |file: &Path, line: u32| format!("{}:{}", relative(dir, file), line + 1);
+    let place = |file: &Path, line: u32| format!("{}:{}", escape(&relative(dir, file)), line + 1);
     let mut out = String::new();
     match symbol {
         Symbol::Reference { name, .. } => {
             let labels = project.labels();
             let Some(l) = labels.iter().find(|l| &l.label.name == name) else {
-                return Some(format!("No `\\label{{{name}}}` in the project."));
+                let label = code(&format!("\\label{{{name}}}"));
+                return Some(format!("No {label} in the project."));
             };
-            let _ = write!(out, "**Label** `{name}`");
+            let _ = write!(out, "**Label** {}", code(name));
             if let Some(ctx) = &l.label.context {
                 let _ = write!(out, " — {ctx}");
             }
@@ -250,7 +251,8 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
                 .sum();
             let _ = write!(
                 out,
-                "**Label** `{name}`\n\nReferenced {}.",
+                "**Label** {}\n\nReferenced {}.",
+                code(name),
                 match uses {
                     0 => "nowhere".to_string(),
                     1 => "once".to_string(),
@@ -267,9 +269,9 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
                     .indexes()
                     .any(|(_, i)| i.bibitems.iter().any(|b| &b.name == key));
                 return Some(if bibitem {
-                    format!("**Citation** `{key}` (`\\bibitem`)")
+                    format!("**Citation** {} (`\\bibitem`)", code(key))
                 } else {
-                    format!("No entry `{key}` in the project's bibliography.")
+                    format!("No entry {} in the project's bibliography.", code(key))
                 });
             };
             if let Some(title) = &e.title {
@@ -295,7 +297,8 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
             if !tail.is_empty() {
                 let _ = writeln!(out, "{}\n", tail.join(", "));
             }
-            let _ = write!(out, "`@{}{{{key}}}` — {}", e.kind, relative(dir, file));
+            let entry = code(&format!("@{}{{{key}}}", e.kind));
+            let _ = write!(out, "{entry} — {}", escape(&relative(dir, file)));
         }
         Symbol::Path { path, kind, .. } => {
             let found = match definition(project, symbol) {
@@ -305,21 +308,34 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
             match found {
                 Some(file) => {
                     let size = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
-                    let _ = write!(out, "`{}` — {}", relative(dir, &file), human_size(size));
+                    let _ = write!(
+                        out,
+                        "{} — {}",
+                        code(&relative(dir, &file)),
+                        human_size(size)
+                    );
                     if *kind == PathKind::Graphics {
                         out.push_str("\n\n⌘-click to open it.");
                     }
                 }
                 None => {
-                    let _ = write!(out, "`{path}` was not found.");
+                    let _ = write!(out, "{} was not found.", code(path));
                 }
             }
         }
         Symbol::Package { name, .. } => {
-            let _ = write!(
-                out,
-                "**Package** `{name}`\n\n[Documentation on texdoc.org](https://texdoc.org/pkg/{name})"
-            );
+            let _ = write!(out, "**Package** {}", code(name));
+            // Only a real package name goes into a link (a project's text could
+            // otherwise point it anywhere).
+            let plain = name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+            if plain && !name.is_empty() {
+                let _ = write!(
+                    out,
+                    "\n\n[Documentation on texdoc.org](https://texdoc.org/pkg/{name})"
+                );
+            }
         }
         Symbol::Environment { name, .. } => {
             let file = project.indexes().find_map(|(file, i)| {
@@ -329,10 +345,15 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
                     .then_some(file)
             });
             if let Some(file) = file {
-                let _ = write!(out, "**Environment** `{name}` — {}", relative(dir, file));
+                let _ = write!(
+                    out,
+                    "**Environment** {} — {}",
+                    code(name),
+                    escape(&relative(dir, file))
+                );
             } else {
                 let e = DB.environments.iter().find(|e| &e.name == name)?;
-                let _ = write!(out, "**Environment** `{name}` — {}", e.detail);
+                let _ = write!(out, "**Environment** {} — {}", code(name), e.detail);
             }
         }
         Symbol::Command { name, .. } => {
@@ -347,10 +368,10 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
                     1 => ", 1 argument".to_string(),
                     n => format!(", {n} arguments"),
                 };
-                let _ = write!(out, "`{name}`{args} — {}", place(file, c.line));
+                let _ = write!(out, "{}{args} — {}", code(name), place(file, c.line));
             } else {
                 let c = DB.commands.iter().find(|c| &c.name == name)?;
-                let _ = write!(out, "`{name}` — {}", c.detail);
+                let _ = write!(out, "{} — {}", code(name), c.detail);
             }
         }
     }
@@ -367,6 +388,19 @@ fn human_size(bytes: u64) -> String {
         b if b >= 1 << 10 => format!("{} KB", b >> 10),
         b => format!("{b} bytes"),
     }
+}
+
+/// `s` as a Markdown code span, whatever backticks it holds.
+fn code(s: &str) -> String {
+    let longest = s.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    // A space keeps a backtick at either end apart from the fence.
+    let pad = if s.starts_with('`') || s.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{s}{pad}{fence}")
 }
 
 /// Markdown's special characters, so a title shows as written.
@@ -431,6 +465,39 @@ mod tests {
         assert_eq!(sym("\\textbf{bo|ld}"), None);
         assert_eq!(sym("plain te|xt"), None);
         assert_eq!(sym("line\\\\|next"), None);
+    }
+
+    #[test]
+    fn hovers_escape_names_and_paths() {
+        let (_dir, p) = temp_project(&[("main.tex", "\\input{x_y_}"), ("x_y_.tex", "\\label{a}")]);
+        let hover = |s: Symbol| hover(&p, &s).unwrap();
+        let range = 0..0;
+        // A code span with a backtick inside.
+        let label = hover(Symbol::Label {
+            name: "a`b".into(),
+            range: range.clone(),
+        });
+        assert!(label.starts_with("**Label** ``a`b``"), "{label}");
+        // A file name in plain text, not emphasis.
+        let reference = hover(Symbol::Reference {
+            name: "a".into(),
+            range: range.clone(),
+        });
+        assert!(reference.ends_with("x\\_y\\_.tex:1"), "{reference}");
+        // A name that is no package gets no link.
+        let package = hover(Symbol::Package {
+            name: "x](https://evil.example)[y".into(),
+            range: range.clone(),
+        });
+        assert_eq!(package, "**Package** `x](https://evil.example)[y`");
+        let package = hover(Symbol::Package {
+            name: "tikz-cd".into(),
+            range,
+        });
+        assert!(
+            package.ends_with("(https://texdoc.org/pkg/tikz-cd)"),
+            "{package}"
+        );
     }
 
     fn sample() -> Project {
