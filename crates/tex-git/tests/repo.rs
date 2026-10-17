@@ -1,40 +1,17 @@
 //! Scenarios against real temporary repositories. Skipped (passing) when git
 //! is not installed.
 
-use std::path::Path;
+mod common;
 
-use tex_git::{Cancel, CommitOptions, Error, Git, Operation, Repo, SyncOutcome};
-
-/// git with the user's own configuration out of the way.
-fn git(home: &Path) -> Option<Git> {
-    let Some(found) = Git::find() else {
-        test_support::skip("GIT", "git not found");
-        return None;
-    };
-    Some(
-        test_support::git::isolated_env(home)
-            .into_iter()
-            .fold(Git::at(found.program()), |git, (k, v)| git.env(k, v)),
-    )
-}
-
-fn write(repo: &Repo, rel: &str, text: &str) {
-    let p = repo.abs_path(rel);
-    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-    std::fs::write(p, text).unwrap();
-}
-
-fn commit_all(repo: &Repo, msg: &str) {
-    repo.stage(&[".".into()]).unwrap();
-    repo.commit(msg, CommitOptions::default()).unwrap();
-}
+use common::{Sandbox, commit_all, write};
+use tex_git::{Cancel, CommitOptions, Error, Operation, SyncOutcome};
 
 #[test]
 fn init_stage_commit_log_show() {
-    let tmp = tempfile::tempdir().unwrap();
-    let Some(git) = git(tmp.path()) else {
+    let Some(sb) = Sandbox::new() else {
         return;
     };
+    let (tmp, git) = (&sb.tmp, &sb.git);
     let repo = git.init(&tmp.path().join("paper")).unwrap();
     assert!(repo.abs_path(".gitignore").is_file());
     assert!(git.discover(&tmp.path().join("paper")).unwrap().is_some());
@@ -130,10 +107,10 @@ fn init_stage_commit_log_show() {
 
 #[test]
 fn branches_switch_and_create() {
-    let tmp = tempfile::tempdir().unwrap();
-    let Some(git) = git(tmp.path()) else {
+    let Some(sb) = Sandbox::new() else {
         return;
     };
+    let (tmp, git) = (&sb.tmp, &sb.git);
     let repo = git.init(&tmp.path().join("p")).unwrap();
     write(&repo, "a.tex", "a\n");
     commit_all(&repo, "a");
@@ -160,19 +137,12 @@ fn branches_switch_and_create() {
 
 #[test]
 fn push_pull_and_conflicts() {
-    let tmp = tempfile::tempdir().unwrap();
-    let Some(git) = git(tmp.path()) else {
+    let Some(sb) = Sandbox::new() else {
         return;
     };
+    let (tmp, git) = (&sb.tmp, &sb.git);
     let cancel = Cancel::new();
-    let remote = tmp.path().join("remote.git");
-    std::fs::create_dir(&remote).unwrap();
-    let bare = std::process::Command::new(git.program())
-        .args(["init", "--bare", "--quiet", "-b", "main"])
-        .arg(&remote)
-        .status()
-        .unwrap();
-    assert!(bare.success());
+    let remote = sb.bare("remote.git");
 
     let a = git.init(&tmp.path().join("a")).unwrap();
     write(&a, "main.tex", "one\ntwo\nthree\n");
@@ -237,10 +207,10 @@ fn push_pull_and_conflicts() {
 
 #[test]
 fn cancel_stops_network_operations() {
-    let tmp = tempfile::tempdir().unwrap();
-    let Some(git) = git(tmp.path()) else {
+    let Some(sb) = Sandbox::new() else {
         return;
     };
+    let (tmp, git) = (&sb.tmp, &sb.git);
     let cancel = Cancel::new();
     cancel.cancel();
     let err = git
@@ -255,18 +225,12 @@ fn cancel_stops_network_operations() {
 
 #[test]
 fn sync_commits_rebases_and_pushes() {
-    let tmp = tempfile::tempdir().unwrap();
-    let Some(git) = git(tmp.path()) else {
+    let Some(sb) = Sandbox::new() else {
         return;
     };
+    let (tmp, git) = (&sb.tmp, &sb.git);
     let cancel = Cancel::new();
-    let remote = tmp.path().join("remote.git");
-    let bare = std::process::Command::new(git.program())
-        .args(["init", "--bare", "--quiet", "-b", "main"])
-        .arg(&remote)
-        .status()
-        .unwrap();
-    assert!(bare.success());
+    let remote = sb.bare("remote.git");
 
     let a = git.init(&tmp.path().join("a")).unwrap();
     write(&a, "main.tex", "one\n");
@@ -326,10 +290,10 @@ fn sync_commits_rebases_and_pushes() {
 
 #[test]
 fn unreachable_remote() {
-    let tmp = tempfile::tempdir().unwrap();
-    let Some(git) = git(tmp.path()) else {
+    let Some(sb) = Sandbox::new() else {
         return;
     };
+    let (tmp, git) = (&sb.tmp, &sb.git);
     // Nothing listens on the discard port.
     let err = git
         .clone_repo(
@@ -343,10 +307,10 @@ fn unreachable_remote() {
 
 #[test]
 fn excluded_build_artifacts_stay_local() {
-    let tmp = tempfile::tempdir().unwrap();
-    let Some(git) = git(tmp.path()) else {
+    let Some(sb) = Sandbox::new() else {
         return;
     };
+    let (tmp, git) = (&sb.tmp, &sb.git);
     let repo = git.init(&tmp.path().join("c")).unwrap();
     // Like an Overleaf project: no .gitignore.
     std::fs::remove_file(repo.abs_path(".gitignore")).unwrap();
@@ -364,10 +328,10 @@ fn excluded_build_artifacts_stay_local() {
 
 #[test]
 fn discovery_stays_in_the_trusted_folder() {
-    let tmp = tempfile::tempdir().unwrap();
-    let Some(git) = git(tmp.path()) else {
+    let Some(sb) = Sandbox::new() else {
         return;
     };
+    let (tmp, git) = (&sb.tmp, &sb.git);
     let outer = git.init(&tmp.path().join("outer")).unwrap();
     let paper = outer.root().join("paper");
     // Not a repository git accepts: plain discovery climbs to `outer`.
