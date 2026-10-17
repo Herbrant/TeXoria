@@ -301,7 +301,6 @@ impl DiffView {
                 d.child(
                     Button::new("diff-agent-undo")
                         .outline()
-                        .xsmall()
                         .icon(Glyph::Discard)
                         .label("Undo All")
                         .tooltip("Put the files back as they were before the agent's turn")
@@ -312,7 +311,6 @@ impl DiffView {
                 .child(
                     Button::new("diff-agent-keep")
                         .primary()
-                        .xsmall()
                         .icon(Glyph::Check)
                         .label("Keep All")
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(DiffViewEvent::KeepAgent))),
@@ -323,7 +321,6 @@ impl DiffView {
                 d.child(
                     Button::new("diff-save-resolution")
                         .primary()
-                        .xsmall()
                         .icon(Glyph::Check)
                         .label("Save Resolution")
                         .tooltip(if ready {
@@ -343,7 +340,6 @@ impl DiffView {
                 d.child(
                     Button::new("diff-open")
                         .ghost()
-                        .xsmall()
                         .icon(Glyph::File)
                         .tooltip("Open the file")
                         .on_click(cx.listener(move |_, _, _, cx| {
@@ -354,7 +350,6 @@ impl DiffView {
             .child(
                 Button::new("diff-prev")
                     .ghost()
-                    .xsmall()
                     .icon(Glyph::PrevChange)
                     .tooltip("Previous change")
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -364,7 +359,6 @@ impl DiffView {
             .child(
                 Button::new("diff-next")
                     .ghost()
-                    .xsmall()
                     .icon(Glyph::NextChange)
                     .tooltip("Next change")
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -375,7 +369,6 @@ impl DiffView {
                 d.child(
                     Button::new("diff-mode")
                         .ghost()
-                        .xsmall()
                         .icon(if split { Glyph::Unified } else { Glyph::Split })
                         .tooltip(if split {
                             "Unified view"
@@ -388,7 +381,6 @@ impl DiffView {
             .child(
                 Button::new("diff-close")
                     .ghost()
-                    .xsmall()
                     .icon(Glyph::Close)
                     .tooltip("Close (⌘W)")
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DiffViewEvent::Close))),
@@ -414,7 +406,6 @@ impl Render for DiffView {
                 let (weak, sha, path) = (weak.clone(), sha.clone(), file.path().to_string());
                 Button::new(SharedString::from(format!("restore-{path}")))
                     .ghost()
-                    .xsmall()
                     .icon(Glyph::Discard)
                     .label("Restore")
                     .tooltip("Put this version of the file back in the project")
@@ -440,7 +431,6 @@ impl Render for DiffView {
                         d.child(
                             Button::new(SharedString::from(format!("open-{}", path.display())))
                                 .ghost()
-                                .xsmall()
                                 .icon(Glyph::File)
                                 .tooltip("Open the file")
                                 .on_click(move |_, _, cx| {
@@ -454,7 +444,6 @@ impl Render for DiffView {
                     .child(
                         Button::new(SharedString::from(format!("undo-{}", path.display())))
                             .ghost()
-                            .xsmall()
                             .icon(Glyph::Discard)
                             .label("Undo")
                             .tooltip("Put this file back as it was")

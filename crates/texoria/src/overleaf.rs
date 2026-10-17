@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{
-    ActiveTheme, Sizable, WindowExt as _,
+    ActiveTheme, WindowExt as _,
     button::{Button, ButtonVariants},
     v_flex,
 };
@@ -115,7 +115,6 @@ pub fn token_field(server: &str, input: &Entity<InputState>, cx: &App) -> AnyEle
             div().child(
                 Button::new("overleaf-token-page")
                     .link()
-                    .xsmall()
                     .label("Open Account Settings")
                     .on_click(move |_, _, cx| cx.open_url(&page)),
             ),

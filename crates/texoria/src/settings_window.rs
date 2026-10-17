@@ -10,7 +10,7 @@ use gpui_kit::component::setting::{
     Settings as SettingsView,
 };
 use gpui_kit::component::{
-    ActiveTheme, Sizable, TitleBar,
+    ActiveTheme, TitleBar,
     button::{Button, ButtonVariants},
     h_flex, v_flex,
 };
@@ -236,17 +236,35 @@ impl SettingsWindow {
                 )
                 .description("System follows the light or dark appearance of the OS."),
             ),
-            SettingGroup::new().title("Text").item(
-                SettingItem::new(
-                    "Soft wrap",
-                    bool_field(&t, |s| s.soft_wrap, |s, v| s.soft_wrap = v)
-                        .default_value(Settings::default().soft_wrap),
+            SettingGroup::new()
+                .title("Text")
+                .item(
+                    SettingItem::new("Font size", {
+                        let (t1, t2) = (t.clone(), t.clone());
+                        SettingField::number_input(
+                            NumberFieldOptions {
+                                min: Settings::MIN_FONT_SIZE as f64,
+                                max: Settings::MAX_FONT_SIZE as f64,
+                                step: 1.,
+                            },
+                            move |cx| t1.get(cx, |s| s.font_size() as f64),
+                            move |v, cx| t2.set(cx, |s| s.editor_font_size = v as f32),
+                        )
+                        .default_value(Settings::DEFAULT_FONT_SIZE as f64)
+                    })
+                    .description("Size of the editor's text, in pixels. ⌘= and ⌘- change it, ⌘0 restores it."),
                 )
-                .description(
-                    "Wrap long lines in the editor. Very long files always start unwrapped; \
-                     ⌥Z toggles the current tab.",
+                .item(
+                    SettingItem::new(
+                        "Soft wrap",
+                        bool_field(&t, |s| s.soft_wrap, |s, v| s.soft_wrap = v)
+                            .default_value(Settings::default().soft_wrap),
+                    )
+                    .description(
+                        "Wrap long lines in the editor. Very long files always start unwrapped; \
+                         ⌥Z toggles the current tab.",
+                    ),
                 ),
-            ),
             SettingGroup::new()
                 .title("Spelling")
                 .item(
@@ -437,11 +455,10 @@ impl SettingsWindow {
             let view = view.downgrade();
             h_flex()
                 .gap_2()
-                .child(div().flex_1().child(Input::new(input).small()))
+                .child(div().flex_1().child(Input::new(input)))
                 .child(
                     Button::new(("remove-server", ix))
                         .ghost()
-                        .small()
                         .icon(Glyph::Close)
                         .tooltip("Remove")
                         .on_click(move |_, _, cx| {
@@ -452,7 +469,6 @@ impl SettingsWindow {
         let add = {
             let view = view.downgrade();
             Button::new("add-server")
-                .small()
                 .icon(Glyph::Plus)
                 .label("Add Server")
                 .on_click(move |_, window, cx| {
@@ -562,13 +578,12 @@ impl SettingsWindow {
                 let view = view.downgrade();
                 h_flex()
                     .gap_2()
-                    .child(div().w(px(140.)).child(Input::new(name).small()))
-                    .child(div().flex_1().child(Input::new(command).small()))
-                    .child(div().w(px(120.)).child(Input::new(args).small()))
+                    .child(div().w(px(140.)).child(Input::new(name)))
+                    .child(div().flex_1().child(Input::new(command)))
+                    .child(div().w(px(120.)).child(Input::new(args)))
                     .child(
                         Button::new(("remove-agent", ix))
                             .ghost()
-                            .small()
                             .icon(Glyph::Close)
                             .tooltip("Remove")
                             .on_click(move |_, _, cx| {
@@ -579,7 +594,6 @@ impl SettingsWindow {
         let add = {
             let view = view.downgrade();
             Button::new("add-agent")
-                .small()
                 .icon(Glyph::Plus)
                 .label("Add Agent")
                 .on_click(move |_, window, cx| {
@@ -660,7 +674,6 @@ impl SettingsWindow {
             SettingField::render(move |_, _, _| {
                 let updater = updater.clone();
                 Button::new("check-updates")
-                    .small()
                     .label("Check Now")
                     .on_click(move |_, _, cx| {
                         if let Some(u) = updater.as_ref().and_then(WeakEntity::upgrade) {
@@ -755,7 +768,6 @@ fn removable_list<T: Clone + 'static>(
                     .child(
                         Button::new((id, ix))
                             .ghost()
-                            .small()
                             .label("Remove")
                             .on_click(move |_, _, cx| remove(item.clone(), cx)),
                     )

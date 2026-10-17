@@ -24,8 +24,9 @@ renderer.
 
 ## Zoom
 
-⌘= and ⌘- zoom the preview in and out, ⌘0 fits the page to the pane's width. The buttons at the
-top of the preview do the same. In the dark theme, pages are darkened while keeping their colors.
+Once you have clicked the preview, ⌘= and ⌘- zoom it in and out and ⌘0 fits the page to the
+pane's width (elsewhere they resize the editor's text). The buttons at the bottom right of the
+preview and the *View* menu do the same. In the dark theme, pages are darkened while keeping their colors.
 
 ## Engines
 

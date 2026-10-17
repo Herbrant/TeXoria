@@ -7,6 +7,7 @@ Open the Settings window with ⌘, (Ctrl+,). Every change applies right away.
 | Setting | Default | |
 |---|---|---|
 | Theme | System | *Paper* (light), *Ink* (dark), or follow the system appearance. ⌘⇧L switches between them. |
+| Font size | 14.5 | Size of the editor's text, in pixels. ⌘= and ⌘- change it, ⌘0 restores it. |
 | Soft wrap | On | Wrap long lines. Very long files always open unwrapped; ⌥Z toggles the current tab. |
 | Check spelling | On | See [Spell checking](writing.md#spell-checking). |
 | Dictionary | | The words you added to your dictionary; remove them from here. |

@@ -1124,7 +1124,6 @@ impl AgentPanel {
         let weak = cx.entity().downgrade();
         let picker = Button::new("agent-picker")
             .ghost()
-            .xsmall()
             .icon(Glyph::Sparkles)
             .label(label)
             .disabled(agents.is_empty() || self.running)
@@ -1163,7 +1162,6 @@ impl AgentPanel {
             let weak = cx.entity().downgrade();
             Button::new("agent-mode")
                 .ghost()
-                .xsmall()
                 .label(current)
                 .tooltip("How the agent works: what it may do without asking")
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
@@ -1193,7 +1191,6 @@ impl AgentPanel {
             .child(
                 Button::new("agent-new-chat")
                     .ghost()
-                    .xsmall()
                     .icon(Glyph::NewChat)
                     .tooltip("New chat")
                     .disabled(self.running || self.entries.is_empty())
@@ -1204,7 +1201,12 @@ impl AgentPanel {
     /// Instead of the chat, when there is nothing to chat with.
     fn render_placeholder(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = cx.theme();
-        let text = |t: SharedString| div().text_sm().text_color(theme.muted_foreground).child(t);
+        let text = |t: SharedString| {
+            div()
+                .text_base()
+                .text_color(theme.muted_foreground)
+                .child(t)
+        };
         if self.dir.is_none() {
             return Some(
                 text("Open a document to work on it with an agent.".into()).into_any_element(),
@@ -1232,7 +1234,6 @@ impl AgentPanel {
                         .child(
                             h_flex().child(
                                 Button::new("agent-detect")
-                                    .small()
                                     .icon(Glyph::Refresh)
                                     .label("Look Again")
                                     .on_click(cx.listener(|this, _, _, cx| this.detect(cx))),
@@ -1255,7 +1256,7 @@ impl AgentPanel {
                     .gap_3()
                     .child(
                         div()
-                            .text_sm()
+                            .text_base()
                             .font_weight(FontWeight::MEDIUM)
                             .child(format!("Let {name} work on this project?")),
                     )
@@ -1273,7 +1274,6 @@ impl AgentPanel {
                         h_flex().child(
                             Button::new("agent-allow")
                                 .primary()
-                                .small()
                                 .label("Allow Agents")
                                 .on_click(
                                     cx.listener(|_, _, _, cx| cx.emit(AgentPanelEvent::Allow)),
@@ -1299,16 +1299,16 @@ impl AgentPanel {
                         .py_1p5()
                         .rounded(theme.radius)
                         .bg(theme.sidebar_accent)
-                        .text_sm()
+                        .text_base()
                         .text_color(theme.foreground)
                         .child(text.clone()),
                 )
                 .when_some(caption.clone(), |d, c| {
-                    d.child(div().text_xs().text_color(theme.muted_foreground).child(c))
+                    d.child(div().text_sm().text_color(theme.muted_foreground).child(c))
                 })
                 .into_any_element(),
             Entry::Agent(state) => div()
-                .text_sm()
+                .text_base()
                 .text_color(theme.foreground)
                 .child(TextView::new(state).selectable(true))
                 .into_any_element(),
@@ -1320,11 +1320,11 @@ impl AgentPanel {
                         h_flex()
                             .id(("thought", ix))
                             .gap_1p5()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.muted_foreground)
                             .cursor_pointer()
                             .hover(|s| s.text_color(theme.foreground))
-                            .child(Icon::new(Glyph::Thought).xsmall())
+                            .child(Icon::new(Glyph::Thought).small())
                             .child("Thinking")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(Entry::Thought { open, .. }) = this.entries.get_mut(ix)
@@ -1338,7 +1338,7 @@ impl AgentPanel {
                         d.child(
                             div()
                                 .pl_4()
-                                .text_xs()
+                                .text_sm()
                                 .italic()
                                 .text_color(theme.muted_foreground)
                                 .child(text.clone()),
@@ -1356,10 +1356,10 @@ impl AgentPanel {
                 .child(
                     h_flex()
                         .gap_1p5()
-                        .text_xs()
+                        .text_sm()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.muted_foreground)
-                        .child(Icon::new(Glyph::Plan).xsmall())
+                        .child(Icon::new(Glyph::Plan).small())
                         .child("Plan"),
                 )
                 .children(entries.iter().map(|e| {
@@ -1371,7 +1371,7 @@ impl AgentPanel {
                     h_flex()
                         .gap_1p5()
                         .items_start()
-                        .text_xs()
+                        .text_sm()
                         .child(div().text_color(color).child(mark))
                         .child(
                             div()
@@ -1399,12 +1399,12 @@ impl AgentPanel {
                     .child(
                         h_flex()
                             .gap_1p5()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child(Icon::new(Glyph::Warning).xsmall())
+                            .child(Icon::new(Glyph::Warning).small())
                             .child("Permission"),
                     )
-                    .child(div().text_sm().child(p.title.clone()))
+                    .child(div().text_base().child(p.title.clone()))
                     .when(pending, |d| {
                         d.child(h_flex().flex_wrap().gap_1().children(
                             p.options.iter().enumerate().map(|(o, opt)| {
@@ -1414,7 +1414,6 @@ impl AgentPanel {
                                         | acp::PermissionOptionKind::AllowAlways
                                 );
                                 Button::new(SharedString::from(format!("perm-{ix}-{o}")))
-                                    .xsmall()
                                     .when(allow, |b| b.primary())
                                     .when(!allow, |b| b.outline())
                                     .label(opt.name.clone())
@@ -1425,17 +1424,17 @@ impl AgentPanel {
                         ))
                     })
                     .when_some(p.chosen.clone(), |d, c| {
-                        d.child(div().text_xs().text_color(theme.muted_foreground).child(c))
+                        d.child(div().text_sm().text_color(theme.muted_foreground).child(c))
                     })
                     .into_any_element()
             }
             Entry::Notice(text) => div()
-                .text_xs()
+                .text_sm()
                 .text_color(theme.muted_foreground)
                 .child(text.clone())
                 .into_any_element(),
             Entry::Error(text) => div()
-                .text_xs()
+                .text_sm()
                 .text_color(theme.danger)
                 .child(text.clone())
                 .into_any_element(),
@@ -1490,7 +1489,7 @@ impl AgentPanel {
                 h_flex()
                     .id(("tool", ix))
                     .gap_1p5()
-                    .text_xs()
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .when(detail.is_some(), |d| {
                         d.cursor_pointer()
@@ -1502,12 +1501,12 @@ impl AgentPanel {
                                 }
                             }))
                     })
-                    .child(Icon::new(icon).xsmall())
+                    .child(Icon::new(icon).small())
                     .child(div().flex_1().min_w_0().truncate().child(title))
                     .when_some(
                         status.filter(|_| running || t.status != acp::ToolCallStatus::Pending),
                         |d, s| {
-                            let icon = Icon::new(s).xsmall().text_color(color);
+                            let icon = Icon::new(s).small().text_color(color);
                             d.child(if running {
                                 icon.with_animation(
                                     ("tool-spin", ix),
@@ -1526,7 +1525,7 @@ impl AgentPanel {
                     div()
                         .id(("tool-location", ix))
                         .pl_5()
-                        .text_xs()
+                        .text_sm()
                         .text_color(theme.link)
                         .cursor_pointer()
                         .truncate()
@@ -1548,7 +1547,7 @@ impl AgentPanel {
                             .rounded(theme.radius)
                             .bg(theme.muted)
                             .font_family(theme.mono_font_family.clone())
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.muted_foreground)
                             .child(text),
                     )
@@ -1567,7 +1566,6 @@ impl AgentPanel {
                 let id = a.id.clone();
                 Some(
                     Button::new(("agent-auth", i))
-                        .small()
                         .primary()
                         .label(a.name.clone())
                         .when_some(a.description.clone(), |b, d| b.tooltip(d))
@@ -1586,12 +1584,12 @@ impl AgentPanel {
                 .border_color(theme.warning)
                 .child(
                     div()
-                        .text_sm()
+                        .text_base()
                         .font_weight(FontWeight::MEDIUM)
                         .child(format!("Sign in to {name}")),
                 )
                 .when_some(hint, |d, h| {
-                    d.child(div().text_xs().text_color(theme.muted_foreground).child(h))
+                    d.child(div().text_sm().text_color(theme.muted_foreground).child(h))
                 })
                 .child(h_flex().flex_wrap().gap_1().children(buttons))
                 .into_any_element(),
@@ -1612,7 +1610,7 @@ impl AgentPanel {
                 .border_color(theme.danger)
                 .child(
                     div()
-                        .text_sm()
+                        .text_base()
                         .text_color(theme.danger)
                         .child(message.clone()),
                 )
@@ -1623,21 +1621,18 @@ impl AgentPanel {
                             .max_h(px(160.))
                             .overflow_y_scroll()
                             .font_family(theme.mono_font_family.clone())
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.muted_foreground)
                             .child(details),
                     )
                 })
                 .child(
-                    h_flex().child(
-                        Button::new("agent-retry")
-                            .small()
-                            .label("Start Again")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.conn = Conn::Idle;
-                                cx.notify();
-                            })),
-                    ),
+                    h_flex().child(Button::new("agent-retry").label("Start Again").on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.conn = Conn::Idle;
+                            cx.notify();
+                        }),
+                    )),
                 )
                 .into_any_element(),
         )
@@ -1659,7 +1654,7 @@ impl AgentPanel {
                 .border_color(theme.sidebar_border)
                 .child(
                     Icon::new(Glyph::Changes)
-                        .xsmall()
+                        .small()
                         .text_color(theme.muted_foreground),
                 )
                 .child(
@@ -1667,19 +1662,17 @@ impl AgentPanel {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_xs()
+                        .text_sm()
                         .child(format!("{n} file{} changed", if n == 1 { "" } else { "s" })),
                 )
                 .child(
                     Button::new("agent-review")
-                        .xsmall()
                         .outline()
                         .label("Review")
                         .on_click(cx.listener(|this, _, _, cx| this.refresh_changes(true, cx))),
                 )
                 .child(
                     Button::new("agent-undo")
-                        .xsmall()
                         .outline()
                         .label("Undo")
                         .tooltip("Put the files back as they were before the agent's turn")
@@ -1690,7 +1683,6 @@ impl AgentPanel {
                 )
                 .child(
                     Button::new("agent-keep")
-                        .xsmall()
                         .primary()
                         .label("Keep")
                         .on_click(cx.listener(|this, _, _, cx| this.keep(cx))),
@@ -1717,20 +1709,18 @@ impl AgentPanel {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.muted_foreground)
                             .child("↵ to send, ⇧↵ for a new line"),
                     )
                     .child(if running {
                         Button::new("agent-stop")
-                            .xsmall()
                             .warning()
                             .icon(Glyph::Stop)
                             .label("Stop")
                             .on_click(cx.listener(|this, _, _, cx| this.cancel(cx)))
                     } else {
                         Button::new("agent-send")
-                            .xsmall()
                             .primary()
                             .icon(Glyph::Send)
                             .label("Send")
@@ -1748,7 +1738,7 @@ impl AgentPanel {
             .gap_3()
             .child(
                 div()
-                    .text_sm()
+                    .text_base()
                     .text_color(theme.muted_foreground)
                     .child(format!(
                         "Ask {name} to write, rewrite or check parts of your document. To edit \
@@ -1760,7 +1750,6 @@ impl AgentPanel {
                 d.child(
                     h_flex().child(
                         Button::new("agent-fix-intro")
-                            .small()
                             .outline()
                             .icon(Glyph::Error)
                             .label(format!(
@@ -1814,9 +1803,9 @@ impl Render for AgentPanel {
                         d.child(
                             h_flex()
                                 .gap_1p5()
-                                .text_xs()
+                                .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child(Icon::new(Glyph::Spinner).xsmall().with_animation(
+                                .child(Icon::new(Glyph::Spinner).small().with_animation(
                                     "agent-spin",
                                     Animation::new(Duration::from_millis(900)).repeat(),
                                     |icon, t| icon.transform(Transformation::rotate(percentage(t))),

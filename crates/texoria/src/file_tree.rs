@@ -443,7 +443,7 @@ impl Render for FileTree {
         if let Some(message) = empty {
             return div()
                 .px_4()
-                .text_sm()
+                .text_base()
                 .text_color(theme.muted_foreground)
                 .child(message)
                 .into_any_element();
@@ -467,7 +467,7 @@ impl Render for FileTree {
             // Directories only summarize their contents.
             .map(|c| if is_dir { c.opacity(0.8) } else { c });
             let chevron = Icon::new(Glyph::Expand)
-                .xsmall()
+                .small()
                 .text_color(theme.muted_foreground)
                 .when(entry.is_expanded(), |i| {
                     i.transform(Transformation::rotate(percentage(0.25)))
@@ -477,7 +477,7 @@ impl Render for FileTree {
             } else {
                 Glyph::PlainFile
             })
-            .xsmall()
+            .small()
             .text_color(theme.muted_foreground.opacity(0.8));
             let open = row.filter(|r| !r.is_dir).map(|r| r.path.clone());
             let weak = weak.clone();
@@ -487,7 +487,7 @@ impl Render for FileTree {
                 .py_0p5()
                 .mx_1()
                 .rounded(theme.radius)
-                .text_sm()
+                .text_base()
                 .text_color(theme.sidebar_foreground)
                 .child(
                     h_flex()

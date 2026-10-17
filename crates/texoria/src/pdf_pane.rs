@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::component::{
-    ActiveTheme, Icon, Sizable, button::Button, button::ButtonVariants, h_flex, v_flex,
+    ActiveTheme, Icon, button::Button, button::ButtonVariants, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -73,6 +73,9 @@ pub struct PdfPane {
     last_request: Vec<RenderKey>,
     /// Scroll position to restore once the new layout is known.
     pending_scroll: Option<Point<Pixels>>,
+    /// Taken on a click, so that ⌘= and ⌘- zoom the PDF instead of resizing
+    /// the editor's text.
+    focus: FocusHandle,
     _events: Task<()>,
     _highlight_timer: Task<()>,
 }
@@ -122,6 +125,7 @@ impl PdfPane {
             to_drop: Vec::new(),
             last_request: Vec::new(),
             pending_scroll: None,
+            focus: cx.focus_handle(),
             _events: events,
             _highlight_timer: Task::ready(()),
         }
@@ -334,7 +338,9 @@ impl PdfPane {
         true
     }
 
-    fn on_mouse_down(&mut self, ev: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Before an inverse search, which moves the focus to the editor.
+        window.focus(&self.focus, cx);
         if !ev.modifiers.secondary() && ev.click_count < 2 {
             return;
         }
@@ -431,14 +437,12 @@ impl PdfPane {
             .child(
                 Button::new("zoom-out")
                     .ghost()
-                    .xsmall()
                     .icon(Glyph::ZoomOut)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom_out(cx))),
             )
             .child(
                 Button::new("zoom-fit")
                     .ghost()
-                    .xsmall()
                     .label(format!("{zoom_pct}%"))
                     .tooltip("Fit width")
                     .on_click(cx.listener(|this, _, _, cx| this.zoom_to_fit(cx))),
@@ -446,10 +450,15 @@ impl PdfPane {
             .child(
                 Button::new("zoom-in")
                     .ghost()
-                    .xsmall()
                     .icon(Glyph::ZoomIn)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom_in(cx))),
             )
+    }
+}
+
+impl Focusable for PdfPane {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 
@@ -585,6 +594,8 @@ impl Render for PdfPane {
 
         div()
             .id("pdf-pane")
+            .key_context("PdfPane")
+            .track_focus(&self.focus)
             .relative()
             .size_full()
             .bg(canvas_bg)

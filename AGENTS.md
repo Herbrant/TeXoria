@@ -188,6 +188,8 @@ texoria ─┬─ tex-compile ── tex-log
   - `pdf_pane.rs` keeps old bitmaps on screen until the new PDF's pages are rasterized (no flash)
     and only materializes pages near the viewport. SyncTeX forward/inverse search goes through the
     `synctex` crate, whose coordinates are PDF points with a top-left origin, y downwards.
+    The pane takes the focus on click: in its key context (`PdfPane`) ⌘= / ⌘- / ⌘0 zoom the PDF,
+    elsewhere they resize the editor's text (`Settings::editor_font_size`).
   - `agent_panel.rs` is the Agent sidebar (alternates with the outline). Agents only start in
     projects allowed in `Settings::agent_projects` (exact directories, like trust), and the
     agents are looked for on first use. A turn emits `AgentPanelEvent::Busy`: the workspace

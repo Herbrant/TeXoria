@@ -16,6 +16,8 @@ pub struct Settings {
     /// Pause after the last keystroke before a live compile.
     pub live_delay_ms: u64,
     pub soft_wrap: bool,
+    /// Size of the editor's text, in pixels.
+    pub editor_font_size: f32,
     /// Stop a compile after this many seconds (0: never).
     pub compile_timeout_secs: u64,
     pub recent: Vec<PathBuf>,
@@ -108,6 +110,7 @@ impl Default for Settings {
             live_preview: true,
             live_delay_ms: 700,
             soft_wrap: true,
+            editor_font_size: Settings::DEFAULT_FONT_SIZE,
             compile_timeout_secs: 300,
             recent: Vec::new(),
             trusted_projects: Vec::new(),
@@ -211,6 +214,20 @@ impl Settings {
         }
     }
 
+    pub const DEFAULT_FONT_SIZE: f32 = 14.5;
+    pub const MIN_FONT_SIZE: f32 = 8.;
+    pub const MAX_FONT_SIZE: f32 = 40.;
+
+    /// The editor's text size, within the allowed range whatever the file says.
+    pub fn font_size(&self) -> f32 {
+        let size = self.editor_font_size;
+        if size.is_finite() {
+            size.clamp(Self::MIN_FONT_SIZE, Self::MAX_FONT_SIZE)
+        } else {
+            Self::DEFAULT_FONT_SIZE
+        }
+    }
+
     pub fn compile_timeout(&self) -> Option<Duration> {
         (self.compile_timeout_secs > 0).then(|| Duration::from_secs(self.compile_timeout_secs))
     }
@@ -303,6 +320,24 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_size_stays_in_range() {
+        assert_eq!(Settings::parse("").font_size(), Settings::DEFAULT_FONT_SIZE);
+        assert_eq!(Settings::parse("editor_font_size = 18").font_size(), 18.);
+        assert_eq!(
+            Settings::parse("editor_font_size = 2.5").font_size(),
+            Settings::MIN_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("editor_font_size = 300").font_size(),
+            Settings::MAX_FONT_SIZE
+        );
+        assert_eq!(
+            Settings::parse("editor_font_size = nan").font_size(),
+            Settings::DEFAULT_FONT_SIZE
+        );
+    }
 
     #[test]
     fn git_trust_is_per_directory() {

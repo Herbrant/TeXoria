@@ -1082,14 +1082,14 @@ impl GitPanel {
             .py_2()
             .child(
                 div()
-                    .text_sm()
+                    .text_base()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.foreground)
                     .child(title),
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(body.into()),
             )
@@ -1114,7 +1114,6 @@ impl GitPanel {
         let weak = cx.entity().downgrade();
         let menu = Button::new("git-branch-menu")
             .ghost()
-            .xsmall()
             .icon(Glyph::Branch)
             .label(branch)
             .dropdown_caret(true)
@@ -1196,7 +1195,6 @@ impl GitPanel {
                 d.child(
                     Button::new("git-cancel")
                         .ghost()
-                        .xsmall()
                         .label("Cancel")
                         .on_click(cx.listener(|this, _, _, _| {
                             if let Some(c) = &this.cancel {
@@ -1209,7 +1207,6 @@ impl GitPanel {
                 d.child(
                     Button::new("git-sync")
                         .primary()
-                        .xsmall()
                         .icon(Glyph::Refresh)
                         .label("Sync")
                         .tooltip("Commit all changes, then pull from and push to Overleaf")
@@ -1224,7 +1221,6 @@ impl GitPanel {
                 d.child(
                     Button::new("git-fetch")
                         .ghost()
-                        .xsmall()
                         .icon(Glyph::Fetch)
                         .tooltip("Fetch")
                         .disabled(busy || self.remotes.is_empty())
@@ -1233,7 +1229,6 @@ impl GitPanel {
                 .child(
                     Button::new("git-pull")
                         .ghost()
-                        .xsmall()
                         .icon(Glyph::Pull)
                         .when(!pull_label.is_empty(), |b| b.label(pull_label))
                         .tooltip(if has_upstream {
@@ -1247,7 +1242,6 @@ impl GitPanel {
                 .child(
                     Button::new("git-push")
                         .ghost()
-                        .xsmall()
                         .icon(Glyph::Push)
                         .when(!push_label.is_empty(), |b| b.label(push_label))
                         .tooltip("Push")
@@ -1267,7 +1261,7 @@ impl GitPanel {
                 .px_2()
                 .py_0p5()
                 .rounded(theme.radius)
-                .text_xs()
+                .text_sm()
                 .cursor_pointer()
                 .when(active, |d| {
                     d.bg(theme.sidebar_accent)
@@ -1318,15 +1312,11 @@ impl GitPanel {
                 .gap_1p5()
                 .rounded(theme.radius)
                 .bg(theme.warning.opacity(0.12))
-                .text_xs()
+                .text_sm()
                 .child(
                     h_flex()
                         .gap_1p5()
-                        .child(
-                            Icon::new(Glyph::Conflict)
-                                .xsmall()
-                                .text_color(theme.warning),
-                        )
+                        .child(Icon::new(Glyph::Conflict).small().text_color(theme.warning))
                         .child(div().text_color(theme.foreground).child(text)),
                 )
                 .child(
@@ -1336,7 +1326,6 @@ impl GitPanel {
                             d.child(
                                 Button::new("git-continue")
                                     .primary()
-                                    .xsmall()
                                     .label("Continue")
                                     .disabled(self.busy.is_some())
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1347,7 +1336,6 @@ impl GitPanel {
                         .child(
                             Button::new("git-abort")
                                 .outline()
-                                .xsmall()
                                 .label(format!("Abort {}", op.label()))
                                 .disabled(self.busy.is_some())
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1395,7 +1383,6 @@ impl GitPanel {
                     .child(
                         Button::new("git-commit")
                             .primary()
-                            .small()
                             .icon(Glyph::Check)
                             .label(label)
                             .tooltip(tooltip)
@@ -1431,7 +1418,7 @@ impl GitPanel {
             .pt_2()
             .pb_1()
             .gap_1()
-            .text_xs()
+            .text_sm()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme.muted_foreground)
             .child(div().flex_1().child(format!("{title}  {total}")));
@@ -1441,7 +1428,6 @@ impl GitPanel {
                 header = header.child(
                     Button::new("git-unstage-all")
                         .ghost()
-                        .xsmall()
                         .icon(Glyph::Minus)
                         .tooltip("Unstage all")
                         .disabled(busy)
@@ -1457,7 +1443,6 @@ impl GitPanel {
                     .child(
                         Button::new("git-discard-all")
                             .ghost()
-                            .xsmall()
                             .icon(Glyph::Discard)
                             .tooltip("Discard all changes")
                             .disabled(busy)
@@ -1468,7 +1453,6 @@ impl GitPanel {
                     .child(
                         Button::new("git-stage-all")
                             .ghost()
-                            .xsmall()
                             .icon(Glyph::Plus)
                             .tooltip("Stage all")
                             .disabled(busy)
@@ -1495,7 +1479,7 @@ impl GitPanel {
                         div()
                             .px_4()
                             .py_1()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("… and {} more", total - MAX_ROWS)),
                     )
@@ -1556,7 +1540,6 @@ impl GitPanel {
                 actions = actions.child(
                     Button::new(("git-unstage", i))
                         .ghost()
-                        .xsmall()
                         .icon(Glyph::Minus)
                         .tooltip("Unstage")
                         .disabled(busy)
@@ -1572,7 +1555,6 @@ impl GitPanel {
                     .child(
                         Button::new(("git-discard", i))
                             .ghost()
-                            .xsmall()
                             .icon(Glyph::Discard)
                             .tooltip(if entry.is_untracked() {
                                 "Delete"
@@ -1587,7 +1569,6 @@ impl GitPanel {
                     .child(
                         Button::new(("git-stage", i))
                             .ghost()
-                            .xsmall()
                             .icon(Glyph::Plus)
                             .tooltip("Stage")
                             .disabled(busy)
@@ -1600,7 +1581,6 @@ impl GitPanel {
                 actions = actions.child(
                     Button::new(("git-resolved", i))
                         .ghost()
-                        .xsmall()
                         .icon(Glyph::Check)
                         .tooltip("Mark as resolved")
                         .disabled(busy)
@@ -1617,16 +1597,16 @@ impl GitPanel {
             .gap_1p5()
             .pl_4()
             .pr_2()
-            .h(px(26.))
+            .h(px(34.))
             .mx_1()
             .rounded(theme.radius)
-            .text_sm()
+            .text_base()
             .cursor_pointer()
             .text_color(theme.sidebar_foreground)
             .hover(|s| s.bg(theme.sidebar_accent))
             .child(
                 Icon::new(Glyph::File)
-                    .xsmall()
+                    .small()
                     .text_color(theme.muted_foreground.opacity(0.8)),
             )
             .child(
@@ -1644,7 +1624,7 @@ impl GitPanel {
                     .child(
                         div()
                             .truncate()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.muted_foreground)
                             .child(dir),
                     ),
@@ -1653,7 +1633,7 @@ impl GitPanel {
             .child(
                 div()
                     .w(px(12.))
-                    .text_xs()
+                    .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(color)
                     .child(letter),
@@ -1708,14 +1688,14 @@ impl GitPanel {
                 .hover(|s| s.bg(theme.sidebar_accent))
                 .child(
                     div()
-                        .text_sm()
+                        .text_base()
                         .truncate()
                         .text_color(theme.sidebar_foreground)
                         .child(c.subject.clone()),
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .truncate()
                         .text_color(theme.muted_foreground)
                         .child(meta),
@@ -1745,7 +1725,6 @@ impl GitPanel {
                     div().px_3().pt_1().child(
                         Button::new("git-more")
                             .ghost()
-                            .xsmall()
                             .label("Load more")
                             .on_click(cx.listener(|this, _, _, cx| this.load_more_history(cx))),
                     ),
@@ -1780,7 +1759,6 @@ impl GitPanel {
                     div().px_4().pt_1().child(
                         Button::new("git-init")
                             .primary()
-                            .small()
                             .icon(Glyph::Branch)
                             .label("Initialize Repository")
                             .loading(self.busy.is_some())
@@ -1807,7 +1785,6 @@ impl GitPanel {
                     div().px_4().pt_1().child(
                         Button::new("git-trust")
                             .warning()
-                            .small()
                             .label("Trust Repository")
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(GitPanelEvent::Trust))),
                     ),
@@ -1819,14 +1796,13 @@ impl GitPanel {
                 .py_2()
                 .child(
                     div()
-                        .text_sm()
+                        .text_base()
                         .text_color(cx.theme().danger)
                         .child(msg.clone()),
                 )
                 .child(
                     Button::new("git-retry")
                         .outline()
-                        .xsmall()
                         .label("Retry")
                         .on_click(cx.listener(|this, _, _, cx| {
                             let (dir, trusted) = (this.project_dir.clone(), this.trusted);
@@ -1853,7 +1829,7 @@ impl GitPanel {
                             div()
                                 .px_4()
                                 .pb_2()
-                                .text_xs()
+                                .text_sm()
                                 .text_color(cx.theme().danger)
                                 .child(e),
                         )
@@ -1887,7 +1863,7 @@ impl Render for GitPanel {
                     .pt_3()
                     .pb_2()
                     .gap_2()
-                    .text_xs()
+                    .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.muted_foreground)
                     .child(div().flex_1().child("SOURCE CONTROL"))
@@ -1898,7 +1874,6 @@ impl Render for GitPanel {
                         d.child(
                             Button::new("git-refresh")
                                 .ghost()
-                                .xsmall()
                                 .icon(Glyph::Refresh)
                                 .tooltip("Refresh")
                                 .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
@@ -2120,7 +2095,6 @@ pub fn notify_error(window: &mut Window, cx: &mut App, title: &str, err: &Error)
             let details = details.clone();
             Button::new("git-details")
                 .outline()
-                .xsmall()
                 .label("Details")
                 .on_click(move |_, window, cx| show_details(window, cx, details.clone()))
         });

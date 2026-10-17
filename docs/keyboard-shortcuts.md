@@ -10,8 +10,10 @@
 | Toggle live preview | ⌘⇧P | Ctrl+Shift+P |
 | Show the cursor's position in the PDF | ⌘J | Ctrl+J |
 | Jump from the PDF to the source | ⌘-click or double-click | Ctrl-click or double-click |
-| Zoom the PDF in / out | ⌘= / ⌘- | Ctrl+= / Ctrl+- |
-| Fit the PDF to the pane's width | ⌘0 | Ctrl+0 |
+| Bigger / smaller editor text | ⌘= / ⌘- | Ctrl+= / Ctrl+- |
+| Default editor text size | ⌘0 | Ctrl+0 |
+| Zoom the PDF in / out (after clicking the preview) | ⌘= / ⌘- | Ctrl+= / Ctrl+- |
+| Fit the PDF to the pane's width (after clicking the preview) | ⌘0 | Ctrl+0 |
 | Outline | ⌘1 | Ctrl+1 |
 | Files | ⌘⇧E | Ctrl+Shift+E |
 | Source control | ⌘⇧G | Ctrl+Shift+G |

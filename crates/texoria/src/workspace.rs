@@ -48,10 +48,11 @@ use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspe
 use crate::theme::{self, ThemeExt};
 use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
-    Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit, EditWithAgent, Fetch,
-    FixWithAgent, ForwardSearch, NewBranch, Open, OpenFromOverleaf, OpenSettings, Pull, Push, Save,
-    ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent, ToggleDiagnostics, ToggleFiles,
-    ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
+    Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit, DecreaseFontSize,
+    EditWithAgent, Fetch, FixWithAgent, ForwardSearch, IncreaseFontSize, NewBranch, Open,
+    OpenFromOverleaf, OpenSettings, Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent,
+    SyncOverleaf, ToggleAgent, ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline,
+    ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -411,6 +412,14 @@ impl Workspace {
             }
         }
         cx.notify();
+    }
+
+    /// Resize the editor's text (⌘= / ⌘- / ⌘0), within the allowed range.
+    fn set_font_size(&mut self, size: f32, window: &mut Window, cx: &mut Context<Self>) {
+        let size = size.clamp(Settings::MIN_FONT_SIZE, Settings::MAX_FONT_SIZE);
+        if size != self.settings.font_size() {
+            self.update_settings(|s| s.editor_font_size = size, window, cx);
+        }
     }
 
     /// Open the Settings window, or bring it to the front.
@@ -2183,7 +2192,6 @@ impl Workspace {
                     n = n.action(move |_, _, _| {
                         let url = url.clone();
                         Button::new("release-notes")
-                            .small()
                             .label("Release Notes")
                             .on_click(move |_, _, cx| cx.open_url(&url))
                     });
@@ -2282,7 +2290,6 @@ impl Workspace {
         Some(
             Button::new("update")
                 .ghost()
-                .xsmall()
                 .icon(icon)
                 .label(label)
                 .when(!tooltip.is_empty(), |b| b.tooltip(tooltip))
@@ -2397,7 +2404,6 @@ impl Workspace {
                         .child(
                             Button::new("toggle-outline")
                                 .ghost()
-                                .small()
                                 .icon(Glyph::PanelLeft)
                                 .tooltip("Outline and files (⌘1, ⇧⌘E)")
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -2408,7 +2414,6 @@ impl Workspace {
                             d.child(
                                 Button::new("toggle-git")
                                     .ghost()
-                                    .small()
                                     .icon(Glyph::Branch)
                                     .when(changes > 0, |b| b.label(changes.to_string()))
                                     .tooltip("Source control (⇧⌘G)")
@@ -2421,7 +2426,6 @@ impl Workspace {
                             d.child(
                                 Button::new("toggle-agent")
                                     .ghost()
-                                    .small()
                                     .icon(Glyph::Sparkles)
                                     .tooltip("Agent (⇧⌘K)")
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -2460,7 +2464,6 @@ impl Workspace {
                         .child(
                             Button::new("build")
                                 .primary()
-                                .small()
                                 .icon(Glyph::Play)
                                 .label("Build")
                                 .tooltip("Build now (⌘R)")
@@ -2469,7 +2472,6 @@ impl Workspace {
                         .child(
                             Button::new("theme")
                                 .ghost()
-                                .small()
                                 .icon(if cx.theme_is_dark() {
                                     Glyph::Sun
                                 } else {
@@ -2485,7 +2487,6 @@ impl Workspace {
                         .child(
                             Button::new("settings")
                                 .ghost()
-                                .small()
                                 .icon(Glyph::Settings)
                                 .tooltip("Settings (⌘,)")
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -2573,10 +2574,10 @@ impl Workspace {
             let theme = cx.theme();
             div()
                 .id(id)
-                .px_2()
-                .py_0p5()
+                .px_2p5()
+                .py_1()
                 .rounded(theme.radius)
-                .text_xs()
+                .text_sm()
                 .cursor_pointer()
                 .when(active, |d| {
                     d.bg(theme.sidebar_accent)
@@ -2593,7 +2594,6 @@ impl Workspace {
         let file_button = |id: &'static str, icon: Glyph, tooltip: &'static str| {
             Button::new(id)
                 .ghost()
-                .xsmall()
                 .icon(icon)
                 .tooltip(tooltip)
                 .disabled(self.root.is_none())
@@ -2703,7 +2703,7 @@ impl Workspace {
                 .py_1()
                 .mx_1()
                 .rounded(theme.radius)
-                .text_sm()
+                .text_base()
                 .cursor_pointer()
                 .when(active, |d| {
                     d.bg(theme.sidebar_accent).text_color(theme.foreground)
@@ -2713,7 +2713,7 @@ impl Workspace {
                 .hover(|s| s.bg(theme.sidebar_accent))
                 .child(
                     Icon::new(icon)
-                        .xsmall()
+                        .small()
                         .text_color(theme.muted_foreground.opacity(0.8)),
                 )
                 .child(div().truncate().child(title))
@@ -2732,7 +2732,7 @@ impl Workspace {
                 d.child(
                     div()
                         .px_4()
-                        .text_sm()
+                        .text_base()
                         .text_color(theme.muted_foreground)
                         .child("No sections yet"),
                 )
@@ -2854,7 +2854,6 @@ impl Workspace {
             .child(
                 Button::new("allow-rc")
                     .warning()
-                    .xsmall()
                     .label("Allow latexmkrc")
                     .on_click(cx.listener(|this, _, _, cx| this.allow_rc(cx))),
             )
@@ -2886,7 +2885,6 @@ impl Workspace {
             )))
             .child(
                 Button::new("agent-banner-stop")
-                    .xsmall()
                     .outline()
                     .icon(Glyph::Stop)
                     .label("Stop")
@@ -2978,7 +2976,6 @@ impl Workspace {
                         d.child(
                             Button::new("fix-with-agent")
                                 .ghost()
-                                .xsmall()
                                 .icon(Glyph::Sparkles)
                                 .label("Fix with Agent")
                                 .tooltip("Ask the coding agent to fix these problems")
@@ -2990,7 +2987,6 @@ impl Workspace {
                     .child(
                         Button::new("close-diag")
                             .ghost()
-                            .xsmall()
                             .icon(Glyph::Close)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.show_diagnostics = false;
@@ -3062,31 +3058,39 @@ impl Workspace {
             label.into()
         });
 
+        // Clickable items, as big as the buttons next to them.
+        let item = |id: &'static str| {
+            h_flex()
+                .id(id)
+                .h_8()
+                .px_2()
+                .gap_1p5()
+                .rounded(theme.radius)
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.accent).text_color(theme.foreground))
+        };
         h_flex()
-            .h(px(26.))
-            .px_3()
-            .gap_4()
-            .text_xs()
+            .h(px(36.))
+            .px_1()
+            .gap_1()
+            .text_sm()
             .text_color(theme.muted_foreground)
             .bg(theme.status_bar)
             .border_t_1()
             .border_color(theme.status_bar_border)
             .child(
-                h_flex()
-                    .id("problems")
+                item("problems")
                     .gap_3()
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(theme.foreground))
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(Icon::new(Glyph::Error).xsmall())
+                            .child(Icon::new(Glyph::Error).size_4())
                             .child(errors.to_string()),
                     )
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(Icon::new(Glyph::Warning).xsmall())
+                            .child(Icon::new(Glyph::Warning).size_4())
                             .child(warnings.to_string()),
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -3095,16 +3099,16 @@ impl Workspace {
                     })),
             )
             .when_some(cursor, |el, c| {
-                el.child(format!("Ln {}, Col {}", c.line + 1, c.character + 1))
+                el.child(
+                    div()
+                        .px_2()
+                        .child(format!("Ln {}, Col {}", c.line + 1, c.character + 1)),
+                )
             })
             .when_some(branch, |el, branch| {
                 el.child(
-                    h_flex()
-                        .id("git-status")
-                        .gap_1()
-                        .cursor_pointer()
-                        .hover(|s| s.text_color(theme.foreground))
-                        .child(Icon::new(Glyph::Branch).xsmall())
+                    item("git-status")
+                        .child(Icon::new(Glyph::Branch).size_4())
                         .child(branch)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.show_sidebar(Sidebar::SourceControl, cx)
@@ -3115,19 +3119,13 @@ impl Workspace {
             .children(update)
             .children(language)
             .child(
-                div()
-                    .id("live")
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(theme.foreground))
+                item("live")
                     .when(live, |d| d.text_color(theme.primary))
                     .child(if live { "● Live" } else { "○ Live" })
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_live(cx))),
             )
             .child(
-                div()
-                    .id("engine")
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(theme.foreground))
+                item("engine")
                     .child(engine)
                     .on_click(cx.listener(|this, _, _, cx| this.next_engine(cx))),
             )
@@ -3180,7 +3178,6 @@ impl Workspace {
         let weak = cx.entity().downgrade();
         Button::new("spell-language")
             .ghost()
-            .xsmall()
             .icon(icon)
             .label(label)
             .tooltip(tooltip)
@@ -3357,7 +3354,6 @@ impl Workspace {
                         .child(
                             Button::new("clone-cancel")
                                 .ghost()
-                                .xsmall()
                                 .label("Cancel")
                                 .on_click(move |_, _, _| cancel.cancel()),
                         ),
@@ -3401,7 +3397,7 @@ impl Render for Workspace {
                     .bordered(false)
                     .h(relative(1.))
                     .font_family(theme.mono_font_family.clone())
-                    .text_size(px(14.5))
+                    .text_size(px(self.settings.font_size()))
                     .line_height(relative(1.6))
                     .into_any_element(),
             };
@@ -3428,8 +3424,8 @@ impl Render for Workspace {
             h_resizable("main")
                 .child(
                     resizable_panel()
-                        .size(px(260.))
-                        .size_range(px(160.)..px(640.))
+                        .size(px(320.))
+                        .size_range(px(200.)..px(640.))
                         .visible(self.show_sidebar)
                         .child(sidebar),
                 )
@@ -3478,6 +3474,15 @@ impl Render for Workspace {
             )
             .on_action(cx.listener(|this, _: &ZoomToFit, _, cx| {
                 this.pdf.update(cx, |p, cx| p.zoom_to_fit(cx))
+            }))
+            .on_action(cx.listener(|this, _: &IncreaseFontSize, window, cx| {
+                this.set_font_size(this.settings.font_size() + 1., window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &DecreaseFontSize, window, cx| {
+                this.set_font_size(this.settings.font_size() - 1., window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ResetFontSize, window, cx| {
+                this.set_font_size(Settings::DEFAULT_FONT_SIZE, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleOutline, _, cx| {
                 this.toggle_sidebar(Sidebar::Outline, cx)
