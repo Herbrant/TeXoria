@@ -6626,6 +6626,7 @@ dependencies = [
  "agent-client-protocol-schema",
  "futures-channel",
  "futures-executor",
+ "getrandom 0.3.4",
  "libc",
  "log",
  "serde",

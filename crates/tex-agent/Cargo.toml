@@ -15,6 +15,7 @@ which.workspace = true
 # The ACP wire types only: the transport is ours (threads, like tex-git and tex-compile).
 agent-client-protocol-schema = { version = "1.12", default-features = false }
 futures-channel = "0.3"
+getrandom = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

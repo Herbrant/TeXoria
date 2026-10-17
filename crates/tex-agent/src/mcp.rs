@@ -6,12 +6,12 @@
 //! relays its stdio to that port ([`bridge`]). The bridge must present a token
 //! first: any local program could connect to the port.
 
-use std::hash::{BuildHasher, Hasher};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 
 use agent_client_protocol_schema::v1 as acp;
 use serde_json::{Value, json};
@@ -23,6 +23,11 @@ const TOKEN_VAR: &str = "TEXORIA_MCP_TOKEN";
 /// The server's name: agents show tools as `texoria/typeset` or similar.
 pub const SERVER_NAME: &str = "texoria";
 const PROTOCOL_VERSION: &str = "2025-06-18";
+/// Any local program can connect: before it shows the token, it gets little
+/// time, little memory and few connections.
+const MAX_CONNECTIONS: usize = 32;
+const TOKEN_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_TOKEN_LINE: u64 = 256;
 
 pub struct Tool {
     pub name: &'static str,
@@ -70,7 +75,8 @@ impl Server {
     pub fn start(tools: Arc<dyn Tools>) -> io::Result<Server> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let addr = listener.local_addr()?;
-        let token = new_token();
+        let token = new_token()?;
+        let open = Arc::new(AtomicUsize::new(0));
         let stop = Arc::new(AtomicBool::new(false));
         {
             let (token, stop) = (token.clone(), stop.clone());
@@ -82,11 +88,16 @@ impl Server {
                             break;
                         }
                         let Ok(stream) = stream else { continue };
-                        let (tools, token) = (tools.clone(), token.clone());
+                        if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+                            open.fetch_sub(1, Ordering::SeqCst);
+                            continue;
+                        }
+                        let (tools, token, open) = (tools.clone(), token.clone(), open.clone());
                         std::thread::spawn(move || {
                             if let Err(e) = serve(stream, &token, &*tools) {
                                 log::debug!("MCP connection: {e}");
                             }
+                            open.fetch_sub(1, Ordering::SeqCst);
                         });
                     }
                 })?;
@@ -115,29 +126,22 @@ impl Drop for Server {
     }
 }
 
-/// 128 random bits, from the OS-seeded keys of the standard hasher.
-fn new_token() -> String {
-    let word = || {
-        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        h.write_u128(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default(),
-        );
-        h.finish()
-    };
-    format!("{:016x}{:016x}", word(), word())
+/// 128 random bits from the operating system.
+fn new_token() -> io::Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|e| io::Error::other(e.to_string()))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn serve(stream: TcpStream, token: &str, tools: &dyn Tools) -> io::Result<()> {
+    stream.set_read_timeout(Some(TOKEN_TIMEOUT))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut writer = stream;
-    let mut first = String::new();
-    reader.read_line(&mut first)?;
-    if !same(first.trim_end().as_bytes(), token.as_bytes()) {
+    let first = crate::rpc::read_line(&mut (&mut reader).take(MAX_TOKEN_LINE), 256)?;
+    if !first.is_some_and(|t| same(t.as_bytes(), token.as_bytes())) {
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, "bad token"));
     }
+    writer.set_read_timeout(None)?;
     while let Some(line) = crate::rpc::read_line(&mut reader, 64 << 20)? {
         if line.trim().is_empty() {
             continue;
@@ -245,6 +249,7 @@ pub fn bridge() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::BufRead;
 
     struct Echo;
 
@@ -312,7 +317,23 @@ mod tests {
             &[json!({"jsonrpc":"2.0","id":1,"method":"tools/list"})],
         );
         assert!(replies.is_empty());
-        assert_ne!(new_token(), new_token());
+        let token = new_token().unwrap();
+        assert_eq!(token.len(), 32);
+        assert_ne!(token, new_token().unwrap());
+    }
+
+    #[test]
+    fn hangs_up_on_endless_garbage() {
+        let server = Server::start(Arc::new(Echo)).unwrap();
+        let mut stream = TcpStream::connect(server.addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        // No line break: the server stops reading after a few hundred bytes.
+        let _ = stream.write_all(&[b'x'; 4096]);
+        let mut buf = [0u8; 16];
+        let n = stream.read(&mut buf).unwrap_or(0);
+        assert_eq!(n, 0, "the connection is closed without an answer");
     }
 
     #[test]
