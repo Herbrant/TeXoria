@@ -519,4 +519,335 @@ Count:10
         std::fs::write(&path, enc.finish().unwrap()).unwrap();
         assert_eq!(SyncTex::open(&path).unwrap().page_count(), 2);
     }
+
+    #[test]
+    fn reads_plain_files_relative_to_their_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.synctex");
+        std::fs::write(&path, doc("Input:3:./sub/../intro.tex\n", PAGE_OF_INTRO)).unwrap();
+        let st = SyncTex::open(&path).unwrap();
+        assert_eq!(st.page_count(), 1);
+        let intro = normalize(dir.path(), "intro.tex");
+        assert_eq!(st.forward(&intro, 4).unwrap().page, 0);
+    }
+
+    #[test]
+    fn open_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = SyncTex::open(&dir.path().join("none.synctex"));
+        assert!(matches!(missing, Err(Error::Io(_))), "{missing:?}");
+        let bad = dir.path().join("bad.synctex");
+        std::fs::write(&bad, "not synctex\n").unwrap();
+        assert!(matches!(SyncTex::open(&bad), Err(Error::BadHeader)));
+        // A truncated gzip stream.
+        let gz = dir.path().join("cut.synctex.gz");
+        std::fs::write(&gz, [0x1f, 0x8b, 8, 0, 0, 0]).unwrap();
+        assert!(matches!(SyncTex::open(&gz), Err(Error::Io(_))));
+        assert!(Error::BadHeader.to_string().contains("SyncTeX"));
+    }
+
+    #[test]
+    fn bad_headers() {
+        for text in ["", "\n", "Content:\n", "synctex version:1\n"] {
+            assert!(
+                matches!(SyncTex::parse(text, Path::new("/")), Err(Error::BadHeader)),
+                "{text:?}"
+            );
+        }
+    }
+
+    /// A SyncTeX file with `main.tex` (tag 1) and `chap.tex` (tag 2) in `/proj`.
+    fn doc(preamble: &str, content: &str) -> String {
+        format!(
+            "SyncTeX Version:1\nInput:1:/proj/main.tex\nInput:2:/proj/chap.tex\n{preamble}\
+             Output:pdf\nContent:\n{content}Postamble:\nCount:1\n"
+        )
+    }
+
+    const PAGE_OF_INTRO: &str = "{1\n(3,4:65536,655360:6553600,65536,0\n)\n}1\n";
+
+    #[test]
+    fn units_magnification_and_offsets() {
+        let content = "{1\n(1,1:100,200:1000,10,0\n)\n}1\n";
+        let at = |preamble: &str| {
+            let st = SyncTex::parse(&doc(preamble, content), Path::new("/proj")).unwrap();
+            st.forward(Path::new("/proj/main.tex"), 1).unwrap().rects[0]
+        };
+        let plain = at("");
+        assert!((plain.x - sp(100.0)).abs() < 1e-4);
+        assert!((plain.width - sp(1000.0)).abs() < 1e-4);
+        let scaled = at("Unit:2\nMagnification:500\n");
+        // 2 × 0.5: the same.
+        assert!((scaled.x - plain.x).abs() < 1e-4, "{scaled:?}");
+        let doubled = at("Unit:4\nMagnification:500\n");
+        assert!((doubled.width - 2.0 * plain.width).abs() < 1e-4);
+        let moved = at("X Offset:50\nY Offset:-100\n");
+        assert!((moved.x - sp(150.0)).abs() < 1e-4);
+        assert!((moved.y - sp(100.0 - 10.0)).abs() < 1e-4);
+        // Unreadable values fall back to the defaults.
+        let junk = at("Unit:x\nMagnification:\nX Offset:?\nY Offset:abc\n");
+        assert_eq!(junk, plain);
+    }
+
+    #[test]
+    fn inputs_inside_the_content() {
+        let content =
+            format!("Input:3:/proj/late.tex\nInput:x:/ignored.tex\nInput:nocolon\n{PAGE_OF_INTRO}");
+        let st = SyncTex::parse(&doc("", &content), Path::new("/proj")).unwrap();
+        let loc = st.forward(Path::new("/proj/late.tex"), 4).unwrap();
+        assert_eq!(loc.page, 0);
+        assert_eq!(st.inputs.len(), 3);
+    }
+
+    #[test]
+    fn page_gaps_are_filled() {
+        let content = format!("{{1\n}}1\n{}", PAGE_OF_INTRO.replace("{1", "{4"));
+        let st =
+            SyncTex::parse(&doc("Input:3:/proj/intro.tex\n", &content), Path::new("/")).unwrap();
+        assert_eq!(st.page_count(), 4);
+        assert_eq!(st.forward(Path::new("/proj/intro.tex"), 4).unwrap().page, 3);
+        // A page number going backwards is the next page.
+        let content = format!("{PAGE_OF_INTRO}{PAGE_OF_INTRO}");
+        let st = SyncTex::parse(&doc("", &content), Path::new("/")).unwrap();
+        assert_eq!(st.page_count(), 2);
+        // An unreadable one too.
+        let st = SyncTex::parse(&doc("", "{1\n}1\n{x\n}x\n"), Path::new("/")).unwrap();
+        assert_eq!(st.page_count(), 2);
+    }
+
+    #[test]
+    fn last_page_without_closing_brace() {
+        let text = "SyncTeX Version:1\nInput:3:/proj/intro.tex\nContent:\n{1\n(3,4:0,10:5,1,0\n";
+        let st = SyncTex::parse(text, Path::new("/")).unwrap();
+        assert_eq!(st.page_count(), 1);
+        assert!(st.forward(Path::new("/proj/intro.tex"), 4).is_some());
+    }
+
+    #[test]
+    fn records_outside_pages_and_junk_are_ignored() {
+        let content =
+            "(1,1:0,0:5,5,0\n\nzzz\n!42\n{1\n(1,x:0,0\n(1,1\n(1,1:0\nh\n(1,2:0,10:5,1,0\n}1\n";
+        let st = SyncTex::parse(&doc("", content), Path::new("/")).unwrap();
+        assert_eq!(st.page_count(), 1);
+        assert_eq!(st.pages[0].len(), 1);
+        assert_eq!(st.pages[0][0].line, 2);
+    }
+
+    #[test]
+    fn forward_misses() {
+        let st = SyncTex::parse(SAMPLE, Path::new("/proj")).unwrap();
+        assert_eq!(st.forward(Path::new("/elsewhere/unknown.tex"), 1), None);
+        // Known file, but no record of it.
+        let st = SyncTex::parse(&doc("", "{1\n}1\n"), Path::new("/")).unwrap();
+        assert_eq!(st.forward(Path::new("/proj/main.tex"), 1), None);
+    }
+
+    #[test]
+    fn forward_matches_by_file_name() {
+        // Another absolute prefix (a symlink, a moved project): same name.
+        let st = SyncTex::parse(SAMPLE, Path::new("/proj")).unwrap();
+        assert_eq!(
+            st.forward(Path::new("/other/place/chap.tex"), 3)
+                .unwrap()
+                .page,
+            0
+        );
+    }
+
+    #[test]
+    fn forward_before_the_first_record_and_after_the_last() {
+        let st = SyncTex::parse(SAMPLE, Path::new("/proj")).unwrap();
+        // Nothing at or after line 50: the closest line before (20).
+        assert_eq!(st.forward(Path::new("/proj/main.tex"), 50).unwrap().page, 1);
+        // Line 0 is the first line with records (10, on page 1).
+        assert_eq!(st.forward(Path::new("/proj/main.tex"), 0).unwrap().page, 0);
+    }
+
+    #[test]
+    fn forward_with_only_point_records_gives_a_marker() {
+        let content = "{1\ng1,7:655360,1310720\nk1,7:0,0\n}1\n";
+        let st = SyncTex::parse(&doc("", content), Path::new("/")).unwrap();
+        let loc = st.forward(Path::new("/proj/main.tex"), 7).unwrap();
+        assert_eq!(loc.rects.len(), 1);
+        let r = loc.rects[0];
+        assert!((r.x - sp(655360.0)).abs() < 1e-3);
+        assert!((r.y - (sp(1310720.0) - 8.0)).abs() < 1e-3);
+        assert_eq!((r.width, r.height), (2.0, 10.0));
+    }
+
+    #[test]
+    fn forward_merges_boxes_on_a_baseline() {
+        let content = "{1\n(1,3:0,655360:655360,65536,0\n(1,3:1310720,655360:655360,65536,0\n\
+                       (1,3:0,1966080:655360,65536,0\n(1,3:0,0:0,0,0\n}1\n";
+        let st = SyncTex::parse(&doc("", content), Path::new("/")).unwrap();
+        let loc = st.forward(Path::new("/proj/main.tex"), 3).unwrap();
+        // Two lines; the first one spans both boxes; the empty box is skipped.
+        assert_eq!(loc.rects.len(), 2, "{loc:?}");
+        assert!((loc.rects[0].width - sp(1310720.0 + 655360.0)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn negative_widths_are_flipped() {
+        let content = "{1\n(1,3:655360,655360:-327680,65536,0\n}1\n";
+        let st = SyncTex::parse(&doc("", content), Path::new("/")).unwrap();
+        let r = st.forward(Path::new("/proj/main.tex"), 3).unwrap().rects[0];
+        assert!((r.x - sp(327680.0)).abs() < 1e-3, "{r:?}");
+        assert!((r.width - sp(327680.0)).abs() < 1e-3, "{r:?}");
+    }
+
+    #[test]
+    fn inverse_falls_back_to_the_nearest_record() {
+        let st = SyncTex::parse(SAMPLE, Path::new("/proj")).unwrap();
+        // Far below everything on page 1: the lowest line box (chap.tex).
+        let loc = st.inverse(0, sp(4736286.0), 2000.0).unwrap();
+        assert_eq!(loc.file, PathBuf::from("/proj/chap.tex"));
+        assert_eq!(st.inverse(5, 0.0, 0.0), None);
+        // A record of an unknown file.
+        let content = "{1\n(9,1:0,655360:655360,65536,0\n}1\n";
+        let st = SyncTex::parse(&doc("", content), Path::new("/")).unwrap();
+        assert_eq!(st.inverse(0, 1.0, 5.0), None);
+        // A page without records.
+        let st = SyncTex::parse(&doc("", "{1\n}1\n"), Path::new("/")).unwrap();
+        assert_eq!(st.inverse(0, 1.0, 5.0), None);
+    }
+
+    #[test]
+    fn normalize_paths() {
+        assert_eq!(
+            normalize(Path::new("/p"), "./a/./b/../c.tex"),
+            PathBuf::from("/p/a/c.tex")
+        );
+        assert_eq!(
+            normalize(Path::new("/p/q"), "/abs.tex"),
+            PathBuf::from("/abs.tex")
+        );
+        assert_eq!(
+            normalize(Path::new("/"), "../../x.tex"),
+            PathBuf::from("/x.tex")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_inputs() {
+        let text = "SyncTeX Version:1\nInput:1:C:\\p\\.\\main.tex\nContent:\n\
+                    {1\n(1,4:0,655360:655360,65536,0\n}1\n";
+        let st = SyncTex::parse(text, Path::new("D:\\build")).unwrap();
+        assert_eq!(st.inputs[&1], PathBuf::from("C:\\p\\main.tex"));
+        assert_eq!(st.forward(Path::new("C:/p/main.tex"), 4).unwrap().page, 0);
+        let back = st.inverse(0, 1.0, 9.0).unwrap();
+        assert_eq!(back.file, PathBuf::from("C:\\p\\main.tex"));
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn rect() -> impl Strategy<Value = Rect> {
+            (-1e4f32..1e4, -1e4f32..1e4, 0f32..1e3, 0f32..1e3).prop_map(|(x, y, width, height)| {
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                }
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn union_contains_both(a in rect(), b in rect()) {
+                let u = a.union(&b);
+                // `x + width` may round below the far edge by an ulp or so.
+                let eps = 1e-2;
+                for r in [a, b] {
+                    prop_assert!(u.contains(r.x, r.y));
+                    prop_assert!(u.x + u.width + eps >= r.x + r.width);
+                    prop_assert!(u.y + u.height + eps >= r.y + r.height);
+                }
+            }
+
+            #[test]
+            fn inside_is_at_distance_zero(r in rect(), fx in 0f32..=1.0, fy in 0f32..=1.0) {
+                let (x, y) = (r.x + r.width * fx, r.y + r.height * fy);
+                if r.contains(x, y) {
+                    prop_assert_eq!(r.distance2(x, y), 0.0);
+                }
+            }
+
+            #[test]
+            fn distance_is_never_negative(r in rect(), x in -2e4f32..2e4, y in -2e4f32..2e4) {
+                let d = r.distance2(x, y);
+                prop_assert!(d >= 0.0);
+                prop_assert_eq!(d == 0.0, r.contains(x, y));
+            }
+
+            #[test]
+            fn normalize_is_idempotent(path in "(/?)((\\.|\\.\\.|[a-z]{1,3})/){0,6}[a-z]{1,3}\\.tex") {
+                // Absolute on every platform.
+                let base = if cfg!(windows) { "C:\\base\\dir" } else { "/base/dir" };
+                let once = normalize(Path::new(base), &path);
+                prop_assert!(once.is_absolute());
+                prop_assert!(once.components().all(|c| !matches!(c, Component::CurDir | Component::ParentDir)));
+                prop_assert_eq!(normalize(Path::new("/"), &once.to_string_lossy()), once.clone());
+            }
+
+            #[test]
+            fn parse_never_panics(body in "\\PC*") {
+                let text = format!("SyncTeX Version:1\n{body}");
+                let st = SyncTex::parse(&text, Path::new("/")).unwrap();
+                let _ = st.forward(Path::new("/a.tex"), 1);
+                let _ = st.inverse(0, 1.0, 1.0);
+            }
+
+            #[test]
+            fn parse_never_panics_on_records(
+                lines in prop::collection::vec(
+                    prop_oneof![
+                        Just("{1".to_string()),
+                        Just("}1".to_string()),
+                        Just("Input:1:/a.tex".to_string()),
+                        "[({hvkg$x\\[][0-9,:-]{0,30}",
+                    ],
+                    0..60,
+                )
+            ) {
+                let text = format!("SyncTeX Version:1\nContent:\n{}", lines.join("\n"));
+                let st = SyncTex::parse(&text, Path::new("/")).unwrap();
+                for line in 0..5 {
+                    if let Some(loc) = st.forward(Path::new("/a.tex"), line) {
+                        prop_assert!(loc.page < st.page_count());
+                        prop_assert!(!loc.rects.is_empty());
+                    }
+                }
+            }
+
+            /// One line box per source line, a few per page, without overlaps:
+            /// forward then inverse gives the line back.
+            #[test]
+            fn forward_inverse_round_trip(per_page in prop::collection::vec(1usize..6, 1..5)) {
+                let mut content = String::new();
+                let mut line = 0;
+                for (p, n) in per_page.iter().enumerate() {
+                    content += &format!("{{{}\n", p + 1);
+                    for i in 0..*n {
+                        line += 1;
+                        let y = (i as i64 + 1) * 20 * 65536;
+                        content += &format!("(1,{line}:655360,{y}:6553600,655360,131072\n)\n");
+                    }
+                    content += &format!("}}{}\n", p + 1);
+                }
+                let st = SyncTex::parse(&doc("", &content), Path::new("/")).unwrap();
+                prop_assert_eq!(st.page_count(), per_page.len());
+                for l in 1..=line {
+                    let loc = st.forward(Path::new("/proj/main.tex"), l).unwrap();
+                    prop_assert_eq!(loc.rects.len(), 1);
+                    let r = loc.rects[0];
+                    let back = st.inverse(loc.page, r.x + r.width / 2.0, r.y + r.height / 2.0).unwrap();
+                    prop_assert_eq!(back.line, l);
+                    prop_assert_eq!(back.file, PathBuf::from("/proj/main.tex"));
+                }
+            }
+        }
+    }
 }
