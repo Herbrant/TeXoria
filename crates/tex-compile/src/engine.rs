@@ -175,7 +175,10 @@ impl Engine {
         cmd.current_dir(job.work_dir());
         // The engine runs in the project, which may come from anywhere: a
         // `pdflatex` or `bibtex` planted there must never be what runs.
-        cmd.env("PATH", prepend_path(&self.extra_path));
+        cmd.env(
+            "PATH",
+            prepend_path(&self.extra_path, std::env::var_os("PATH")),
+        );
         if cfg!(windows) {
             // cmd.exe (latexmk's `system`) looks in the current directory
             // before `PATH` unless this is set.
@@ -219,15 +222,18 @@ fn latexmk_rc_files() -> Vec<PathBuf> {
     files
 }
 
-/// `dirs`, then the process's `PATH`, without empty or relative entries:
-/// those name the current directory (the project) on Unix.
-fn prepend_path(dirs: &[PathBuf]) -> OsString {
-    let current = std::env::var_os("PATH").unwrap_or_default();
-    let all = dirs
+/// `dirs`, then `path` (the process's `PATH`), without empty or relative
+/// entries: those name the current directory (the project) on Unix. A dir
+/// that cannot be in a `PATH` (its name has the separator) is left out
+/// rather than failing the whole.
+fn prepend_path(dirs: &[PathBuf], path: Option<OsString>) -> OsString {
+    let current = path.unwrap_or_default();
+    let all: Vec<PathBuf> = dirs
         .iter()
         .cloned()
         .chain(std::env::split_paths(&current))
-        .filter(|d| d.is_absolute());
+        .filter(|d| d.is_absolute() && std::env::join_paths([d]).is_ok())
+        .collect();
     std::env::join_paths(all).unwrap_or_default()
 }
 
@@ -267,7 +273,7 @@ pub fn detect(bundled_dir: Option<&Path>) -> Vec<Engine> {
 pub fn find_tex_tool(name: &str) -> Option<(PathBuf, OsString)> {
     let (tool, dir) = find_tool(name, &tex_bin_dirs())?;
     let extra: Vec<PathBuf> = dir.into_iter().collect();
-    Some((tool, prepend_path(&extra)))
+    Some((tool, prepend_path(&extra, std::env::var_os("PATH"))))
 }
 
 /// The local documentation of `package` (a PDF or HTML file), from `texdoc`.
@@ -552,7 +558,7 @@ mod tests {
             .expect("PATH is set");
         assert!(std::env::split_paths(path).all(|d| d.is_absolute()));
         let dirs = [PathBuf::from("."), PathBuf::from("bin")];
-        let joined = prepend_path(&dirs);
+        let joined = prepend_path(&dirs, std::env::var_os("PATH"));
         assert!(std::env::split_paths(&joined).all(|d| d.is_absolute()));
     }
 
@@ -571,6 +577,20 @@ mod tests {
         assert_eq!(job.work_dir(), Path::new("."));
         let cmd = latexmk(Flavor::PdfLatex).command(&job);
         assert_eq!(cmd.get_current_dir(), Some(Path::new(".")));
+    }
+
+    #[test]
+    fn path_survives_a_dir_that_cannot_be_joined() {
+        let bad = if cfg!(windows) { "C:\\a\"b" } else { "/a:b" };
+        let good = std::env::temp_dir();
+        let joined = prepend_path(&[PathBuf::from(bad), good.clone()], None);
+        let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
+        assert_eq!(dirs, vec![good], "{joined:?}");
+        // Also from `PATH` itself (on Unix, `:` splits it first).
+        let path = std::env::join_paths([std::env::temp_dir()]).unwrap();
+        assert_eq!(prepend_path(&[], Some(path.clone())), path);
+        assert_eq!(prepend_path(&[], None), OsString::new());
+        assert_eq!(prepend_path(&[], Some(OsString::new())), OsString::new());
     }
 
     fn latexmk(flavor: Flavor) -> Engine {
