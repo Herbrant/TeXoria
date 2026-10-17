@@ -220,7 +220,9 @@ pub(crate) fn path_kind(cmd: &str) -> Option<(PathKind, bool)> {
 
 pub(crate) fn is_ref_command(c: &str) -> bool {
     let c = c.trim_start_matches('\\').to_ascii_lowercase();
-    c.ends_with("ref") || c.ends_with("refs") || c == "labelcref"
+    // `\href{url}` and `\hyperref{text}` take no label in braces.
+    (c.ends_with("ref") || c.ends_with("refs") || c == "labelcref")
+        && !matches!(c.as_str(), "href" | "hyperref")
 }
 
 pub(crate) fn is_cite_command(c: &str) -> bool {
@@ -920,6 +922,29 @@ mod tests {
         assert_eq!(detail("full").as_deref(), Some("A. Author · 2000 · Full"));
         assert_eq!(detail("titled").as_deref(), Some("Only a title"));
         assert_eq!(detail("bare"), None);
+    }
+
+    #[test]
+    fn links_are_not_references() {
+        for src in ["\\href{https://x|", "\\hyperref{x|", "\\Href{x|"] {
+            let (t, o) = at(src);
+            assert_eq!(context(&t, o), None, "{src}");
+        }
+        for src in [
+            "\\ref{|",
+            "\\eqref{|",
+            "\\Cref{|",
+            "\\autoref{|",
+            "\\pageref{|",
+        ] {
+            let (t, o) = at(src);
+            assert!(
+                matches!(context(&t, o), Some(Context::Label { .. })),
+                "{src}"
+            );
+        }
+        let (t, o) = at("\\href{https://ex|ample.org}{site}");
+        assert_eq!(nav::symbol_at(&t, o), None);
     }
 
     #[test]
