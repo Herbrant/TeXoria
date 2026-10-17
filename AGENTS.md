@@ -148,7 +148,23 @@ texoria ─┬─ tex-compile ── tex-log
   in `data/dictionaries.tsv` (regenerate both with `scripts/gen-dictionaries.sh <commit>`).
   Dictionaries are never bundled (their licenses vary, GPL included). spellbook is stricter than
   Hunspell: `repair` reads numeric flags like Hunspell and drops unreadable lines so that every
-  catalog dictionary loads (keep it that way when bumping the commit).
+  catalog dictionary loads (keep it that way when bumping the commit). `extract::count` counts
+  words like texcount (text, headings, captions, formulas). `grammar` talks to a LanguageTool
+  server: the source becomes LanguageTool's annotated text (`annotate`: prose runs from
+  `extract::prose_runs`, markup read as what it stands for), split at paragraphs (`chunks`) so
+  that the app caches findings per chunk; offsets come back in UTF-16 units.
+- **tex-project** also holds the checks run as you type (`check::run`: undefined references and
+  citations, duplicate labels, missing includes/pictures, `.bib` flaws; the sample project must
+  have none) and the project-wide search (`search`, regex-based, over `files::scan`'s text files
+  with the open buffers' text). `tex-syntax`'s index records byte ranges and rows of labels,
+  references, citations, includes, commands and environments, for these and for navigation.
+- **tex-complete** also answers "what is here" (`nav::symbol_at`), where it is defined
+  (`nav::definition`) and what to show on hover (`nav::hover`), and completes paths.
+- **tex-cite**: BibTeX from doi.org (content negotiation), arXiv's Atom API, or a Crossref search;
+  `make_key`/`normalize` name and format the entry. Network only on an explicit action; tests use
+  fixtures (`TEXORIA_CITE_ONLINE=1` runs the online one).
+- **tex-vim**: Vim on plain text: keys in, `Action`s (edits in byte offsets, cursor, selection,
+  undo, yank…) out; `.` replays the recorded keys on a copy of the text and returns one edit.
 - **texoria** (`workspace.rs` is the main window: outline or files | editor tabs | PDF pane):
   - `git_panel.rs` is the Source Control sidebar (alternates with the outline). Mutating
     operations are emitted as `GitPanelEvent::Request(GitOp)`; the workspace saves dirty buffers
@@ -192,7 +208,10 @@ texoria ─┬─ tex-compile ── tex-log
     and only materializes pages near the viewport. SyncTeX forward/inverse search goes through the
     `synctex` crate, whose coordinates are PDF points with a top-left origin, y downwards.
     The pane takes the focus on click: in its key context (`PdfPane`) ⌘= / ⌘- / ⌘0 zoom the PDF,
-    elsewhere they resize the editor's text (`Settings::editor_font_size`).
+    elsewhere they resize the editor's text (`Settings::editor_font_size`). Links, page text
+    (selection) and search hits are `pdf_view::Query`s answered on the worker, per document
+    generation. `presentation.rs` is the full-screen window: it asks the pane's renderer for its
+    page (`PdfPane::present`) and frees the bitmaps it drew itself (they live in its window).
   - `agent_panel.rs` is the Agent sidebar (alternates with the outline). Agents only start in
     projects allowed in `Settings::agent_projects` (exact directories, like trust), and the
     agents are looked for on first use. A turn emits `AgentPanelEvent::Busy`: the workspace
@@ -213,6 +232,18 @@ texoria ─┬─ tex-compile ── tex-log
   - `latex.rs` registers the tree-sitter LaTeX language with gpui-kit's `LanguageRegistry` and
     bridges `tex-complete` items (byte range + insert text + cursor offset) to the editor;
     the post-insert cursor move is done in `Workspace::on_buffer_changed` via "fixups".
+    `LatexNavigation` is the definition and hover provider: a target in another file is a
+    `texoria:definition/<n>` link that its `ShowDocumentHandler` turns into `OpenLocation`;
+    `HoverNote`s add the checks' and the grammar's messages to the hover.
+  - `checks.rs` and `grammar.rs` underline, like spelling, the live checks (run after each
+    re-index) and LanguageTool's findings (`Grammar` starts `languagetool-server` when allowed and
+    stops it on quit). Their hover messages are matched to underlines by text and position,
+    since deleted ranges disappear from a decoration collection.
+  - `search_panel.rs` is the Search view of the sidebar; Replace All edits open buffers through
+    the editor and writes the others. `edit.rs` holds the comment toggling and tex-fmt formatting.
+  - `vim.rs`: with `Settings::vim_mode`, `cx.intercept_keystrokes` gives the active editor's keys
+    to `tex_vim` and stops them when Vim takes them; the block cursor is a fill
+    `RangeDecoration` (the editor has no cursor shapes).
   - Actions/keybindings/menus are declared in `main.rs` (`secondary-*` = ⌘ on macOS, Ctrl elsewhere).
   - The app icon's sources are `assets/logo/texoria.svg` (and `texoria-small.svg` for ≤ 48 px);
     the rasterized PNG/`.icns`/`.ico` in `crates/texoria/packaging` are committed. `build.rs`
