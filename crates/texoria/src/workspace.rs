@@ -4434,6 +4434,14 @@ impl Render for Workspace {
             .on_action(
                 cx.listener(|this, _: &ZoomOut, _, cx| this.pdf.update(cx, |p, cx| p.zoom_out(cx))),
             )
+            .on_action(cx.listener(|this, _: &crate::pdf_pane::FitPage, _, cx| {
+                this.pdf.update(cx, |p, cx| p.fit_page(cx))
+            }))
+            .on_action(
+                cx.listener(|this, _: &crate::pdf_pane::GoToPage, window, cx| {
+                    this.pdf.update(cx, |p, cx| p.prompt_page(window, cx))
+                }),
+            )
             .on_action(cx.listener(|this, _: &ZoomToFit, _, cx| {
                 this.pdf.update(cx, |p, cx| p.zoom_to_fit(cx))
             }))

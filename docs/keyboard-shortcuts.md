@@ -15,6 +15,10 @@
 | Default editor text size | ⌘0 | Ctrl+0 |
 | Zoom the PDF in / out (after clicking the preview) | ⌘= / ⌘- | Ctrl+= / Ctrl+- |
 | Fit the PDF to the pane's width (after clicking the preview) | ⌘0 | Ctrl+0 |
+| Fit the whole page (after clicking the preview) | ⌘9 | Ctrl+9 |
+| Previous / next page (after clicking the preview) | ← / →, Page Up / Page Down | ← / →, Page Up / Page Down |
+| First / last page (after clicking the preview) | Home / End | Home / End |
+| Go to a page (after clicking the preview) | ⌘G | Ctrl+G |
 | Outline | ⌘1 | Ctrl+1 |
 | Files | ⌘⇧E | Ctrl+Shift+E |
 | Source control | ⌘⇧G | Ctrl+Shift+G |

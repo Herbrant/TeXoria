@@ -26,7 +26,15 @@ renderer.
 
 Once you have clicked the preview, ⌘= and ⌘- zoom it in and out and ⌘0 fits the page to the
 pane's width (elsewhere they resize the editor's text). The buttons at the bottom right of the
-preview and the *View* menu do the same. In the dark theme, pages are darkened while keeping their colors.
+preview and the *View* menu do the same; clicking the zoom level switches between fitting the
+width and fitting the whole page (⌘9). In the dark theme, pages are darkened while keeping their
+colors.
+
+## Pages
+
+The toolbar shows the page in the middle of the pane and how many there are: click it, or press
+⌘G, to type the page to go to. Once you have clicked the preview, ←/→ and Page Up/Page Down go to
+the previous or next page, Home and End to the first or last one.
 
 ## Engines
 

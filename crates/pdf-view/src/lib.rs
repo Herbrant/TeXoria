@@ -108,6 +108,44 @@ pub struct Link {
     pub target: LinkTarget,
 }
 
+/// The character nearest to a point of the page (`None` without text):
+/// the one under it, else the closest on its line, else the closest.
+pub fn nearest_char(chars: &[TextChar], x: f32, y: f32) -> Option<usize> {
+    let boxed = |c: &&TextChar| c.rect.width > 0.0 && c.rect.height > 0.0;
+    if let Some(i) = chars
+        .iter()
+        .position(|c| boxed(&c) && c.rect.contains(x, y))
+    {
+        return Some(i);
+    }
+    let distance = |c: &TextChar| {
+        let dy = if y < c.rect.y {
+            c.rect.y - y
+        } else {
+            (y - (c.rect.y + c.rect.height)).max(0.0)
+        };
+        let cx = c.rect.x + c.rect.width / 2.0;
+        // Being on the line matters more than being close sideways.
+        dy * 10.0 + (cx - x).abs()
+    };
+    chars
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| boxed(c))
+        .min_by(|a, b| distance(a.1).total_cmp(&distance(b.1)))
+        .map(|(i, _)| i)
+}
+
+/// The text of `chars[range]`, with PDFium's line breaks as `\n`.
+pub fn text_of(chars: &[TextChar], range: std::ops::Range<usize>) -> String {
+    let range = range.start.min(chars.len())..range.end.min(chars.len());
+    chars[range]
+        .iter()
+        .map(|c| c.ch)
+        .filter(|&c| c != '\r')
+        .collect()
+}
+
 /// A search hit: the rectangles of its text (one per line it spans).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hit {
@@ -613,6 +651,27 @@ mod tests {
         assert_eq!(&px[4..7], &[228, 228, 228]);
         // Red stays red (lightness 50% is a fixed point).
         assert!(px[10] > px[8] && px[10] > px[9]);
+    }
+
+    #[test]
+    fn finds_the_nearest_char() {
+        let ch = |ch, x, y| TextChar {
+            ch,
+            rect: Rect {
+                x,
+                y,
+                width: 5.0,
+                height: 10.0,
+            },
+        };
+        let chars = vec![ch('a', 0.0, 0.0), ch('b', 6.0, 0.0), ch('c', 0.0, 20.0)];
+        assert_eq!(nearest_char(&chars, 7.0, 5.0), Some(1));
+        // Past the end of the first line: its last character.
+        assert_eq!(nearest_char(&chars, 50.0, 4.0), Some(1));
+        assert_eq!(nearest_char(&chars, 2.0, 40.0), Some(2));
+        assert_eq!(nearest_char(&[], 0.0, 0.0), None);
+        assert_eq!(text_of(&chars, 0..2), "ab");
+        assert_eq!(text_of(&chars, 1..9), "bc");
     }
 
     /// A renderer with `tests/fixtures/links/links.pdf` loaded, if PDFium is available.

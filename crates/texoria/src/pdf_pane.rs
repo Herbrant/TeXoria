@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{
-    ActiveTheme, Icon, button::Button, button::ButtonVariants, h_flex, v_flex,
+    ActiveTheme, Icon, Sizable, button::Button, button::ButtonVariants, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -28,9 +29,23 @@ const MAX_ZOOM: f32 = 6.0;
 const RENDER_AHEAD: usize = 1;
 const KEEP_AROUND: usize = 6;
 
+actions!(
+    pdf,
+    [
+        NextPage,
+        PreviousPage,
+        FirstPage,
+        LastPage,
+        GoToPage,
+        FitPage
+    ]
+);
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Zoom {
     FitWidth,
+    /// The whole page in the pane.
+    FitPage,
     Fixed(f32),
 }
 
@@ -78,6 +93,9 @@ pub struct PdfPane {
     /// Taken on a click, so that ⌘= and ⌘- zoom the PDF instead of resizing
     /// the editor's text.
     focus: FocusHandle,
+    /// The "go to page" field of the toolbar, while it is open.
+    page_input: Option<Entity<InputState>>,
+    _page_input: Option<Subscription>,
     _events: Task<()>,
     _highlight_timer: Task<()>,
 }
@@ -128,6 +146,8 @@ impl PdfPane {
             last_request: Vec::new(),
             pending_scroll: None,
             focus: cx.focus_handle(),
+            page_input: None,
+            _page_input: None,
             _events: events,
             _highlight_timer: Task::ready(()),
         }
@@ -240,6 +260,16 @@ impl PdfPane {
     fn zoom_factor(&self) -> f32 {
         match self.zoom {
             Zoom::Fixed(z) => z,
+            Zoom::FitPage => {
+                let widest = self.pages.iter().map(|p| p.width).fold(0.0, f32::max);
+                let tallest = self.pages.iter().map(|p| p.height).fold(0.0, f32::max);
+                if widest <= 0.0 || tallest <= 0.0 || self.viewport.height <= px(0.) {
+                    return 1.0;
+                }
+                let w = (f32::from(self.viewport.width) - 2.0 * MARGIN) / widest;
+                let h = (f32::from(self.viewport.height) - 2.0 * MARGIN) / tallest;
+                w.min(h).clamp(MIN_ZOOM, MAX_ZOOM)
+            }
             Zoom::FitWidth => {
                 let widest = self.pages.iter().map(|p| p.width).fold(0.0, f32::max);
                 if widest <= 0.0 || self.viewport.width <= px(0.) {
@@ -302,6 +332,83 @@ impl PdfPane {
 
     pub fn zoom_to_fit(&mut self, cx: &mut Context<Self>) {
         self.set_zoom(Zoom::FitWidth, None, cx);
+    }
+
+    pub fn fit_page(&mut self, cx: &mut Context<Self>) {
+        self.set_zoom(Zoom::FitPage, None, cx);
+        let page = self.current_page();
+        self.go_to(page, None, cx);
+    }
+
+    // ── Pages ────────────────────────────────────────────────────────────
+
+    /// The page in the middle of the viewport (0-based).
+    pub fn current_page(&self) -> usize {
+        let (rects, _) = self.layout(self.zoom_factor());
+        let middle = -self.scroll.offset().y + self.viewport.height / 2.0;
+        rects
+            .iter()
+            .position(|r| r.bottom() + px(GAP) >= middle)
+            .unwrap_or(rects.len().saturating_sub(1))
+    }
+
+    /// Scroll to `page` (0-based), at `y` points from its top if given.
+    pub fn go_to(&mut self, page: usize, y: Option<f32>, cx: &mut Context<Self>) {
+        let zoom = self.zoom_factor();
+        let (rects, _) = self.layout(zoom);
+        let Some(r) = rects.get(page.min(rects.len().saturating_sub(1))) else {
+            return;
+        };
+        let top = match y {
+            Some(y) => r.origin.y + px(y * zoom) - px(MARGIN),
+            None => r.origin.y - px(MARGIN),
+        };
+        let offset = self.scroll.offset();
+        self.pending_scroll = Some(point(offset.x, -top.max(px(0.))));
+        cx.notify();
+    }
+
+    fn step_page(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let page = (self.current_page() as isize + delta).max(0) as usize;
+        self.go_to(page, None, cx);
+    }
+
+    /// Open the toolbar's "go to page" field.
+    pub fn prompt_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pages.is_empty() {
+            return;
+        }
+        let current = (self.current_page() + 1).to_string();
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(current));
+        input.update(cx, |i, cx| {
+            i.focus(window, cx);
+            i.select_all(window, cx);
+        });
+        self._page_input = Some(cx.subscribe_in(
+            &input,
+            window,
+            |this, input, ev: &InputEvent, window, cx| match ev {
+                InputEvent::PressEnter { .. } => {
+                    let n = input.read(cx).value().trim().parse::<usize>().ok();
+                    this.close_page_input(window, cx);
+                    if let Some(n) = n {
+                        this.go_to(n.saturating_sub(1), None, cx);
+                    }
+                }
+                InputEvent::Blur => this.close_page_input(window, cx),
+                _ => {}
+            },
+        ));
+        self.page_input = Some(input);
+        cx.notify();
+    }
+
+    fn close_page_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page_input.take().is_some() {
+            self._page_input = None;
+            window.focus(&self.focus, cx);
+            cx.notify();
+        }
     }
 
     // ── SyncTeX ──────────────────────────────────────────────────────────
@@ -428,6 +535,19 @@ impl PdfPane {
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let zoom_pct = (self.zoom_factor() * 100.0).round() as i32;
+        let pages = self.pages.len();
+        let page: AnyElement = match &self.page_input {
+            Some(input) => div()
+                .w(px(56.))
+                .child(Input::new(input).xsmall())
+                .into_any_element(),
+            None => Button::new("pdf-page")
+                .ghost()
+                .label(format!("{} / {pages}", self.current_page() + 1))
+                .tooltip("Go to page…")
+                .on_click(cx.listener(|this, _, window, cx| this.prompt_page(window, cx)))
+                .into_any_element(),
+        };
         h_flex()
             .absolute()
             .bottom(px(14.))
@@ -441,6 +561,7 @@ impl PdfPane {
             .shadow_md()
             .text_xs()
             .text_color(cx.theme().muted_foreground)
+            .child(page)
             .child(
                 Button::new("pdf-export")
                     .ghost()
@@ -458,8 +579,18 @@ impl PdfPane {
                 Button::new("zoom-fit")
                     .ghost()
                     .label(format!("{zoom_pct}%"))
-                    .tooltip("Fit width")
-                    .on_click(cx.listener(|this, _, _, cx| this.zoom_to_fit(cx))),
+                    .tooltip(if self.zoom == Zoom::FitWidth {
+                        "Fit page"
+                    } else {
+                        "Fit width"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if this.zoom == Zoom::FitWidth {
+                            this.fit_page(cx)
+                        } else {
+                            this.zoom_to_fit(cx)
+                        }
+                    })),
             )
             .child(
                 Button::new("zoom-in")
@@ -610,6 +741,12 @@ impl Render for PdfPane {
             .id("pdf-pane")
             .key_context("PdfPane")
             .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &NextPage, _, cx| this.step_page(1, cx)))
+            .on_action(cx.listener(|this, _: &PreviousPage, _, cx| this.step_page(-1, cx)))
+            .on_action(cx.listener(|this, _: &FirstPage, _, cx| this.go_to(0, None, cx)))
+            .on_action(cx.listener(|this, _: &LastPage, _, cx| this.go_to(usize::MAX, None, cx)))
+            .on_action(cx.listener(|this, _: &GoToPage, window, cx| this.prompt_page(window, cx)))
+            .on_action(cx.listener(|this, _: &FitPage, _, cx| this.fit_page(cx)))
             .relative()
             .size_full()
             .bg(canvas_bg)
