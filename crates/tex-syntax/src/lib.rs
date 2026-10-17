@@ -2,6 +2,8 @@
 //! index (outline, labels, citations, includes, user macros) extracted from
 //! a parse tree.
 
+use std::ops::Range;
+
 use tree_sitter::{Language, Node, Parser, Tree};
 
 /// Highlight query using the capture names understood by gpui-component.
@@ -66,6 +68,8 @@ pub struct OutlineItem {
 pub struct Label {
     pub name: String,
     pub line: u32,
+    /// Bytes of the name inside the braces.
+    pub range: Range<usize>,
     /// What the label is attached to: the enclosing environment
     /// (`equation`, `figure`...) or section title, for completion details.
     pub context: Option<String>,
@@ -85,6 +89,19 @@ pub struct Include {
     pub kind: IncludeKind,
     pub path: String,
     pub line: u32,
+    /// Bytes of the path inside the braces.
+    pub range: Range<usize>,
+}
+
+/// A key used by a command: a label in `\ref`, a citation key in `\cite`, a
+/// `\bibitem` key, a user environment's name in `\newenvironment`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyRef {
+    pub name: String,
+    /// Bytes of the key in the source.
+    pub range: Range<usize>,
+    /// The command it appears in, with its backslash (`\cref`, `\citep`).
+    pub command: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +111,8 @@ pub struct UserCommand {
     /// Number of arguments if declared with `[n]`.
     pub argc: u8,
     pub line: u32,
+    /// Bytes of the name in the declaration.
+    pub range: Range<usize>,
 }
 
 /// A main language set with polyglossia (`\setmainlanguage[variant=uk]{english}`)
@@ -109,13 +128,17 @@ pub struct Index {
     pub outline: Vec<OutlineItem>,
     pub labels: Vec<Label>,
     /// Keys referenced with `\cite` and friends.
-    pub citations: Vec<String>,
+    pub citations: Vec<KeyRef>,
     /// Labels referenced with `\ref` and friends.
-    pub references: Vec<String>,
+    pub references: Vec<KeyRef>,
+    /// Keys defined with `\bibitem` (a `thebibliography` environment).
+    pub bibitems: Vec<KeyRef>,
     pub includes: Vec<Include>,
+    /// Folders of `\graphicspath{{a/}{b/}}`, as written.
+    pub graphics_paths: Vec<String>,
     pub commands: Vec<UserCommand>,
     /// User-defined environments and theorem-like environments.
-    pub environments: Vec<String>,
+    pub environments: Vec<KeyRef>,
     /// `\documentclass` — present only in root files.
     pub document_class: Option<String>,
     pub packages: Vec<String>,
@@ -170,18 +193,57 @@ impl<'a> Walk<'a> {
     /// Collect the text of every child named `field` of `node` (handles
     /// lists like `{a,b,c}`).
     fn field_texts(&self, node: Node, field: &str, inner: &str) -> Vec<String> {
+        self.field_items(node, field, inner)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect()
+    }
+
+    /// Like `field_texts`, with the byte range of each trimmed item.
+    fn field_items(&self, node: Node, field: &str, inner: &str) -> Vec<(String, Range<usize>)> {
         let mut out = Vec::new();
         let mut cursor = node.walk();
         for group in node.children_by_field_name(field, &mut cursor) {
             let mut c2 = group.walk();
             for item in group.children_by_field_name(inner, &mut c2) {
-                let t = self.src(item).trim();
+                let raw = self.src(item);
+                let t = raw.trim();
                 if !t.is_empty() {
-                    out.push(t.to_string());
+                    let start = item.start_byte() + (raw.len() - raw.trim_start().len());
+                    out.push((t.to_string(), start..start + t.len()));
                 }
             }
         }
         out
+    }
+
+    /// The trimmed contents of a `{...}` group and their byte range.
+    fn group_item(&self, node: Node) -> (String, Range<usize>) {
+        let raw = self.src(node);
+        let inner = raw.strip_prefix(['{', '[']).unwrap_or(raw);
+        let inner = inner.strip_suffix(['}', ']']).unwrap_or(inner);
+        let offset = node.start_byte() + (raw.len() - raw.trim_start_matches(['{', '[']).len());
+        let t = inner.trim();
+        let start = offset + (inner.len() - inner.trim_start().len());
+        (t.to_string(), start..start + t.len())
+    }
+
+    fn key_refs(&self, node: Node, field: &str, inner: &str) -> Vec<KeyRef> {
+        let command = self.command_name(node);
+        self.field_items(node, field, inner)
+            .into_iter()
+            .map(|(name, range)| KeyRef {
+                name,
+                range,
+                command: command.clone(),
+            })
+            .collect()
+    }
+
+    fn command_name(&self, node: Node) -> String {
+        node.child_by_field_name("command")
+            .map(|c| self.src(c).to_string())
+            .unwrap_or_default()
     }
 
     /// `key[=value]` pairs of a `[...]` options group.
@@ -293,7 +355,9 @@ impl<'a> Walk<'a> {
                 }
             }
             "label_definition" => {
-                if let Some(name) = node.child_by_field_name("name").map(|n| self.group_text(n)) {
+                if let Some((name, range)) =
+                    node.child_by_field_name("name").map(|n| self.group_item(n))
+                {
                     let context = self
                         .env_stack
                         .last()
@@ -302,6 +366,7 @@ impl<'a> Walk<'a> {
                     index.labels.push(Label {
                         name,
                         line: Self::line(node),
+                        range,
                         context,
                     });
                 }
@@ -309,46 +374,48 @@ impl<'a> Walk<'a> {
             "label_reference" => {
                 index
                     .references
-                    .extend(self.field_texts(node, "names", "label"));
+                    .extend(self.key_refs(node, "names", "label"));
             }
             "citation" => {
-                index
-                    .citations
-                    .extend(self.field_texts(node, "keys", "text"));
+                index.citations.extend(self.key_refs(node, "keys", "text"));
             }
             "latex_include" => {
-                for path in self.field_texts(node, "path", "path") {
+                for (path, range) in self.field_items(node, "path", "path") {
                     index.includes.push(Include {
                         kind: IncludeKind::Tex,
                         path,
                         line: Self::line(node),
+                        range,
                     });
                 }
             }
             "bibtex_include" => {
-                for path in self.field_texts(node, "paths", "path") {
+                for (path, range) in self.field_items(node, "paths", "path") {
                     index.includes.push(Include {
                         kind: IncludeKind::Bib,
                         path,
                         line: Self::line(node),
+                        range,
                     });
                 }
             }
             "biblatex_include" => {
-                for path in self.field_texts(node, "glob", "pattern") {
+                for (path, range) in self.field_items(node, "glob", "pattern") {
                     index.includes.push(Include {
                         kind: IncludeKind::Bib,
                         path,
                         line: Self::line(node),
+                        range,
                     });
                 }
             }
             "graphics_include" => {
-                for path in self.field_texts(node, "path", "path") {
+                for (path, range) in self.field_items(node, "path", "path") {
                     index.includes.push(Include {
                         kind: IncludeKind::Graphics,
                         path,
                         line: Self::line(node),
+                        range,
                     });
                 }
             }
@@ -385,16 +452,39 @@ impl<'a> Walk<'a> {
                     .child_by_field_name("command")
                     .map(|c| self.src(c))
                     .unwrap_or_default();
-                if matches!(name, "\\setmainlanguage" | "\\setdefaultlanguage")
-                    && let Some(main) =
-                        polyglossia_language(&self.text[node.start_byte() + name.len()..])
-                {
-                    index.main_language = Some(main);
+                let after = node.start_byte() + name.len();
+                match name {
+                    "\\setmainlanguage" | "\\setdefaultlanguage" => {
+                        if let Some(main) = polyglossia_language(&self.text[after..]) {
+                            index.main_language = Some(main);
+                        }
+                    }
+                    "\\bibitem" => {
+                        if let Some((key, range)) = braced_after_options(self.text, after) {
+                            index.bibitems.push(KeyRef {
+                                name: key.to_string(),
+                                range,
+                                command: name.to_string(),
+                            });
+                        }
+                    }
+                    "\\graphicspath" => {
+                        if let Some((paths, _)) = braced_after_options(self.text, after) {
+                            index.graphics_paths.extend(
+                                paths
+                                    .split(['{', '}'])
+                                    .map(str::trim)
+                                    .filter(|p| !p.is_empty())
+                                    .map(str::to_string),
+                            );
+                        }
+                    }
+                    _ => {}
                 }
             }
             "new_command_definition" | "old_command_definition" | "let_command_definition" => {
                 if let Some(decl) = node.child_by_field_name("declaration") {
-                    let name = self.group_text(decl);
+                    let (name, range) = self.group_item(decl);
                     if name.starts_with('\\') {
                         let argc = node
                             .child_by_field_name("argc")
@@ -404,19 +494,25 @@ impl<'a> Walk<'a> {
                             name,
                             argc,
                             line: Self::line(node),
+                            range,
                         });
                     }
                 }
             }
             "environment_definition" => {
                 if let Some(n) = node.child_by_field_name("name") {
-                    index.environments.push(self.group_text(n));
+                    let (name, range) = self.group_item(n);
+                    index.environments.push(KeyRef {
+                        name,
+                        range,
+                        command: self.command_name(node),
+                    });
                 }
             }
             "theorem_definition" => {
                 index
                     .environments
-                    .extend(self.field_texts(node, "name", "text"));
+                    .extend(self.key_refs(node, "name", "text"));
             }
             _ => {}
         }
@@ -443,6 +539,44 @@ fn polyglossia_language(args: &str) -> Option<MainLanguage> {
         name: name.to_string(),
         variant,
     })
+}
+
+/// The `{...}` argument starting at `from` (after optional `[...]` groups),
+/// trimmed, with its byte range: for commands whose arguments the grammar
+/// does not attach to them.
+fn braced_after_options(text: &str, from: usize) -> Option<(&str, Range<usize>)> {
+    let b = text.as_bytes();
+    let mut i = from;
+    loop {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if b.get(i) == Some(&b'[') {
+            i += text[i..].find(']')? + 1;
+        } else {
+            break;
+        }
+    }
+    if b.get(i) != Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (k, &c) in b.iter().enumerate().skip(i) {
+        match c {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let inner = &text[i + 1..k];
+                    let t = inner.trim();
+                    let start = i + 1 + (inner.len() - inner.trim_start().len());
+                    return (!t.is_empty()).then_some((t, start..start + t.len()));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// First `\caption` directly inside an environment (not in nested floats).
@@ -527,8 +661,9 @@ See \ref{eq:e} and \cite{knuth, lamport}.
                 ("fig:plot", Some("figure")),
             ]
         );
-        assert_eq!(idx.references, vec!["eq:e"]);
-        assert_eq!(idx.citations, vec!["knuth", "lamport"]);
+        let names = |v: &[KeyRef]| v.iter().map(|k| k.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&idx.references), vec!["eq:e"]);
+        assert_eq!(names(&idx.citations), vec!["knuth", "lamport"]);
 
         let cmds: Vec<_> = idx
             .commands
@@ -536,7 +671,7 @@ See \ref{eq:e} and \cite{knuth, lamport}.
             .map(|c| (c.name.as_str(), c.argc))
             .collect();
         assert_eq!(cmds, vec![("\\R", 0), ("\\norm", 1)]);
-        assert_eq!(idx.environments, vec!["theorem"]);
+        assert_eq!(names(&idx.environments), vec!["theorem"]);
 
         let inc: Vec<_> = idx
             .includes
@@ -550,6 +685,29 @@ See \ref{eq:e} and \cite{knuth, lamport}.
                 (&IncludeKind::Bib, "refs")
             ]
         );
+    }
+
+    #[test]
+    fn records_positions() {
+        let idx = Index::from_text(DOC);
+        let at = |r: &Range<usize>| &DOC[r.clone()];
+        assert_eq!(at(&idx.labels[0].range), "sec:intro");
+        assert_eq!(at(&idx.references[0].range), "eq:e");
+        assert_eq!(idx.references[0].command, "\\ref");
+        assert_eq!(at(&idx.citations[1].range), "lamport");
+        assert_eq!(idx.citations[1].command, "\\cite");
+        assert_eq!(at(&idx.includes[0].range), "chapters/a");
+        assert_eq!(at(&idx.commands[1].range), "\\norm");
+        assert_eq!(at(&idx.environments[0].range), "theorem");
+    }
+
+    #[test]
+    fn finds_bibitems_and_graphics_paths() {
+        let src = "\\graphicspath{{img/}{ fig/ }}\n\\begin{thebibliography}{9}\n\\bibitem{knuth} K.\n\\bibitem[L]{ lamport } L.\n\\end{thebibliography}";
+        let idx = Index::from_text(src);
+        assert_eq!(idx.graphics_paths, vec!["img/", "fig/"]);
+        let keys: Vec<_> = idx.bibitems.iter().map(|k| &src[k.range.clone()]).collect();
+        assert_eq!(keys, vec!["knuth", "lamport"]);
     }
 
     #[test]

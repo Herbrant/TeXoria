@@ -62,8 +62,13 @@ impl Project {
     }
 
     /// Re-index `path` from an in-memory buffer (the editor's unsaved text),
-    /// pulling in any newly referenced files from disk.
+    /// pulling in any newly referenced files from disk. A bibliography of
+    /// the project is re-parsed instead.
     pub fn update(&mut self, path: &Path, text: &str) {
+        if let Some(entries) = self.bibs.get_mut(path) {
+            *entries = bib::parse(text);
+            return;
+        }
         let index = Index::from_text(text);
         let includes = index.includes.clone();
         self.files.insert(path.to_path_buf(), index);
@@ -129,6 +134,16 @@ impl Project {
         self.bibs.values().flatten()
     }
 
+    /// Each bibliography of the project (existing or not) with its entries.
+    pub fn bib_files(&self) -> impl Iterator<Item = (&Path, &[BibEntry])> {
+        self.bibs.iter().map(|(p, e)| (p.as_path(), e.as_slice()))
+    }
+
+    /// Indexed `.tex` files with their index, in no particular order.
+    pub fn indexes(&self) -> impl Iterator<Item = (&Path, &Index)> {
+        self.files.iter().map(|(p, i)| (p.as_path(), i))
+    }
+
     pub fn commands(&self) -> impl Iterator<Item = &UserCommand> {
         self.files.values().flat_map(|i| i.commands.iter())
     }
@@ -136,7 +151,7 @@ impl Project {
     pub fn environments(&self) -> impl Iterator<Item = &str> {
         self.files
             .values()
-            .flat_map(|i| i.environments.iter().map(String::as_str))
+            .flat_map(|i| i.environments.iter().map(|e| e.name.as_str()))
     }
 
     pub fn packages(&self) -> impl Iterator<Item = &str> {
