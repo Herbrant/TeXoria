@@ -462,6 +462,50 @@ fn worth_checking(word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{latex, valid_ranges};
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn words_and_runs_are_slices_of_the_text(doc in latex()) {
+            let tree = tex_syntax::parse(&doc, None).unwrap();
+            let words = words(&tree, &doc);
+            valid_ranges(&doc, &words).map_err(TestCaseError::fail)?;
+            // Words never overlap.
+            prop_assert!(words.windows(2).all(|w| w[0].end <= w[1].start), "{words:?}");
+            for w in &words {
+                prop_assert!(worth_checking(&doc[w.clone()]));
+            }
+            valid_ranges(&doc, &prose_runs(&tree, &doc)).map_err(TestCaseError::fail)?;
+            let counts = count(&tree, &doc);
+            // Counting keeps the numbers and single letters the checker skips.
+            prop_assert!(counts.words() >= words.len());
+            prop_assert_eq!(prose(&doc, &words).split(' ').filter(|w| !w.is_empty()).count(),
+                words.len());
+        }
+    }
+
+    #[test]
+    fn counts_neither_the_preamble_nor_comments() {
+        let doc = "\\documentclass{article}\n\\foo{preambolo} libero $p$\n\\title{Il titolo}\n\
+                   \\begin{document}\n\\section{Uno}\nDopo il titolo. % non contato\n\
+                   \\end{document}\n";
+        let tree = tex_syntax::parse(doc, None).unwrap();
+        assert_eq!(
+            count(&tree, doc),
+            Counts {
+                text: 3,
+                headers: 3,
+                ..Counts::default()
+            }
+        );
+        let mut total = Counts {
+            inline_math: 1,
+            ..Counts::default()
+        };
+        total.add(&count(&tree, doc));
+        assert_eq!((total.words(), total.inline_math), (6, 1));
+    }
 
     #[test]
     fn counts_words_and_formulas() {

@@ -112,6 +112,54 @@ pub fn detect(c: &Clues) -> Detection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn magic_comments_never_panic(text in "(%[ %\t]*(!TeX spellcheck ?= ?)?\\PC{0,16}\n){0,4}") {
+            if let Some(code) = magic_comment(&text) {
+                prop_assert!(catalog::get(code).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn magic_comments_are_in_the_first_lines_only() {
+        assert_eq!(magic_comment("% !TeX spellcheck de_DE"), None);
+        assert_eq!(magic_comment("% é!TeX spellcheck = de_DE"), None);
+        assert_eq!(magic_comment("% !TeX spellcheck="), None);
+        let late = format!("{}% !TeX spellcheck = de_DE\n", "\n".repeat(20));
+        assert_eq!(magic_comment(&late), None);
+        assert_eq!(magic_comment(&late[1..]), Some("de"));
+    }
+
+    #[test]
+    fn recognizes_long_text_cut_inside_a_character() {
+        // The cut at MAX_PROSE falls inside a two-byte `è`.
+        let prose = (0..200)
+            .map(|pad| {
+                format!(
+                    "{}{}",
+                    " ".repeat(pad),
+                    format!("{ITALIAN} perché è così ").repeat(MAX_PROSE / 100)
+                )
+            })
+            .find(|p| !p.is_char_boundary(MAX_PROSE))
+            .unwrap();
+        assert_eq!(recognize(&prose, None), Some("it"));
+    }
+
+    #[test]
+    fn declared_variants_fall_back_to_the_language() {
+        // An unknown variant: the language itself.
+        let idx = Index::from_text("\\setmainlanguage[variant=martian]{german}");
+        assert_eq!(declared(&idx), Some("de"));
+        // A variant that is a language of its own.
+        let idx = Index::from_text("\\setmainlanguage[variant=british]{klingonese}");
+        assert_eq!(declared(&idx), Some("en-GB"));
+        let idx = Index::from_text("\\setmainlanguage{klingonese}\n\\usepackage[italian]{babel}");
+        assert_eq!(declared(&idx), Some("it"));
+    }
 
     const ITALIAN: &str = "Questo documento descrive il funzionamento del sistema e le scelte \
         progettuali che hanno guidato lo sviluppo del programma negli ultimi anni.";

@@ -219,6 +219,37 @@ pub fn detectable() -> Vec<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn resolving_never_panics(text in "\\PC{0,16}", region in "\\PC{0,3}") {
+            if let Some(code) = resolve(&text) {
+                prop_assert!(get(code).is_some());
+            }
+            if let Some(code) = alias(&text) {
+                prop_assert_eq!(resolve(&text), Some(code));
+            }
+            prop_assert_eq!(name(&text), get(&text).map_or(text.as_str(), |l| l.name));
+            for lang in detectable() {
+                let code = for_detected(lang, Some(&region)).unwrap();
+                prop_assert_eq!(get(code).unwrap().detect, Some(lang));
+            }
+        }
+    }
+
+    #[test]
+    fn names_and_detectable_languages() {
+        assert_eq!(name("it"), "Italiano");
+        assert_eq!(name("xx-unknown"), "xx-unknown");
+        assert_eq!(hashes("xx"), None);
+        let langs = detectable();
+        assert!(langs.contains(&W::Eng) && langs.contains(&W::Ita));
+        let mut sorted = langs.clone();
+        sorted.dedup();
+        assert_eq!(sorted, langs, "no duplicates");
+        assert!(langs.windows(2).all(|w| w[0].code() < w[1].code()));
+    }
 
     #[test]
     fn every_language_is_pinned_and_vice_versa() {

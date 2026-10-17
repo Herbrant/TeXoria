@@ -417,6 +417,77 @@ pub fn validate_url(url: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::latex;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn utf16_offsets_round_trip(s in "\\PC{0,24}") {
+            let mut units = 0;
+            for (i, c) in s.char_indices() {
+                prop_assert_eq!(utf16_to_byte(&s, units), Some(i));
+                if c.len_utf16() == 2 {
+                    // Between the two halves of a surrogate pair.
+                    prop_assert_eq!(utf16_to_byte(&s, units + 1), None);
+                }
+                units += c.len_utf16();
+            }
+            prop_assert_eq!(utf16_to_byte(&s, units), Some(s.len()));
+            prop_assert_eq!(utf16_to_byte(&s, units + 1), None);
+        }
+
+        #[test]
+        fn pieces_cover_the_source(doc in latex()) {
+            let tree = tex_syntax::parse(&doc, None).unwrap();
+            let pieces = annotate(&tree, &doc);
+            let mut at = 0;
+            for p in &pieces {
+                prop_assert_eq!(p.range.start, at, "{:?}", pieces);
+                prop_assert!(p.range.end > p.range.start);
+                prop_assert!(doc.get(p.range.clone()).is_some());
+                at = p.range.end;
+            }
+            prop_assert_eq!(at, doc.len());
+
+            // Chunks keep the pieces in order, and every piece of prose.
+            let prose: Vec<_> = pieces.iter().filter(|p| p.interpret.is_none()).cloned().collect();
+            let chunks = chunks(&doc, pieces.clone());
+            let flat: Vec<Piece> = chunks.iter().flatten().cloned().collect();
+            prop_assert!(flat.windows(2).all(|w| w[0].range.end == w[1].range.start)
+                || chunks.len() > 1);
+            for c in &chunks {
+                prop_assert!(c.windows(2).all(|w| w[0].range.end == w[1].range.start));
+                prop_assert!(c.iter().any(|p| p.interpret.is_none()));
+            }
+            let kept: Vec<_> = flat.into_iter().filter(|p| p.interpret.is_none()).collect();
+            prop_assert_eq!(kept, prose);
+        }
+    }
+
+    #[test]
+    fn documents_without_prose_have_no_chunks() {
+        for doc in [
+            "",
+            "$x$",
+            "\\foo{} % only markup\n",
+            "\\begin{tikzpicture}\\end{tikzpicture}",
+        ] {
+            let tree = tex_syntax::parse(doc, None).unwrap();
+            assert!(chunks(doc, annotate(&tree, doc)).is_empty(), "{doc:?}");
+        }
+    }
+
+    #[test]
+    fn trailing_markup_stays_with_the_last_chunk() {
+        let para = "Some words here and there. ".repeat(500);
+        let doc = format!("{para}\n\n$y$ \\cite{{k}}");
+        let tree = tex_syntax::parse(&doc, None).unwrap();
+        let chunks = chunks(&doc, annotate(&tree, &doc));
+        // The blank line is in the markup between the prose runs: no chunk of
+        // markup alone is left over.
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].last().unwrap().range.end, doc.len());
+    }
 
     fn pieces(doc: &str) -> Vec<(String, Option<String>)> {
         let tree = tex_syntax::parse(doc, None).unwrap();
@@ -471,6 +542,11 @@ mod tests {
         assert_eq!(pick_language("es-AR", &supported).as_deref(), Some("es"));
         assert_eq!(pick_language("it", &supported).as_deref(), Some("it"));
         assert_eq!(pick_language("fi", &supported), None);
+        // Any variant of the language, as a last resort.
+        assert_eq!(pick_language("pt", &supported).as_deref(), Some("pt-PT"));
+        let dutch = vec!["nl-BE".to_string()];
+        assert_eq!(pick_language("nl-NL", &dutch).as_deref(), Some("nl-BE"));
+        assert_eq!(pick_language("EN-us", &supported).as_deref(), Some("EN-us"));
     }
 
     #[test]
@@ -542,6 +618,187 @@ mod tests {
         for bad in ["localhost:8081", "ftp://x", "", "HTTP:/x"] {
             let e = validate_url(bad).unwrap_err();
             assert!(e.to_string().contains("is not an http(s) URL"), "{e}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod server_tests {
+    use super::*;
+    use test_support::http::{Request, Response as Answer, serve, serve_paths};
+
+    /// The fields of a form-encoded body.
+    fn form(req: &Request) -> Vec<(String, String)> {
+        let decode = |s: &str| {
+            let s = s.replace('+', " ");
+            let (mut out, b) = (Vec::new(), s.as_bytes());
+            let mut i = 0;
+            while i < b.len() {
+                if b[i] == b'%' {
+                    out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap());
+                    i += 3;
+                } else {
+                    out.push(b[i]);
+                    i += 1;
+                }
+            }
+            String::from_utf8(out).unwrap()
+        };
+        std::str::from_utf8(&req.body)
+            .unwrap()
+            .split('&')
+            .map(|kv| {
+                let (k, v) = kv.split_once('=').unwrap();
+                (decode(k), decode(v))
+            })
+            .collect()
+    }
+
+    fn field(fields: &[(String, String)], name: &str) -> Option<String> {
+        fields
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+    }
+
+    #[test]
+    fn lists_the_server_languages() {
+        let server = serve_paths(vec![(
+            "/v2/languages",
+            Answer::ok(
+                r#"[{"name":"English (US)","code":"en","longCode":"en-US"},
+                    {"name":"Italian","code":"it","longCode":"it"}]"#,
+            ),
+        )]);
+        let lt = Server::new(&format!("{}/", server.url()));
+        assert_eq!(lt.url(), server.url());
+        assert_eq!(lt.languages().unwrap(), ["en-US", "it"]);
+        assert_eq!(server.requests()[0].method, "GET");
+    }
+
+    #[test]
+    fn languages_fail_on_errors_and_garbage() {
+        let down = serve(|_| Answer::status(503));
+        let e = Server::new(down.url()).languages().unwrap_err();
+        assert!(format!("{e:#}").contains("does not answer"), "{e:#}");
+        let garbage = serve(|_| Answer::ok("<html>not json</html>"));
+        assert!(Server::new(garbage.url()).languages().is_err());
+        // Nothing listens there.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        assert!(
+            Server::new(&format!("http://127.0.0.1:{port}"))
+                .languages()
+                .is_err()
+        );
+    }
+
+    /// A document of two paragraphs, and the pieces of the second one.
+    fn second_paragraph(doc: &str) -> Vec<Piece> {
+        let tree = tex_syntax::parse(doc, None).unwrap();
+        let start = doc.find("\n\n").unwrap() + 2;
+        annotate(&tree, doc)
+            .into_iter()
+            .filter(|p| p.range.start >= start)
+            .collect()
+    }
+
+    #[test]
+    fn maps_findings_back_to_the_source() {
+        let doc = "Uno.\n\nDue 𝕏 erore $x$ fine.";
+        let chunk = second_paragraph(doc);
+        assert_eq!(chunk[0].range.start, 6);
+        let replacements: Vec<_> = (0..10).map(|i| format!(r#"{{"value":"r{i}"}}"#)).collect();
+        let body = format!(
+            r#"{{"software":{{"name":"LanguageTool"}},"matches":[
+                {{"message":"Typo","offset":7,"length":5,"replacements":[{}],
+                  "rule":{{"id":"MORFOLOGIK","issueType":"misspelling"}}}},
+                {{"message":"Inside a surrogate pair","offset":5,"length":1,
+                  "rule":{{"id":"X"}}}},
+                {{"message":"Past the end","offset":20,"length":9,"rule":{{"id":"Y"}}}},
+                {{"message":"Whole","offset":0,"length":3,"replacements":[],
+                  "rule":{{"id":"Z","issueType":"style"}}}}
+            ]}}"#,
+            replacements.join(",")
+        );
+        let server = serve_paths(vec![("/v2/check", Answer::ok(body))]);
+        let lt = Server::new(server.url());
+        let found = lt.check(doc, &chunk, "it", &[]).unwrap();
+        assert_eq!(found.len(), 2, "{found:#?}");
+        assert_eq!(&doc[found[0].range.clone()], "erore");
+        assert_eq!(found[0].message, "Typo");
+        assert_eq!(found[0].rule, "MORFOLOGIK");
+        assert_eq!(found[0].issue_type, "misspelling");
+        assert_eq!(found[0].replacements, ["r0", "r1", "r2", "r3", "r4", "r5"]);
+        assert_eq!(&doc[found[1].range.clone()], "Due");
+        assert_eq!(found[1].issue_type, "style");
+
+        let req = &server.requests()[0];
+        assert_eq!(req.method, "POST");
+        let fields = form(req);
+        assert_eq!(field(&fields, "language").as_deref(), Some("it"));
+        assert_eq!(field(&fields, "disabledRules"), None);
+        let data: serde_json::Value =
+            serde_json::from_str(&field(&fields, "data").unwrap()).unwrap();
+        let annotation = data["annotation"].as_array().unwrap();
+        // Only the chunk, starting with its prose.
+        assert_eq!(annotation[0]["text"], "Due 𝕏 erore");
+        assert!(
+            annotation
+                .iter()
+                .any(|a| a["markup"] == " $x$ " && a["interpretAs"] == " X ")
+        );
+    }
+
+    #[test]
+    fn sends_the_disabled_rules() {
+        let server = serve(|_| Answer::ok(r#"{"matches":[]}"#));
+        let lt = Server::new(server.url());
+        let doc = "Uno.\n\nDue.";
+        let disabled = [
+            "WHITESPACE_RULE".to_string(),
+            "COMMA_PARENTHESIS".to_string(),
+        ];
+        assert!(
+            lt.check(doc, &second_paragraph(doc), "en-US", &disabled)
+                .unwrap()
+                .is_empty()
+        );
+        let fields = form(&server.requests()[0]);
+        assert_eq!(
+            field(&fields, "disabledRules").as_deref(),
+            Some("WHITESPACE_RULE,COMMA_PARENTHESIS")
+        );
+        // An empty chunk asks nothing.
+        assert!(lt.check(doc, &[], "en-US", &disabled).unwrap().is_empty());
+        assert_eq!(server.requests().len(), 1);
+    }
+
+    #[test]
+    fn check_fails_on_errors_and_garbage() {
+        let doc = "Uno.\n\nDue.";
+        let chunk = second_paragraph(doc);
+        let busy = serve(|_| Answer::status(429).body("Too many requests"));
+        let e = Server::new(busy.url())
+            .check(doc, &chunk, "it", &[])
+            .unwrap_err();
+        assert!(format!("{e:#}").contains(busy.url()), "{e:#}");
+        for body in [
+            "not json",
+            r#"{"no":"matches"}"#,
+            r#"{"matches":[{"offset":1}]}"#,
+        ] {
+            let bad = serve(move |_| Answer::ok(body));
+            let e = Server::new(bad.url())
+                .check(doc, &chunk, "it", &[])
+                .unwrap_err();
+            assert!(
+                format!("{e:#}").contains("reading LanguageTool's answer"),
+                "{e:#}"
+            );
         }
     }
 }

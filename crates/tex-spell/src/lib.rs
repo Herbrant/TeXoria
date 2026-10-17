@@ -11,6 +11,8 @@ pub mod grammar;
 pub mod lang;
 mod repair;
 pub mod store;
+#[cfg(test)]
+mod testing;
 
 pub use checker::Speller;
 pub use lang::{Detection, Source};
