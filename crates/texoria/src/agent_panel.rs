@@ -763,7 +763,7 @@ impl AgentPanel {
             }
             let abs = dir.join(&c.path);
             let result = match (c.kind, cp.original(&c.path)) {
-                (ChangeKind::Added, _) => std::fs::remove_file(&abs),
+                (ChangeKind::Added, _) => remove_added(&dir, &abs),
                 (_, Some(bytes)) => restore(&dir, &abs, bytes),
                 (_, None) => continue,
             };
@@ -1843,15 +1843,30 @@ fn writable(dir: &Path, path: &Path) -> Result<(), String> {
             dir.display()
         ));
     }
-    let name = path.file_name().unwrap_or_default();
-    if RUNS_PROGRAMS.iter().any(|n| name.eq_ignore_ascii_case(n)) {
-        return Err(format!(
-            "TeXoria does not let agents write {}, which runs programs when building: \
-             ask the user to change it",
-            name.to_string_lossy()
-        ));
+    // The file a link leads to is the one written.
+    let resolved = std::fs::canonicalize(path).ok();
+    for name in [Some(path), resolved.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter_map(Path::file_name)
+    {
+        if runs_programs(&name.to_string_lossy()) {
+            return Err(format!(
+                "TeXoria does not let agents write {}, which runs programs when building: \
+                 ask the user to change it",
+                name.to_string_lossy()
+            ));
+        }
     }
     Ok(())
+}
+
+/// Whether writing the file `name` writes one of [`RUNS_PROGRAMS`], also as Windows reads
+/// names: without trailing dots and spaces, and `name:stream` for `name`.
+fn runs_programs(name: &str) -> bool {
+    let name = name.split(':').next().unwrap_or_default();
+    let name = name.trim_end_matches(['.', ' ']);
+    RUNS_PROGRAMS.iter().any(|n| name.eq_ignore_ascii_case(n))
 }
 
 /// Put `bytes` back at `abs`, a file of the project. A link the agent put
@@ -1870,6 +1885,15 @@ fn restore(dir: &Path, abs: &Path, bytes: &[u8]) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     atomic::write(abs, bytes)
+}
+
+/// Remove `abs`, a file an agent added to the project in `dir`: a link itself, not what it
+/// points to, and nothing through a folder that now leads out of the project.
+fn remove_added(dir: &Path, abs: &Path) -> std::io::Result<()> {
+    if !abs.parent().is_some_and(|parent| inside(dir, parent)) {
+        return Err(std::io::Error::other("it is no longer inside the project"));
+    }
+    std::fs::remove_file(abs)
 }
 
 /// Whether `path` is inside `dir` (once resolved, for what exists of it),
@@ -1907,38 +1931,44 @@ fn inside(dir: &Path, path: &Path) -> bool {
 
 /// Agents read through TeXoria what is in the project, like they write.
 fn read_file(dir: &Path, req: acp::ReadTextFileRequest, reply: Reply<acp::ReadTextFileResponse>) {
-    if !inside(dir, &req.path) {
-        return reply.err(RpcError::new(
-            RpcError::NOT_FOUND,
-            format!(
-                "TeXoria only lets agents read files of the project ({})",
-                dir.display()
-            ),
+    match read_text(dir, &req.path, req.line, req.limit) {
+        Ok(content) => reply.ok(acp::ReadTextFileResponse::new(content)),
+        Err(e) => reply.err(RpcError::new(RpcError::NOT_FOUND, e)),
+    }
+}
+
+/// The text of `path`, a file of the project in `dir`, from its 1-based `line` and at most
+/// `limit` lines.
+fn read_text(
+    dir: &Path,
+    path: &Path,
+    line: Option<u32>,
+    limit: Option<u32>,
+) -> Result<String, String> {
+    if !inside(dir, path) {
+        return Err(format!(
+            "TeXoria only lets agents read files of the project ({})",
+            dir.display()
         ));
     }
-    let text = match std::fs::metadata(&req.path) {
+    let bytes = match std::fs::metadata(path) {
         Ok(m) if m.is_file() && m.len() > files::MAX_TEXT_BYTES => Err(std::io::Error::other(
             format!("the file is too large ({} MB)", m.len() >> 20),
         )),
-        Ok(m) if m.is_file() => std::fs::read(&req.path),
+        Ok(m) if m.is_file() => std::fs::read(path),
         Ok(_) => Err(std::io::Error::other("not a regular file")),
         Err(e) => Err(e),
-    };
-    match text {
-        Ok(bytes) => {
-            let text = String::from_utf8_lossy(&bytes);
-            let content = match (req.line, req.limit) {
-                (None, None) => text.into_owned(),
-                (line, limit) => {
-                    let skip = line.unwrap_or(1).saturating_sub(1) as usize;
-                    let take = limit.map_or(usize::MAX, |l| l as usize);
-                    text.split_inclusive('\n').skip(skip).take(take).collect()
-                }
-            };
-            reply.ok(acp::ReadTextFileResponse::new(content));
-        }
-        Err(e) => reply.err(RpcError::new(RpcError::NOT_FOUND, e.to_string())),
     }
+    .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(match (line, limit) {
+        (None, None) => text.into_owned(),
+        (line, limit) => {
+            let skip = line.unwrap_or(1).saturating_sub(1) as usize;
+            let take = limit.map_or(usize::MAX, |l| l as usize);
+            text.split_inclusive('\n').skip(skip).take(take).collect()
+        }
+    })
 }
 
 /// What a tool produced, shortened for the chat.
@@ -1990,8 +2020,97 @@ fn detail(content: &[acp::ToolCallContent]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detail, inside, writable};
+    use super::{detail, inside, read_text, remove_added, writable};
     use tex_agent::acp;
+
+    #[test]
+    fn rc_files_are_refused_under_any_spelling() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = std::fs::canonicalize(dir.path()).unwrap();
+        // Windows drops trailing dots and spaces, and `name:stream` writes to `name`.
+        for name in [
+            "latexmkrc.",
+            "latexmkrc ",
+            "LatexMkRc. .",
+            "latexmkrc::$DATA",
+            ".latexmkrc:x",
+        ] {
+            assert!(writable(&d, &d.join(name)).is_err(), "{name:?}");
+        }
+        assert!(writable(&d, &d.join("latexmkrc.tex")).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rc_files_are_refused_through_a_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(d.join("latexmkrc"), "").unwrap();
+        std::os::unix::fs::symlink(d.join("latexmkrc"), d.join("notes.tex")).unwrap();
+        assert!(writable(&d, &d.join("notes.tex")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn undo_removes_added_files_only_inside_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let d = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(outside.path().join("new.tex"), "theirs").unwrap();
+        // The folder of an added file replaced by a link that leads out of the project.
+        std::os::unix::fs::symlink(outside.path(), d.join("ch")).unwrap();
+        assert!(remove_added(&d, &d.join("ch/new.tex")).is_err());
+        assert!(outside.path().join("new.tex").exists());
+
+        // An added link is removed itself, never what it points to.
+        std::os::unix::fs::symlink(outside.path().join("new.tex"), d.join("link.tex")).unwrap();
+        remove_added(&d, &d.join("link.tex")).unwrap();
+        assert!(outside.path().join("new.tex").exists());
+        std::fs::write(d.join("added.tex"), "").unwrap();
+        remove_added(&d, &d.join("added.tex")).unwrap();
+        assert!(!d.join("added.tex").exists());
+    }
+
+    #[test]
+    fn reads_only_project_text_and_slices_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(d.join("main.tex"), "one\ntwo\nthree\n").unwrap();
+        let main = d.join("main.tex");
+        assert_eq!(
+            read_text(&d, &main, None, None).unwrap(),
+            "one\ntwo\nthree\n"
+        );
+        assert_eq!(read_text(&d, &main, Some(2), None).unwrap(), "two\nthree\n");
+        assert_eq!(read_text(&d, &main, Some(2), Some(1)).unwrap(), "two\n");
+        // Lines count from 1; 0 reads from the start too.
+        assert_eq!(read_text(&d, &main, Some(0), Some(1)).unwrap(), "one\n");
+        assert_eq!(read_text(&d, &main, Some(9), None).unwrap(), "");
+        assert!(read_text(&d, &d.join("missing.tex"), None, None).is_err());
+        assert!(read_text(&d, &d, None, None).is_err(), "a folder");
+        std::fs::create_dir(d.join(".git")).unwrap();
+        std::fs::write(d.join(".git/config"), "secret").unwrap();
+        assert!(read_text(&d, &d.join(".git/config"), None, None).is_err());
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("x.tex"), "theirs").unwrap();
+        assert!(read_text(&d, &outside.path().join("x.tex"), None, None).is_err());
+        // Not UTF-8: read anyway, with replacement characters.
+        std::fs::write(d.join("latin1.tex"), b"caf\xe9").unwrap();
+        assert_eq!(
+            read_text(&d, &d.join("latin1.tex"), None, None).unwrap(),
+            "caf\u{fffd}"
+        );
+    }
+
+    #[test]
+    fn large_files_are_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = std::fs::canonicalize(dir.path()).unwrap();
+        let big = std::fs::File::create(d.join("big.tex")).unwrap();
+        big.set_len(tex_project::files::MAX_TEXT_BYTES + 1).unwrap();
+        let e = read_text(&d, &d.join("big.tex"), None, None).unwrap_err();
+        assert!(e.contains("too large"), "{e}");
+    }
 
     #[test]
     fn writes_stay_in_the_project() {
