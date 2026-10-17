@@ -160,6 +160,14 @@ fn indents() {
 }
 
 #[test]
+fn indents_up_to_a_multibyte_end() {
+    // The range ends after a multibyte character: its last line is found from that character.
+    assert_eq!(run("a\n|é", ">k"), "  |a\n  é");
+    assert_eq!(run("|a\n  é", "<j"), "|a\né");
+    assert_eq!(run("|aé", "v$>"), "  |aé");
+}
+
+#[test]
 fn repeats_changes() {
     assert_eq!(run("|a b c d", "dw."), "|c d");
     assert_eq!(run("|a b c", "dw2."), "|");

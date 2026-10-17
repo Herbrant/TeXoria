@@ -628,7 +628,7 @@ impl Vim {
                 ]
             }
             '>' | '<' => {
-                let range = lines(t, range.start, range.end.saturating_sub(1).max(range.start));
+                let range = lines(t, range.start, prev_char(t, range.end).max(range.start));
                 let block = &t[range.clone()];
                 let new: String = block
                     .split_inclusive('\n')
