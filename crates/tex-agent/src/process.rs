@@ -9,6 +9,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 /// How long the login shell may take to report its `PATH`.

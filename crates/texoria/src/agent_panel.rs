@@ -2001,7 +2001,7 @@ fn detail(content: &[acp::ToolCallContent]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detail, inside, restore, writable};
+    use super::{detail, inside, writable};
     use tex_agent::acp;
 
     #[test]
@@ -2031,7 +2031,7 @@ mod tests {
         let target = outside.path().join("victim.txt");
         std::fs::write(&target, "theirs").unwrap();
         std::os::unix::fs::symlink(&target, d.join("main.tex")).unwrap();
-        restore(&d, &d.join("main.tex"), b"mine").unwrap();
+        super::restore(&d, &d.join("main.tex"), b"mine").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"theirs");
         assert_eq!(std::fs::read(d.join("main.tex")).unwrap(), b"mine");
         assert!(!d.join("main.tex").symlink_metadata().unwrap().is_symlink());

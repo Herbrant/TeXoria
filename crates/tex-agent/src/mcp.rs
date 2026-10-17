@@ -273,14 +273,17 @@ mod tests {
     fn exchange(server: &Server, token: &str, messages: &[Value]) -> Vec<Value> {
         let stream = TcpStream::connect(server.addr).unwrap();
         let mut w = stream.try_clone().unwrap();
-        w.write_all(format!("{token}\n").as_bytes()).unwrap();
+        // A refused connection is closed with these still unread: writing
+        // and reading may then fail (a reset), which ends the exchange.
+        let _ = w.write_all(format!("{token}\n").as_bytes());
         for m in messages {
-            w.write_all(format!("{m}\n").as_bytes()).unwrap();
+            let _ = w.write_all(format!("{m}\n").as_bytes());
         }
-        w.shutdown(std::net::Shutdown::Write).unwrap();
+        let _ = w.shutdown(std::net::Shutdown::Write);
         BufReader::new(stream)
             .lines()
-            .map(|l| serde_json::from_str(&l.unwrap()).unwrap())
+            .map_while(Result::ok)
+            .map(|l| serde_json::from_str(&l).unwrap())
             .collect()
     }
 
