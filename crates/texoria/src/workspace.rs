@@ -1457,13 +1457,21 @@ impl Workspace {
                 query,
                 replacement,
                 files,
-            } => self.confirm_replace_all(
-                query.clone(),
-                replacement.clone(),
-                files.clone(),
-                window,
-                cx,
-            ),
+                truncated,
+            } => {
+                let files = self.replace_targets(files, *truncated);
+                let (query, replacement) = (query.clone(), replacement.clone());
+                self.confirm_replace_all(query, replacement, files, *truncated, window, cx)
+            }
+        }
+    }
+
+    /// The files Replace All goes through: the search's, unless it stopped before the end
+    /// (there are matches it does not list), then every text file of the project.
+    fn replace_targets(&self, found: &[PathBuf], truncated: bool) -> Vec<PathBuf> {
+        match self.project_dir() {
+            Some(dir) if truncated => tex_project::search::text_files(&dir),
+            _ => found.to_vec(),
         }
     }
 
@@ -1472,6 +1480,7 @@ impl Workspace {
         query: tex_project::search::Query,
         replacement: String,
         files: Vec<PathBuf>,
+        truncated: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1486,12 +1495,21 @@ impl Workspace {
             .iter()
             .filter(|f| !self.buffers.iter().any(|b| &b.path == *f))
             .count();
+        let place = if truncated {
+            // The search stopped early: Replace All goes through every file.
+            format!(
+                "the project (there are more matches than the search lists: its {} text file{} \
+                 are all searched)",
+                files.len(),
+                plural(files.len())
+            )
+        } else {
+            format!("{} file{}", files.len(), plural(files.len()))
+        };
         let message = format!(
-            "Replace every match of “{}” with “{}” in {} file{}?{}",
+            "Replace every match of “{}” with “{}” in {place}?{}",
             query.text,
             replacement,
-            files.len(),
-            plural(files.len()),
             if closed > 0 {
                 " Files that are not open are written directly: only Git can undo that."
             } else {

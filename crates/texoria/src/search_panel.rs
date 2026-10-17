@@ -35,11 +35,13 @@ pub enum SearchPanelEvent {
         path: PathBuf,
         range: Range<usize>,
     },
-    /// Replace every match of `query` in `files`.
+    /// Replace every match of `query` in `files`, or in every file of the project when the
+    /// search stopped before the end (`truncated`).
     ReplaceAll {
         query: Query,
         replacement: String,
         files: Vec<PathBuf>,
+        truncated: bool,
     },
 }
 
@@ -219,6 +221,7 @@ impl SearchPanel {
             query,
             replacement,
             files,
+            truncated: self.results.truncated,
         });
     }
 

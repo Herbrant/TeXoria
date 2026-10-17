@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use gpui_kit::TestAppContext;
+use gpui_kit::{Entity, TestAppContext, WindowHandle, base::Root};
 
 use super::*;
-use crate::testing;
+use crate::{paths, testing};
 // `super::*` brings gpui's `test` attribute, which would shadow the standard one, and
 // gpui-kit's `gpui` alias, which the `#[gpui::test]` macro's paths must not find twice.
 use core::prelude::v1::test;
@@ -90,5 +90,74 @@ fn opens_a_project_folder(cx: &mut TestAppContext) {
         assert_eq!(ws.buffers[ws.active].path, main);
         let titles: Vec<_> = ws.outline.iter().map(|i| i.item.title.as_str()).collect();
         assert!(titles.contains(&"Introduction"), "{titles:?}");
+    });
+}
+
+/// The sample project opened on `main.tex`, in a temporary copy.
+fn sample(cx: &mut TestAppContext) -> (tempfile::TempDir, WindowHandle<Root>, Entity<Workspace>) {
+    let dir = testing::fixture_copy("sample");
+    let (window, workspace) =
+        testing::open(cx, Some(dir.path().join("main.tex")), testing::startup());
+    (dir, window, workspace)
+}
+
+fn query(text: &str) -> tex_project::search::Query {
+    tex_project::search::Query {
+        text: text.into(),
+        case_sensitive: true,
+        whole_word: false,
+        regex: false,
+    }
+}
+
+#[gpui::test]
+fn replace_all_edits_open_buffers_and_writes_the_others(cx: &mut TestAppContext) {
+    let (dir, window, workspace) = sample(cx);
+    let main = paths::canonical(&dir.path().join("main.tex"));
+    let methods = paths::canonical(&dir.path().join("chapters/methods.tex"));
+    let before = std::fs::read_to_string(&methods).unwrap();
+    assert!(before.contains("sec:"), "the fixture changed");
+    cx.update_window(window.into(), |_, window, cx| {
+        workspace.update(cx, |ws, cx| {
+            ws.replace_all(
+                &query("sec:"),
+                "s:",
+                &[main.clone(), methods.clone()],
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    workspace.read_with(cx, |ws, cx| {
+        let b = ws.buffers.iter().find(|b| b.path == main).unwrap();
+        let text = b.editor.read(cx).text().to_string();
+        assert!(
+            !text.contains("sec:") && text.contains("\\label{s:intro}"),
+            "{text}"
+        );
+        // In the editor, not saved: it can be undone.
+        assert_ne!(std::fs::read_to_string(&main).unwrap(), text);
+    });
+    assert_eq!(
+        std::fs::read_to_string(&methods).unwrap(),
+        before.replace("sec:", "s:")
+    );
+}
+
+#[gpui::test]
+fn replace_all_goes_through_every_file_when_the_search_stopped(cx: &mut TestAppContext) {
+    let (dir, _, workspace) = sample(cx);
+    let main = paths::canonical(&dir.path().join("main.tex"));
+    workspace.read_with(cx, |ws, _| {
+        assert_eq!(
+            ws.replace_targets(std::slice::from_ref(&main), false),
+            [main.clone()]
+        );
+        let all = ws.replace_targets(std::slice::from_ref(&main), true);
+        for f in ["main.tex", "refs.bib", "chapters/methods.tex"] {
+            assert!(all.iter().any(|p| p.ends_with(f)), "{f} not in {all:?}");
+        }
     });
 }
