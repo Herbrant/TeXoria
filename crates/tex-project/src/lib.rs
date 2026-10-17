@@ -782,4 +782,29 @@ mod tests {
             PathBuf::from("/p/thesis.tex")
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn normalize_is_idempotent(path in "(/|)([a-z]{1,3}|\\.|\\.\\.)(/([a-z]{1,3}|\\.|\\.\\.)){0,6}") {
+                let once = normalize(Path::new(&path));
+                prop_assert_eq!(normalize(&once), once.clone());
+                prop_assert!(once.components().all(|c| !matches!(
+                    c,
+                    std::path::Component::CurDir | std::path::Component::ParentDir
+                )));
+            }
+
+            #[test]
+            fn the_extension_is_added_once(name in "[a-z]{1,4}(\\.[a-z]{1,3})?") {
+                let p = resolve_tex(Path::new("/p"), &name);
+                prop_assert_eq!(p.extension().unwrap(), "tex");
+                let again = resolve_tex(Path::new("/p"), p.to_str().unwrap());
+                prop_assert_eq!(again, p);
+            }
+        }
+    }
 }
