@@ -152,13 +152,13 @@ impl SyncTex {
                         st.inputs.insert(tag, normalize(base, path));
                     }
                 } else if let Some(v) = line.strip_prefix("Unit:") {
-                    unit = v.trim().parse().unwrap_or(1.0);
+                    unit = number(v).unwrap_or(1.0);
                 } else if let Some(v) = line.strip_prefix("Magnification:") {
-                    magnification = v.trim().parse().unwrap_or(1000.0);
+                    magnification = number(v).unwrap_or(1000.0);
                 } else if let Some(v) = line.strip_prefix("X Offset:") {
-                    x_offset = v.trim().parse().unwrap_or(0.0);
+                    x_offset = number(v).unwrap_or(0.0);
                 } else if let Some(v) = line.strip_prefix("Y Offset:") {
-                    y_offset = v.trim().parse().unwrap_or(0.0);
+                    y_offset = number(v).unwrap_or(0.0);
                 } else if line.starts_with("Content:") {
                     in_content = true;
                     scale = unit * (magnification / 1000.0) / 65536.0 * (72.0 / 72.27);
@@ -333,13 +333,14 @@ fn parse_record(s: &str, kind: Kind, scale: f32, xo: f32, yo: f32) -> Option<Rec
     let mut parts = s.split(':');
     let mut link = parts.next()?.split(',');
     let tag = link.next()?.parse().ok()?;
-    let line = link.next()?.parse::<i64>().ok()?.max(0) as u32;
+    // Saturate: a wrapped-around number would be some real line.
+    let line = link.next()?.parse::<i64>().ok()?.clamp(0, u32::MAX.into()) as u32;
     let mut pos = parts.next()?.split(',');
-    let x: f32 = pos.next()?.parse().ok()?;
-    let y: f32 = pos.next()?.parse().ok()?;
+    let x = number(pos.next()?)?;
+    let y = number(pos.next()?)?;
     let (w, h, d) = match parts.next() {
         Some(size) => {
-            let mut it = size.split(',').map(|v| v.parse::<f32>().unwrap_or(0.0));
+            let mut it = size.split(',').map(|v| number(v).unwrap_or(0.0));
             (
                 it.next().unwrap_or(0.0),
                 it.next().unwrap_or(0.0),
@@ -364,6 +365,11 @@ fn parse_record(s: &str, kind: Kind, scale: f32, xo: f32, yo: f32) -> Option<Rec
             height: h + d,
         },
     })
+}
+
+/// A finite number: `"nan"` and `"inf"` parse as `f32` too.
+fn number(s: &str) -> Option<f32> {
+    s.trim().parse::<f32>().ok().filter(|v| v.is_finite())
 }
 
 /// Resolve `path` against `base` and drop `.` / `..` components lexically.
@@ -596,6 +602,8 @@ Count:10
         // Unreadable values fall back to the defaults.
         let junk = at("Unit:x\nMagnification:\nX Offset:?\nY Offset:abc\n");
         assert_eq!(junk, plain);
+        let infinite = at("Unit:inf\nMagnification:NaN\nX Offset:-inf\nY Offset:1e40\n");
+        assert_eq!(infinite, plain);
     }
 
     #[test]
@@ -723,6 +731,36 @@ Count:10
         // Two lines; the first one spans both boxes; the empty box is skipped.
         assert_eq!(loc.rects.len(), 2, "{loc:?}");
         assert!((loc.rects[0].width - sp(1310720.0 + 655360.0)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn huge_line_numbers_saturate() {
+        // 2^32 + 1 must not become line 1.
+        let content = "{1\n(1,4294967297:0,655360:655360,65536,0\n}1\n\
+                       {2\n(1,5:0,655360:655360,65536,0\n(1,-3:0,0:5,5,0\n}2\n";
+        let st = SyncTex::parse(&doc("", content), Path::new("/")).unwrap();
+        assert_eq!(st.pages[0][0].line, u32::MAX);
+        assert_eq!(st.forward(Path::new("/proj/main.tex"), 1).unwrap().page, 1);
+        // Negative ones are 0, which forward and inverse skip.
+        assert_eq!(st.pages[1][1].line, 0);
+    }
+
+    #[test]
+    fn non_finite_numbers_are_rejected() {
+        let content = "{1\n(1,3:-nan,655360:655360,65536,0\n(1,4:inf,0:1,1,0\n\
+                       (1,5:0,655360:nan,inf,-inf\n(1,6:0,1e40:1,1,0\n}1\n";
+        let st = SyncTex::parse(&doc("", content), Path::new("/")).unwrap();
+        let finite = |r: &Rect| [r.x, r.y, r.width, r.height].iter().all(|v| v.is_finite());
+        assert!(
+            st.pages[0].iter().all(|r| finite(&r.rect)),
+            "{:?}",
+            st.pages[0]
+        );
+        for line in 3..=6 {
+            if let Some(loc) = st.forward(Path::new("/proj/main.tex"), line) {
+                assert!(loc.rects.iter().all(finite), "{line}: {loc:?}");
+            }
+        }
     }
 
     #[test]
