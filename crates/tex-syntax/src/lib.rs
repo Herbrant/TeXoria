@@ -340,13 +340,8 @@ impl<'a> Walk<'a> {
                     .and_then(|b| b.child_by_field_name("name"))
                     .map(|n| self.group_text(n))
                 {
-                    let float = match name.trim_end_matches('*') {
-                        "figure" | "wrapfigure" | "subfigure" => Some(OutlineKind::Figure),
-                        "table" | "wraptable" | "subtable" => Some(OutlineKind::Table),
-                        _ => None,
-                    };
-                    if let Some(k) = float {
-                        let title = find_caption(node)
+                    if let Some(k) = float_kind(&name) {
+                        let title = find_caption(node, self.text)
                             .map(|c| self.group_text(c))
                             .unwrap_or_default();
                         index.outline.push(OutlineItem {
@@ -594,19 +589,36 @@ fn braced_after_options(text: &str, from: usize) -> Option<(&str, Range<usize>)>
     None
 }
 
-/// First `\caption` directly inside an environment (not in nested floats).
-fn find_caption(env: Node) -> Option<Node> {
+/// The outline kind of a float environment's name.
+fn float_kind(name: &str) -> Option<OutlineKind> {
+    match name.trim_end_matches('*') {
+        "figure" | "wrapfigure" | "subfigure" => Some(OutlineKind::Figure),
+        "table" | "wraptable" | "subtable" => Some(OutlineKind::Table),
+        _ => None,
+    }
+}
+
+/// First `\caption` of a float environment, also inside other environments (`center`,
+/// `minipage`) but not in nested floats, which have their own.
+fn find_caption<'t>(env: Node<'t>, text: &str) -> Option<Node<'t>> {
+    let is_float = |n: Node| {
+        n.kind() == "generic_environment"
+            && n.child_by_field_name("begin")
+                .and_then(|b| b.child_by_field_name("name"))
+                .and_then(|name| {
+                    float_kind(text[name.byte_range()].trim_matches(['{', '}']).trim())
+                })
+                .is_some()
+    };
+    // Depth first, in source order: the first caption wins.
     let mut stack = vec![env];
     while let Some(n) = stack.pop() {
-        let mut cursor = n.walk();
-        for child in n.children(&mut cursor) {
-            if child.kind() == "caption" {
-                return child.child_by_field_name("long");
-            }
-            if child.kind() != "generic_environment" {
-                stack.push(child);
-            }
+        if n.kind() == "caption" {
+            return n.child_by_field_name("long");
         }
+        let mut cursor = n.walk();
+        let children: Vec<_> = n.children(&mut cursor).filter(|c| !is_float(*c)).collect();
+        stack.extend(children.into_iter().rev());
     }
     None
 }
@@ -830,6 +842,27 @@ See \ref{eq:e} and \cite{knuth, lamport}.
         for item in &idx.outline {
             assert!(src[item.byte..].starts_with('\\'), "{item:?}");
         }
+    }
+
+    #[test]
+    fn finds_captions_inside_other_environments_of_a_float() {
+        let src = "\\begin{figure}\\begin{center}\\includegraphics{a}\\caption{Centered}\\end{center}\\end{figure}\n\
+                   \\begin{table}\\begin{minipage}{.5\\linewidth}\\begin{subtable}{x}\\caption{inner}\\end{subtable}\
+                   \\caption{Side}\\end{minipage}\\end{table}";
+        let titles: Vec<_> = Index::from_text(src)
+            .outline
+            .into_iter()
+            .map(|o| (o.kind, o.title))
+            .collect();
+        use OutlineKind::*;
+        assert_eq!(
+            titles,
+            [
+                (Figure, "Centered".to_string()),
+                (Table, "Side".to_string()),
+                (Table, "inner".to_string()),
+            ]
+        );
     }
 
     #[test]
