@@ -23,6 +23,9 @@ mod updater;
 mod vim;
 mod workspace;
 
+#[cfg(test)]
+mod testing;
+
 use std::path::PathBuf;
 
 use gpui_kit::*;
@@ -221,6 +224,20 @@ fn set_menus(cx: &mut App) {
     ]);
 }
 
+/// Set up the app: components, fonts, themes, the LaTeX language, key bindings and menus.
+fn init(cx: &mut App) {
+    gpui_kit::init(cx);
+    if let Err(e) = cx.text_system().add_fonts(assets::fonts()) {
+        log::warn!("loading bundled fonts: {e}");
+    }
+    theme::init(None, cx);
+    latex::register();
+    bind_keys(cx);
+    presentation::bind_keys(cx);
+    set_menus(cx);
+    cx.on_action(|_: &Quit, cx| cx.quit());
+}
+
 fn main() {
     // Started by a coding agent: relay its MCP connection to the app's tools.
     if std::env::args_os().nth(1).as_deref() == Some(tex_agent::mcp::BRIDGE_FLAG.as_ref()) {
@@ -236,16 +253,7 @@ fn main() {
     gpui_kit::application()
         .with_assets(assets::Assets)
         .run(move |cx| {
-            gpui_kit::init(cx);
-            if let Err(e) = cx.text_system().add_fonts(assets::fonts()) {
-                log::warn!("loading bundled fonts: {e}");
-            }
-            theme::init(None, cx);
-            latex::register();
-            bind_keys(cx);
-            presentation::bind_keys(cx);
-            set_menus(cx);
-            cx.on_action(|_: &Quit, cx| cx.quit());
+            init(cx);
 
             // The title bar moves the window and handles double clicks itself
             // (otherwise macOS does both too, and delays clicks on its buttons).

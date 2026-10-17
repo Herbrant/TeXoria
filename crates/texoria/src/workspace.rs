@@ -180,9 +180,40 @@ pub struct Workspace {
     _subscriptions: Vec<Subscription>,
 }
 
+/// What a workspace starts from: the user's settings, the TeX engines found and the folders
+/// that may hold PDFium. Tests build their own instead of reading the machine's.
+pub struct Startup {
+    pub settings: Settings,
+    pub engines: Vec<tex_compile::Engine>,
+    pub pdfium_dirs: Vec<PathBuf>,
+}
+
+impl Startup {
+    pub fn detect() -> Self {
+        Startup {
+            settings: Settings::load(),
+            engines: tex_compile::detect(dev_vendor_dir("tectonic").as_deref()),
+            pdfium_dirs: pdfium_dirs(),
+        }
+    }
+}
+
 impl Workspace {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut settings = Settings::load();
+        Self::with_startup(path, Startup::detect(), window, cx)
+    }
+
+    pub fn with_startup(
+        path: Option<PathBuf>,
+        startup: Startup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let Startup {
+            mut settings,
+            engines,
+            pdfium_dirs,
+        } = startup;
         if let Some(error) = settings.load_error.take() {
             window.defer(cx, move |window, cx| {
                 window.push_notification(
@@ -191,7 +222,7 @@ impl Workspace {
                 )
             });
         }
-        let pdf = cx.new(|cx| PdfPane::new(pdfium_dirs(), cx));
+        let pdf = cx.new(|cx| PdfPane::new(pdfium_dirs, cx));
         let files = cx.new(FileTree::new);
         let search = cx.new(|cx| SearchPanel::new(window, cx));
         let git = cx.new(|cx| GitPanel::new(window, cx));
@@ -259,7 +290,6 @@ impl Workspace {
             .unwrap_or(true)
         });
 
-        let engines = tex_compile::detect(dev_vendor_dir("tectonic").as_deref());
         let engine_ix = settings
             .engine
             .as_ref()
@@ -5288,10 +5318,14 @@ fn find_main_file(dir: &Path) -> Option<PathBuf> {
 /// Where to look for the PDFium shared library: next to the executable,
 /// inside a macOS bundle, and the repository's `vendor/` for development.
 fn pdfium_dirs() -> Vec<PathBuf> {
+    let exe = std::env::current_exe().ok();
+    pdfium_dirs_of(exe.as_deref(), dev_vendor_dir("pdfium"))
+}
+
+/// Where PDFium may be for the executable `exe`, then the checkout's `vendor` folder.
+fn pdfium_dirs_of(exe: Option<&Path>, vendor: Option<PathBuf>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(d) = exe.parent()
-    {
+    if let Some(d) = exe.and_then(Path::parent) {
         dirs.push(d.to_path_buf());
         dirs.push(d.join("../Frameworks"));
         dirs.push(d.join("../Resources"));
@@ -5299,7 +5333,7 @@ fn pdfium_dirs() -> Vec<PathBuf> {
         // deb / AppImage layout
         dirs.push(d.join("../lib/texoria"));
     }
-    dirs.extend(dev_vendor_dir("pdfium"));
+    dirs.extend(vendor);
     dirs
 }
 
@@ -5309,6 +5343,13 @@ fn pdfium_dirs() -> Vec<PathBuf> {
 fn dev_vendor_dir(name: &str) -> Option<PathBuf> {
     let repo = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).ok()?;
     let exe = std::fs::canonicalize(std::env::current_exe().ok()?).ok()?;
+    vendor_dir_of(&repo, &exe, name)
+}
+
+fn vendor_dir_of(repo: &Path, exe: &Path, name: &str) -> Option<PathBuf> {
     exe.starts_with(repo.join("target"))
         .then(|| repo.join("vendor").join(name))
 }
+
+#[cfg(test)]
+mod tests;

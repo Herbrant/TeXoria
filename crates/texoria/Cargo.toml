@@ -42,6 +42,9 @@ similar.workspace = true
 tex-fmt = { version = "0.5.7", default-features = false }
 
 [dev-dependencies]
+# Headless windows for the UI tests (`#[gpui::test]`). gpui-kit's own `test-support` feature
+# would also resolve its optional `gpui-fast` engine, whose exact pins conflict with gpui's.
+gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }
 test-support.workspace = true
 proptest.workspace = true
 
