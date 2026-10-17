@@ -146,7 +146,15 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let settings = Settings::load();
+        let mut settings = Settings::load();
+        if let Some(error) = settings.load_error.take() {
+            window.defer(cx, move |window, cx| {
+                window.push_notification(
+                    Notification::warning(error).title("Settings were partly reset"),
+                    cx,
+                )
+            });
+        }
         let pdf = cx.new(|cx| PdfPane::new(pdfium_dirs(), cx));
         let files = cx.new(FileTree::new);
         let git = cx.new(|cx| GitPanel::new(window, cx));

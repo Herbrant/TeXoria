@@ -47,7 +47,8 @@ folder and TeXoria will ask again.
 ## Where files are stored
 
 Settings are a TOML file, `settings.toml`, that you can also edit by hand while TeXoria is
-closed. Downloaded spelling dictionaries go to the cache folder.
+closed. A value TeXoria cannot read resets only that setting: TeXoria says so when it starts and
+keeps the file as it was in `settings.toml.bak`, next to it. Downloaded spelling dictionaries go to the cache folder.
 
 | | Settings | Dictionaries |
 |---|---|---|

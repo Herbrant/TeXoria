@@ -46,6 +46,9 @@ pub struct Settings {
     pub custom_agents: Vec<CustomAgent>,
     /// Project directories coding agents may work in.
     pub agent_projects: Vec<PathBuf>,
+    /// Why the file could not be read in full, to tell the user once.
+    #[serde(skip)]
+    pub load_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +119,7 @@ impl Default for Settings {
             agent: None,
             custom_agents: Vec::new(),
             agent_projects: Vec::new(),
+            load_error: None,
         }
     }
 }
@@ -127,19 +131,63 @@ fn path() -> Option<PathBuf> {
 
 impl Settings {
     pub fn load() -> Self {
-        path()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .map(|s| Self::parse(&s))
-            .unwrap_or_default()
+        let Some(p) = path() else {
+            return Self::default();
+        };
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            return Self::default();
+        };
+        let mut settings = Self::parse(&text);
+        if let Some(e) = &settings.load_error {
+            // The next save drops what could not be read: keep the file.
+            let backup = p.with_extension("toml.bak");
+            let kept = match std::fs::copy(&p, &backup) {
+                Ok(_) => format!("The file as it was is kept as {}.", backup.display()),
+                Err(err) => {
+                    log::warn!("backing up {}: {err}", p.display());
+                    String::new()
+                }
+            };
+            log::warn!("reading {}: {e}", p.display());
+            settings.load_error = Some(
+                format!("Some settings could not be read and were reset. {kept}\n{e}")
+                    .trim()
+                    .to_string(),
+            );
+        }
+        settings
     }
 
+    /// The settings in `text`. A value that cannot be read (a typo, or a
+    /// newer version's) only resets its own setting, never the others: the
+    /// trusted folders and the dictionary would be lost on the next save.
     fn parse(text: &str) -> Self {
-        let mut settings: Settings = toml::from_str(text).unwrap_or_default();
-        if settings.rc_allowed.is_none() {
+        let (mut settings, error) = match toml::from_str::<Settings>(text) {
+            Ok(s) => (s, None),
+            Err(e) => (Self::salvage(text), Some(e.message().to_string())),
+        };
+        if error.is_some() {
+            // Never extend trust from what was salvaged.
+            settings.rc_allowed.get_or_insert_default();
+        } else if settings.rc_allowed.is_none() {
             // Trusting a project used to allow both.
             settings.rc_allowed = Some(settings.trusted_projects.clone());
         }
+        settings.load_error = error;
         settings
+    }
+
+    /// The settings of `text` that can be read, each on its own.
+    fn salvage(text: &str) -> Self {
+        let Ok(table) = text.parse::<toml::Table>() else {
+            return Self::default();
+        };
+        let readable = |key: &String, value: &toml::Value| {
+            let one = toml::Table::from_iter([(key.clone(), value.clone())]);
+            toml::Value::Table(one).try_into::<Settings>().is_ok()
+        };
+        let kept: toml::Table = table.into_iter().filter(|(k, v)| readable(k, v)).collect();
+        toml::Value::Table(kept).try_into().unwrap_or_default()
     }
 
     pub fn save(&self) {
@@ -281,6 +329,28 @@ mod tests {
         assert!(!s.is_trusted(Path::new("/p/paper")));
         let back = Settings::parse(&toml::to_string_pretty(&s).unwrap());
         assert!(back.allows_agents(Path::new("/p/paper")));
+    }
+
+    #[test]
+    fn a_bad_value_resets_only_its_setting() {
+        let text = "theme = \"sepia\"\nlive_delay_ms = 300\n\
+                    trusted_projects = [\"/p/paper\"]\nspell_words = [\"TeXoria\"]\n";
+        let s = Settings::parse(text);
+        assert!(s.load_error.is_some());
+        assert_eq!(s.theme, ThemeChoice::System);
+        assert_eq!(s.live_delay_ms, 300);
+        assert!(s.is_trusted(Path::new("/p/paper")));
+        assert_eq!(s.spell_words, ["TeXoria"]);
+        // Salvaged trust does not extend to latexmkrc.
+        assert!(!s.allows_rc(Path::new("/p/paper")));
+
+        let s = Settings::parse("not toml at all [");
+        assert!(s.load_error.is_some());
+        assert!(
+            Settings::parse("live_preview = false\n")
+                .load_error
+                .is_none()
+        );
     }
 
     #[test]
