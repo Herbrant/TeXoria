@@ -32,6 +32,7 @@ impl Update {
     pub fn install(self) -> Result<Relaunch> {
         let Update {
             kind,
+            in_use,
             staging,
             file,
             version,
@@ -84,6 +85,7 @@ impl Update {
         };
         // What is left is the download and the old version.
         let _ = make_writable(staging.path());
+        drop(in_use);
         drop(staging);
         Ok(relaunch)
     }
@@ -414,6 +416,7 @@ mod tests {
         Update {
             version: Version::new(9, 0, 0),
             kind,
+            in_use: None,
             staging,
             file,
         }

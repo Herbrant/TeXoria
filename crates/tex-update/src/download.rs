@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use crate::install::InstallKind;
+use crate::lock::Lock;
 use crate::release::{Release, Source};
 
 /// The packages are ~30–60 MB.
@@ -22,11 +23,19 @@ const MAX_SIZE: u64 = 1 << 30;
 const STALL: Duration = Duration::from_secs(60);
 /// Prefix of the staging folders.
 pub(crate) const STAGING: &str = ".texoria-update-";
+/// In each staging folder, locked by the copy that uses it.
+const IN_USE: &str = ".texoria-update.lock";
+/// A staging folder without its lock (made by an older version, or by a copy
+/// stopped before it could lock it) is left alone for this long.
+const UNLOCKED_AGE: Duration = Duration::from_secs(60 * 60);
 
 /// A verified release file, ready to be installed (see [`Update::install`]).
 pub struct Update {
     pub version: Version,
     pub(crate) kind: InstallKind,
+    /// Keeps the other running copies from removing `staging`. Before it:
+    /// dropped first (Windows cannot delete an open file).
+    pub(crate) in_use: Option<Lock>,
     /// Removed with what is in it unless the update is installed.
     pub(crate) staging: TempDir,
     pub(crate) file: PathBuf,
@@ -56,7 +65,7 @@ pub fn download(
     let expected = release
         .sha256(&name)
         .ok_or_else(|| anyhow!("release {} has no {name}", release.version))?;
-    let staging = staging_dir(kind)?;
+    let (staging, in_use) = staging_dir(kind)?;
     let file = staging.path().join(&name);
 
     let url = source.asset_url(&release.version, &name);
@@ -80,32 +89,51 @@ pub fn download(
     Ok(Update {
         version: release.version.clone(),
         kind: kind.clone(),
+        in_use: Some(in_use),
         staging,
         file,
     })
 }
 
-/// A new folder next to what the update replaces. Folders left by an update
-/// that was interrupted (the app was killed) are removed first: the caller
-/// holds the [`crate::Lock`], so no other running copy is using them.
-fn staging_dir(kind: &InstallKind) -> Result<TempDir> {
+/// A new folder next to what the update replaces, and its lock. Folders
+/// left by an update that was interrupted (the app was killed) are removed
+/// first; another running copy may be downloading too (the [`crate::Lock`]
+/// of updates is not always taken), so only those whose lock is free.
+fn staging_dir(kind: &InstallKind) -> Result<(TempDir, Lock)> {
     let parent = kind
         .staging_parent()
         .ok_or_else(|| anyhow!("this installation cannot update itself"))?;
-    remove_stale(&parent);
-    tempfile::Builder::new()
+    remove_stale(&parent, UNLOCKED_AGE);
+    let dir = tempfile::Builder::new()
         .prefix(STAGING)
         .tempdir_in(&parent)
-        .with_context(|| format!("creating a folder in {}", parent.display()))
+        .with_context(|| format!("creating a folder in {}", parent.display()))?;
+    let lock = Lock::try_acquire_at(&dir.path().join(IN_USE))?
+        .ok_or_else(|| anyhow!("{} is in use", dir.path().display()))?;
+    Ok((dir, lock))
 }
 
-fn remove_stale(parent: &Path) {
+/// Remove the staging folders no running copy uses: those whose lock is
+/// free, and those without one older than `unlocked_age`.
+fn remove_stale(parent: &Path, unlocked_age: Duration) {
     let Ok(entries) = fs::read_dir(parent) else {
         return;
+    };
+    let unused = |dir: &Path| {
+        let lock = dir.join(IN_USE);
+        if lock.exists() {
+            // Released at once: no copy locks a folder it did not make.
+            matches!(Lock::try_acquire_at(&lock), Ok(Some(_)))
+        } else {
+            fs::metadata(dir)
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t.elapsed().is_ok_and(|age| age >= unlocked_age))
+        }
     };
     for e in entries.flatten() {
         if e.file_name().to_string_lossy().starts_with(STAGING)
             && e.file_type().is_ok_and(|t| t.is_dir())
+            && unused(&e.path())
         {
             // An old app inside may hold files without write permission.
             let _ = make_writable(&e.path());
@@ -242,15 +270,46 @@ mod tests {
         assert!(format!("{:#}", err.unwrap_err()).contains("SHA-256 mismatch"));
     }
 
+    /// Two running copies may download at the same time (the app goes on
+    /// when the update lock cannot be taken): neither removes the other's.
+    #[test]
+    fn staging_in_use_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let kind = InstallKind::AppImage {
+            file: dir.path().join("TeXoria.AppImage"),
+        };
+        let (first, lock) = staging_dir(&kind).unwrap();
+        let (second, _held) = staging_dir(&kind).unwrap();
+        assert!(first.path().is_dir());
+        // The first copy quit (or crashed) without removing its folder.
+        drop(lock);
+        let first = first.keep();
+        let _third = staging_dir(&kind).unwrap();
+        assert!(!first.exists());
+        assert!(second.path().is_dir());
+    }
+
+    #[test]
+    fn unlocked_staging_is_removed_once_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join(format!("{STAGING}old"));
+        fs::create_dir_all(old.join("TeXoria.app")).unwrap();
+        remove_stale(dir.path(), UNLOCKED_AGE);
+        assert!(old.is_dir());
+        remove_stale(dir.path(), Duration::ZERO);
+        assert!(!old.exists());
+    }
+
     #[test]
     fn stale_staging_is_removed() {
         let dir = tempfile::tempdir().unwrap();
         let stale = dir.path().join(format!("{STAGING}old"));
         fs::create_dir_all(stale.join("TeXoria.app")).unwrap();
+        fs::write(stale.join(IN_USE), "").unwrap();
         let kind = InstallKind::AppImage {
             file: dir.path().join("TeXoria.AppImage"),
         };
-        let staging = staging_dir(&kind).unwrap();
+        let (staging, _lock) = staging_dir(&kind).unwrap();
         assert!(!stale.exists());
         assert!(staging.path().exists());
     }
