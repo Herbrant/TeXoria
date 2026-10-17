@@ -378,8 +378,16 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
     Some(out)
 }
 
+/// `file` relative to `dir`, written as in the sources: with `/` on every system.
 fn relative(dir: &Path, file: &Path) -> String {
-    file.strip_prefix(dir).unwrap_or(file).display().to_string()
+    match file.strip_prefix(dir) {
+        Ok(rel) => rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+        Err(_) => file.display().to_string(),
+    }
 }
 
 fn human_size(bytes: u64) -> String {
@@ -497,6 +505,23 @@ mod tests {
         assert!(
             package.ends_with("(https://texdoc.org/pkg/tikz-cd)"),
             "{package}"
+        );
+    }
+
+    #[test]
+    fn relative_paths_use_slashes() {
+        let dir = std::env::temp_dir().join("p");
+        assert_eq!(relative(&dir, &dir.join("ch").join("a.tex")), "ch/a.tex");
+        let outside = std::env::temp_dir().join("q.tex");
+        assert_eq!(relative(&dir, &outside), outside.display().to_string());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn relative_paths_use_slashes_on_windows() {
+        assert_eq!(
+            relative(Path::new(r"C:\p"), Path::new(r"C:\p\ch\sub\a.tex")),
+            "ch/sub/a.tex"
         );
     }
 
