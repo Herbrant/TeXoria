@@ -31,8 +31,14 @@ tests and a release build — keep all four green. `rustfmt.toml` sets `max_widt
 
 ## Releasing
 
-Bump `version` in `[workspace.package]` (`Cargo.toml`), commit `chore(release): vX.Y.Z`, then
-`git tag vX.Y.Z && git push origin main vX.Y.Z`. `.github/workflows/release.yml` checks that the
+Bump `version` in `[workspace.package]` (`Cargo.toml`), add the version's section to
+`CHANGELOG.md`, commit both as `chore(release): vX.Y.Z`, then
+`git tag vX.Y.Z && git push origin main vX.Y.Z`. The changelog section is the release notes
+(`scripts/release-notes.sh`; the workflow fails before building without one): group the changes
+since the previous tag (`git log vPREV..HEAD`) under Added / Changed / Security / Fixed / Build and
+documentation, written for users, each entry linking its commits
+(`[abc1234](https://github.com/Herbrant/TeXoria/commit/abc1234)`), and end with the
+`compare/vPREV...vX.Y.Z` link. `.github/workflows/release.yml` checks that the
 tag matches the version (`scripts/version.sh`), builds on native runners (macOS arm64/x64,
 Ubuntu 22.04 x64/arm64 for an old enough glibc, Windows x64), publishes the GitHub release with
 `SHA256SUMS`, and renders `crates/texoria/packaging/{homebrew,aur}/*.in`

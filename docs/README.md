@@ -19,4 +19,5 @@
 - [Architecture](development/architecture.md): how the crates fit together
 - [Releasing](development/releasing.md): cutting a new version
 
-See also [CONTRIBUTING.md](../CONTRIBUTING.md) and [SECURITY.md](../SECURITY.md).
+See also [CHANGELOG.md](../CHANGELOG.md), [CONTRIBUTING.md](../CONTRIBUTING.md) and
+[SECURITY.md](../SECURITY.md).

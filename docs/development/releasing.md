@@ -1,18 +1,26 @@
 # Releasing
 
 1. Bump `version` in `[workspace.package]` in `Cargo.toml`.
-2. Commit it as `chore(release): vX.Y.Z`.
-3. Tag and push:
+2. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` with the changes since the previous
+   tag (`git log vPREV..HEAD`), grouped under Added, Changed, Security, Fixed, and Build and
+   documentation. Write the entries for users and link each one to its commits
+   (`[abc1234](https://github.com/Herbrant/TeXoria/commit/abc1234)`), and end the section with the
+   `compare/vPREV...vX.Y.Z` link. `scripts/release-notes.sh X.Y.Z` prints what the release notes
+   will be.
+3. Commit both as `chore(release): vX.Y.Z`.
+4. Tag and push:
    ```sh
    git tag vX.Y.Z && git push origin main vX.Y.Z
    ```
 
 `.github/workflows/release.yml` then:
 
-- checks that the tag matches the workspace version (`scripts/version.sh`);
+- checks that the tag matches the workspace version (`scripts/version.sh`) and that
+  `CHANGELOG.md` has a section for it;
 - builds every package on native runners: macOS arm64 and x64, Ubuntu 22.04 x64 and arm64 (the
   oldest supported glibc) and Windows x64;
-- publishes the GitHub release with a `SHA256SUMS` file;
+- publishes the GitHub release with a `SHA256SUMS` file and the version's changelog section as
+  its notes (`scripts/release-notes.sh`);
 - runs `.github/workflows/publish.yml`, which renders `crates/texoria/packaging/{homebrew,aur}/*.in`
   (`scripts/render-manifests.sh`) and pushes the cask to
   [Herbrant/homebrew-tap](https://github.com/Herbrant/homebrew-tap) (secret `HOMEBREW_TAP_TOKEN`)

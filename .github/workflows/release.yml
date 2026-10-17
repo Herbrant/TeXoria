@@ -1,9 +1,10 @@
 name: Release
 
 # Pushing a tag vX.Y.Z (matching [workspace.package] version) builds every package, publishes a
-# GitHub release and updates the Homebrew cask and the AUR package (publish.yml). Tags with a
-# pre-release suffix (v1.2.0-rc.1) are published as pre-releases and skip Homebrew/AUR. Running
-# the workflow by hand only builds the packages (downloadable as workflow artifacts).
+# GitHub release with the version's section of CHANGELOG.md as its notes, and updates the
+# Homebrew cask and the AUR package (publish.yml). Tags with a pre-release suffix (v1.2.0-rc.1)
+# are published as pre-releases and skip Homebrew/AUR. Running the workflow by hand only builds
+# the packages (downloadable as workflow artifacts).
 on:
   push:
     tags: ["v*"]
@@ -35,6 +36,10 @@ jobs:
           if [ "$REF_TYPE" = tag ] && [ "$TAG" != "v$version" ]; then
             echo "::error::tag $TAG does not match the workspace version $version"
             exit 1
+          fi
+          # Fail before building if the release would have no notes.
+          if [ "$REF_TYPE" = tag ]; then
+            scripts/release-notes.sh "$version" > /dev/null
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           case "$version" in
@@ -134,6 +139,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -141,6 +147,10 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum -- * | tee SHA256SUMS
+      - name: Release notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/notes.md"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -150,7 +160,7 @@ jobs:
           flags=()
           [ "$PRERELEASE" = true ] && flags+=(--prerelease)
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "TeXoria ${TAG#v}" \
-            --generate-notes --verify-tag "${flags[@]}"
+            --notes-file "$RUNNER_TEMP/notes.md" --verify-tag "${flags[@]}"
 
   publish:
     needs: [version, release]
