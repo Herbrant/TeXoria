@@ -17,6 +17,9 @@ texoria path/to/thesis/                                        # Linux
 /Applications/TeXoria.app/Contents/MacOS/texoria thesis.tex    # macOS
 ```
 
+`texoria --help` lists the options, `texoria --version` prints the version. A file whose name
+starts with `-` goes after `--` (`texoria -- -draft.tex`).
+
 ## The window
 
 Shortcuts are written for macOS: elsewhere, use Ctrl instead of ⌘ (see

@@ -5,6 +5,7 @@ mod agent_tools;
 mod assets;
 mod atomic;
 mod checks;
+mod cli;
 mod diff_view;
 mod edit;
 mod file_tree;
@@ -26,8 +27,6 @@ mod workspace;
 
 #[cfg(test)]
 mod testing;
-
-use std::path::PathBuf;
 
 use gpui_kit::*;
 
@@ -240,16 +239,23 @@ fn init(cx: &mut App) {
 }
 
 fn main() {
-    // Started by a coding agent: relay its MCP connection to the app's tools.
-    if std::env::args_os().nth(1).as_deref() == Some(tex_agent::mcp::BRIDGE_FLAG.as_ref()) {
-        if let Err(e) = tex_agent::mcp::bridge() {
-            eprintln!("texoria {}: {e}", tex_agent::mcp::BRIDGE_FLAG);
-            std::process::exit(1);
+    let path = match cli::parse(std::env::args_os().skip(1)) {
+        cli::Launch::Bridge => {
+            if let Err(e) = tex_agent::mcp::bridge() {
+                eprintln!("texoria {}: {e}", tex_agent::mcp::BRIDGE_FLAG);
+                std::process::exit(1);
+            }
+            return;
         }
-        return;
-    }
+        cli::Launch::Help => return println!("{}", cli::USAGE),
+        cli::Launch::Version => return println!("texoria {}", env!("CARGO_PKG_VERSION")),
+        cli::Launch::Unknown(option) => {
+            eprintln!("texoria: unknown option {option}\n\n{}", cli::USAGE);
+            std::process::exit(2);
+        }
+        cli::Launch::Open(path) => path,
+    };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let path = std::env::args_os().nth(1).map(PathBuf::from);
 
     gpui_kit::application()
         .with_assets(assets::Assets)
