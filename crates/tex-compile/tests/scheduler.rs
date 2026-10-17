@@ -515,3 +515,18 @@ fn a_cancelled_run_reports_nothing_from_the_log() {
     assert!(out.diagnostics.is_empty());
     assert!(!out.needs_shell_escape);
 }
+
+#[test]
+fn a_short_timeout_is_reported_as_it_is() {
+    let (_dir, job) = project();
+    let events = Events::default();
+    let compiler = Compiler::new(fake(&["sleep=30000"]), Duration::ZERO, events.sink());
+    compiler.set_timeout(Some(Duration::from_millis(250)));
+    compiler.request_now(job);
+    let out = events.wait_finished(1);
+    assert_eq!(out.status, Status::Failed);
+    assert_eq!(
+        out.diagnostics[0].message,
+        "The build stopped after 0.25s (infinite loop?)"
+    );
+}

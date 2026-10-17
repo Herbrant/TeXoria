@@ -339,9 +339,10 @@ impl Worker {
                     severity: Severity::Error,
                     file: None,
                     line: None,
+                    // `30s`, `0.25s`: whole seconds would say 0s.
                     message: format!(
                         "The build stopped after {}s (infinite loop?)",
-                        limit.as_secs()
+                        limit.as_secs_f64()
                     ),
                 },
             );
