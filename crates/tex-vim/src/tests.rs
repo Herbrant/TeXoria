@@ -315,3 +315,16 @@ fn searches_ignoring_the_case_of_any_letter() {
     assert_eq!(run("xİ |ab ab", "*"), "xİ ab |ab");
     assert_eq!(run("|ab İab ab", "*"), "ab İab |ab");
 }
+
+#[test]
+fn angle_bracket_objects() {
+    assert_eq!(run("<(|x)>", "di<"), "<|>");
+    assert_eq!(run("a <b |c> d", "da>"), "a | d");
+    assert_eq!(run("<a <b> |c>", "ci<z<esc>"), "<|z>");
+    assert_eq!(run("<a [|b> c]", "di<"), "<|> c]");
+    // Not inside a pair: nothing happens.
+    assert_eq!(run("a|b <c>", "di<"), "a|b <c>");
+    assert_eq!(run("<a|b", "di<"), "<a|b");
+    // An escaped bracket does not count.
+    assert_eq!(run("{a \\} |b}", "di{"), "{|}");
+}

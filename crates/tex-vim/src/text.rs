@@ -234,33 +234,39 @@ pub fn matching_bracket(t: &str, i: usize) -> Option<usize> {
         ']' => ('[', ']', false),
         _ => ('{', '}', false),
     };
-    let mut depth = 0i32;
     if forward {
-        for (p, c) in t[at..].char_indices().map(|(p, c)| (at + p, c)) {
-            if escaped(t, p) {
-                continue;
-            }
-            if c == open {
-                depth += 1;
-            } else if c == close {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(p);
-                }
+        return closing(t, at, open, close);
+    }
+    let mut depth = 0i32;
+    for (p, c) in t[..=at].char_indices().rev() {
+        if escaped(t, p) {
+            continue;
+        }
+        if c == close {
+            depth += 1;
+        } else if c == open {
+            depth -= 1;
+            if depth == 0 {
+                return Some(p);
             }
         }
-    } else {
-        for (p, c) in t[..=at].char_indices().rev() {
-            if escaped(t, p) {
-                continue;
-            }
-            if c == close {
-                depth += 1;
-            } else if c == open {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(p);
-                }
+    }
+    None
+}
+
+/// The `close` matching the `open` at `at`, unless escaped.
+fn closing(t: &str, at: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0i32;
+    for (p, c) in t[at..].char_indices().map(|(p, c)| (at + p, c)) {
+        if escaped(t, p) {
+            continue;
+        }
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(p);
             }
         }
     }
@@ -333,7 +339,7 @@ pub fn bracket_object(
         }
     }
     let start = start?;
-    let end = matching_bracket(t, start)?;
+    let end = closing(t, start, open, close)?;
     if end < i {
         return None;
     }
