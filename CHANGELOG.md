@@ -3,6 +3,42 @@
 Notable changes to TeXoria, newest first. Each release's section is also its GitHub release notes
 (`scripts/release-notes.sh`), so every release must have one before it is tagged.
 
+## [0.3.0] - 2026-10-17
+
+### Added
+
+- **Updates from the app.** TeXoria looks for a new release at startup (at most once a day, can be
+  turned off in Settings → Updates) and with Check Now or, on macOS, Check for Updates… in the
+  TeXoria menu. Copies installed from the `.dmg`, the Windows installer, the AppImage or the install
+  script update themselves: "Update to X.Y.Z" in the status bar downloads the release, "Restart to
+  Update" saves your files and restarts into it. Nothing is installed unless the release's
+  checksums are signed with the project's release key and the download matches them. Homebrew and
+  Linux packages are told how to update. ([530a248](https://github.com/Herbrant/TeXoria/commit/530a248), [46847e3](https://github.com/Herbrant/TeXoria/commit/46847e3))
+- Only one window updates at a time; the others show "Updating in another window". On Windows,
+  TeXoria asks to close its other windows before the installer runs, since it would close them
+  without saving. ([46847e3](https://github.com/Herbrant/TeXoria/commit/46847e3))
+
+### Changed
+
+- "Typeset" is now called "Build" everywhere: the button, the menu, the settings page, the
+  messages and the agents' `build` tool. ([5729795](https://github.com/Herbrant/TeXoria/commit/5729795))
+
+### Fixed
+
+- On Windows, the buttons of the title bar (light/dark theme, Build, sidebars, Settings) did not
+  respond to clicks. ([0e16a53](https://github.com/Herbrant/TeXoria/commit/0e16a53))
+- On macOS, a double click on the title bar was handled twice, and clicks on its buttons were
+  delayed. ([0e16a53](https://github.com/Herbrant/TeXoria/commit/0e16a53))
+
+### Build and documentation
+
+- Releases publish `SHA256SUMS.minisig`, a minisign signature of the checksums, which the updater
+  requires. ([530a248](https://github.com/Herbrant/TeXoria/commit/530a248))
+- Wrapped lines of the release notes are joined, since GitHub shows every line break.
+  ([82efbbb](https://github.com/Herbrant/TeXoria/commit/82efbbb))
+
+**Full changelog**: [v0.2.0...v0.3.0](https://github.com/Herbrant/TeXoria/compare/v0.2.0...v0.3.0)
+
 ## [0.2.0] - 2026-10-17
 
 ### Added
