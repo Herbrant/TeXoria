@@ -189,8 +189,22 @@ pub fn context(text: &str, offset: usize) -> Option<Context> {
 }
 
 pub(crate) fn in_comment(before: &str) -> bool {
-    let b = before.as_bytes();
-    (0..b.len()).any(|i| b[i] == b'%' && (i == 0 || b[i - 1] != b'\\'))
+    comment_start(before).is_some()
+}
+
+/// Where the `%` comment of `line` starts, if it has one: `\%` is a percent
+/// sign, but `\\%` a line break and a comment.
+pub(crate) fn comment_start(line: &str) -> Option<usize> {
+    let b = line.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            b'%' => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 pub(crate) fn unclosed_brace(s: &str) -> Option<usize> {
@@ -944,6 +958,16 @@ mod tests {
             );
         }
         let (t, o) = at("\\href{https://ex|ample.org}{site}");
+        assert_eq!(nav::symbol_at(&t, o), None);
+    }
+
+    #[test]
+    fn a_percent_after_a_line_break_starts_a_comment() {
+        let (t, o) = at("a \\\\% \\sec|");
+        assert_eq!(context(&t, o), None);
+        let (t, o) = at("a \\\\\\% \\sec|");
+        assert!(matches!(context(&t, o), Some(Context::Command { .. })));
+        let (t, o) = at("x\\\\%\\ref{a|}");
         assert_eq!(nav::symbol_at(&t, o), None);
     }
 
