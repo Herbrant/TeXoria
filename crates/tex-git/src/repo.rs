@@ -372,15 +372,43 @@ impl Repo {
             .map(drop)
     }
 
-    /// Delete untracked files.
+    /// Delete untracked files. Nothing is deleted if one of `paths` is not a
+    /// file of the working tree.
     pub fn delete_untracked(&self, paths: &[String]) -> Result<()> {
-        for p in paths {
-            if p.split('/').any(|c| c == "..") {
-                return Err(Error::Invalid(format!("refusing to delete {p}")));
-            }
-            std::fs::remove_file(self.abs_path(p)).map_err(Error::Spawn)?;
+        let files = paths
+            .iter()
+            .map(|p| {
+                self.deletable(p)
+                    .ok_or_else(|| Error::Invalid(format!("refusing to delete {p}")))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for file in files {
+            std::fs::remove_file(file).map_err(Error::Spawn)?;
         }
         Ok(())
+    }
+
+    /// The working-tree file `rel` names, if it is one: only plain names
+    /// (nothing absolute, no `..`, which `\` also separates on Windows),
+    /// nothing in a `.git` folder, and no folder on the way that is a link
+    /// to elsewhere.
+    fn deletable(&self, rel: &str) -> Option<PathBuf> {
+        let mut path = self.root.clone();
+        let mut names = Path::new(rel).components().peekable();
+        names.peek()?;
+        while let Some(c) = names.next() {
+            let std::path::Component::Normal(name) = c else {
+                return None;
+            };
+            if is_git_dir(&name.to_string_lossy()) {
+                return None;
+            }
+            path.push(name);
+            if names.peek().is_some() && !std::fs::symlink_metadata(&path).ok()?.is_dir() {
+                return None;
+            }
+        }
+        Some(path)
     }
 
     pub fn commit(&self, message: &str, opts: CommitOptions) -> Result<()> {
@@ -564,6 +592,14 @@ fn check_rev(rev: &str) -> Result<()> {
     }
 }
 
+/// Whether a file name may stand for `.git` on some file system: in any case
+/// (macOS, Windows), with the trailing dots and spaces Windows drops, as an
+/// NTFS stream (`.git::$INDEX_ALLOCATION`) or a short name (`GIT~1`).
+fn is_git_dir(name: &str) -> bool {
+    let name = name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
+    name == ".git" || name.starts_with(".git:") || name == "git~1"
+}
+
 /// A git-style patch adding `path` with `contents`, for untracked files.
 pub fn untracked_patch(path: &str, contents: &[u8]) -> String {
     let mut out = format!("diff --git a/{path} b/{path}\nnew file mode 100644\n");
@@ -625,6 +661,24 @@ mod tests {
             Some("64ab12")
         );
         assert_eq!(clone_dir_name(""), None);
+    }
+
+    #[test]
+    fn names_of_the_git_folder() {
+        for name in [
+            ".git",
+            ".GIT",
+            ".Git.",
+            ".git ",
+            ".git. .",
+            ".git::$INDEX_ALLOCATION",
+            "GIT~1",
+        ] {
+            assert!(is_git_dir(name), "{name}");
+        }
+        for name in [".gitignore", ".github", "git", "a.git", ".git-x", "x.git."] {
+            assert!(!is_git_dir(name), "{name}");
+        }
     }
 
     #[test]

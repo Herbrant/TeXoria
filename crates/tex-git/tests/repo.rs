@@ -347,3 +347,74 @@ fn discovery_stays_in_the_trusted_folder() {
     std::fs::create_dir_all(&sub).unwrap();
     assert!(git.discover_at(&sub).unwrap().is_none());
 }
+
+#[test]
+fn deleting_untracked_files_stays_in_the_working_tree() {
+    let Some(sb) = Sandbox::new() else {
+        return;
+    };
+    let repo = sb.committed("p");
+    let outside = sb.path("outside.txt");
+    std::fs::write(&outside, "keep").unwrap();
+    let config = repo.root().join(".git").join("config");
+    let mut refused = vec![
+        String::new(),
+        "../outside.txt".into(),
+        "figs/../../outside.txt".into(),
+        outside.to_str().unwrap().into(),
+        ".git/config".into(),
+        ".GIT/config".into(),
+        "./.git/config".into(),
+        ".git".into(),
+        "sub/.git/config".into(),
+    ];
+    if cfg!(windows) {
+        refused.extend([
+            r"..\outside.txt".into(),
+            r"figs\..\..\outside.txt".into(),
+            r".git\config".into(),
+            ".git./config".into(),
+            ".git /config".into(),
+            "git~1/config".into(),
+            ".git::$INDEX_ALLOCATION/config".into(),
+            r"\outside.txt".into(),
+        ]);
+    }
+    for p in &refused {
+        let err = repo.delete_untracked(std::slice::from_ref(p)).unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{p:?}: {err:?}");
+    }
+    assert!(outside.is_file());
+    assert!(config.is_file());
+
+    // Nothing is deleted when one of the paths is refused.
+    write(&repo, "figs/new.pdf", "x");
+    assert!(
+        repo.delete_untracked(&["figs/new.pdf".into(), "../outside.txt".into()])
+            .is_err()
+    );
+    assert!(repo.abs_path("figs/new.pdf").is_file());
+    repo.delete_untracked(&["figs/new.pdf".into()]).unwrap();
+    assert!(!repo.abs_path("figs/new.pdf").exists());
+    assert!(outside.is_file());
+}
+
+/// A folder that is a link to elsewhere does not take the deletion there.
+#[cfg(unix)]
+#[test]
+fn deleting_untracked_files_does_not_follow_linked_folders() {
+    let Some(sb) = Sandbox::new() else {
+        return;
+    };
+    let repo = sb.committed("p");
+    let elsewhere = sb.path("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("f.tex"), "keep").unwrap();
+    std::os::unix::fs::symlink(&elsewhere, repo.root().join("link")).unwrap();
+    let err = repo.delete_untracked(&["link/f.tex".into()]).unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+    assert!(elsewhere.join("f.tex").is_file());
+    // The link itself is an untracked file like any other.
+    repo.delete_untracked(&["link".into()]).unwrap();
+    assert!(elsewhere.join("f.tex").is_file());
+}
