@@ -603,7 +603,7 @@ impl Workspace {
     // ── Opening files ────────────────────────────────────────────────────
 
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let path = crate::paths::canonical(&path);
         let file = if path.is_dir() {
             find_main_file(&path)
         } else {
@@ -618,7 +618,7 @@ impl Workspace {
         };
         let text = tex_project::read_regular(&file).unwrap_or_default();
         let root = tex_project::find_root(&file, &text);
-        let root = std::fs::canonicalize(&root).unwrap_or(root);
+        let root = crate::paths::canonical(&root);
         let new_project = self.root.as_ref() != Some(&root);
         let session = new_project
             .then(|| self.settings.session(&root).cloned())
@@ -846,7 +846,7 @@ impl Workspace {
 
     /// Jump to a 0-based `line` in `file` (outline, diagnostics, inverse search).
     fn reveal(&mut self, file: PathBuf, line: u32, window: &mut Window, cx: &mut Context<Self>) {
-        let file = std::fs::canonicalize(&file).unwrap_or(file);
+        let file = crate::paths::canonical(&file);
         let Some(ix) = self.activate_file(file, window, cx) else {
             return;
         };
@@ -865,7 +865,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let file = std::fs::canonicalize(&file).unwrap_or(file);
+        let file = crate::paths::canonical(&file);
         let Some(ix) = self.activate_file(file, window, cx) else {
             return;
         };
@@ -1640,7 +1640,7 @@ impl Workspace {
                 self.save_resolution(path.clone(), text.clone(), window, cx)
             }
             DiffViewEvent::Open(file) => {
-                let file = std::fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+                let file = crate::paths::canonical(file);
                 self.activate_file(file, window, cx);
             }
             DiffViewEvent::SplitChanged(split) => {
@@ -1868,7 +1868,7 @@ impl Workspace {
                         // We created it, so its configuration is git's default; its
                         // latexmkrc comes from the remote and still needs consent. A
                         // `%!TEX root` may point elsewhere: that is not ours to trust.
-                        let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
+                        let dir = crate::paths::canonical(&dir);
                         let top = this
                             .root
                             .as_deref()
@@ -2513,7 +2513,7 @@ impl Workspace {
                     .diagnostics
                     .into_iter()
                     .map(|mut d| {
-                        d.file = d.file.map(|f| std::fs::canonicalize(&f).unwrap_or(f));
+                        d.file = d.file.map(|f| crate::paths::canonical(&f));
                         d
                     })
                     .collect();
@@ -5249,7 +5249,10 @@ fn lines_label(file: &Path, first: u32, last: u32) -> String {
 /// A `file://` URI, with what must be escaped in a path escaped.
 fn file_uri(path: &Path) -> String {
     let p = path.to_string_lossy().replace('\\', "/");
-    let mut out = String::from(if p.starts_with('/') {
+    // `/home/x`, `C:/x`, or `//server/share/x` (a Windows share: the server is the host).
+    let mut out = String::from(if p.starts_with("//") {
+        "file:"
+    } else if p.starts_with('/') {
         "file://"
     } else {
         "file:///"

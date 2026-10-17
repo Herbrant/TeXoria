@@ -328,7 +328,7 @@ impl GitPanel {
             return HashMap::new();
         };
         // Project paths are canonical.
-        let root = std::fs::canonicalize(repo.root()).unwrap_or_else(|_| repo.root().into());
+        let root = crate::paths::canonical(repo.root());
         self.status
             .entries
             .iter()

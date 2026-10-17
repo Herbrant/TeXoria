@@ -63,6 +63,22 @@ fn finds_the_main_file_of_a_folder() {
     );
 }
 
+#[test]
+fn file_uris() {
+    assert_eq!(
+        file_uri(Path::new("/home/me/a b.tex")),
+        "file:///home/me/a%20b.tex"
+    );
+    assert_eq!(
+        file_uri(Path::new(r"C:\Users\me\é.tex")),
+        "file:///C:/Users/me/%C3%A9.tex"
+    );
+    assert_eq!(
+        file_uri(Path::new(r"\\server\share\x.tex")),
+        "file://server/share/x.tex"
+    );
+}
+
 #[gpui::test]
 fn opens_a_project_folder(cx: &mut TestAppContext) {
     let dir = testing::fixture_copy("sample");

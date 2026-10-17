@@ -257,7 +257,33 @@ impl Settings {
             settings.rc_allowed = Some(settings.trusted_projects.clone());
         }
         settings.load_error = error;
+        settings.plain_paths();
         settings
+    }
+
+    /// Folders saved by versions that kept Windows' verbatim spelling (`\\?\C:\dir`) in the
+    /// form the app now compares them in.
+    fn plain_paths(&mut self) {
+        let lists = [
+            &mut self.recent,
+            &mut self.trusted_projects,
+            &mut self.shell_escape_allowed,
+            &mut self.agent_projects,
+        ];
+        for list in lists.into_iter().chain(self.rc_allowed.as_mut()) {
+            for p in list.iter_mut() {
+                *p = crate::paths::plain(p);
+            }
+        }
+        for s in &mut self.sessions {
+            s.root = crate::paths::plain(&s.root);
+            for f in s.files.iter_mut().chain(s.active.as_mut()) {
+                *f = crate::paths::plain(f);
+            }
+        }
+        for l in &mut self.spell_languages {
+            l.file = crate::paths::plain(&l.file);
+        }
     }
 
     /// The settings of `text` that can be read, each on its own.
@@ -470,6 +496,14 @@ mod tests {
         s.vim_mode = true;
         s.save();
         assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_folders_are_read_in_plain_form() {
+        let s = Settings::parse("trusted_projects = ['\\\\?\\C:\\paper']\n");
+        assert_eq!(s.trusted_projects, [PathBuf::from(r"C:\paper")]);
+        assert!(s.is_trusted(Path::new(r"C:\paper")));
     }
 
     #[test]
