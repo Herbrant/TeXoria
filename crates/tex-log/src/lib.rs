@@ -329,7 +329,13 @@ impl FileStack {
                         .unwrap_or(rest.len());
                     let token = &rest[..end];
                     if looks_like_path(token) {
-                        self.stack.push(Some(token.to_string()));
+                        // Tectonic logs an `\input` name as written; TeX
+                        // reads `name.tex` for a name without extension.
+                        let file = match Path::new(token).extension() {
+                            Some(_) => token.to_string(),
+                            None => format!("{token}.tex"),
+                        };
+                        self.stack.push(Some(file));
                         i += 1 + end;
                         continue;
                     }
@@ -346,15 +352,18 @@ impl FileStack {
 }
 
 fn looks_like_path(token: &str) -> bool {
-    if token.is_empty() {
+    if token.is_empty() || token.contains("://") {
         return false;
     }
     let has_sep = token.contains('/') || token.contains('\\');
-    let ext = Path::new(token).extension().and_then(|e| e.to_str());
+    let path = Path::new(token);
+    let ext = path.extension().and_then(|e| e.to_str());
     let has_ext = ext.is_some_and(|e| {
         !e.is_empty() && e.len() <= 8 && e.chars().all(|c| c.is_ascii_alphanumeric())
     });
-    has_ext && (has_sep || token.starts_with('.') || !token.contains(':'))
+    // Tectonic writes `\input{chapters/intro}` without the extension.
+    let bare_in_folder = has_sep && ext.is_none() && !token.ends_with(['/', '\\']);
+    (has_ext && (has_sep || token.starts_with('.') || !token.contains(':'))) || bare_in_folder
 }
 
 #[cfg(test)]
@@ -635,6 +644,23 @@ LaTeX Warning: Other on input line 9.
             &root(),
         );
         assert_eq!(d, vec![]);
+    }
+
+    #[test]
+    fn tectonic_input_names_without_extension() {
+        // Tectonic logs `\input{chapters/intro}` as `(chapters/intro`.
+        let d = parse(&fixture("tectonic-subdir.log"), &root());
+        let overfull = d.iter().find(|d| d.message.starts_with("Overfull"));
+        assert_eq!(
+            overfull.and_then(|d| d.file.as_deref()),
+            Some(Path::new("/proj/chapters/intro.tex")),
+            "{d:#?}"
+        );
+        let error = d.iter().find(|d| d.severity == Severity::Error).unwrap();
+        assert_eq!(error.file.as_deref(), Some(Path::new("/proj/main.tex")));
+        assert_eq!(error.line, Some(5));
+        assert!(looks_like_path("chapters/intro"));
+        assert!(!looks_like_path("http://example.org/x"));
     }
 
     #[test]
