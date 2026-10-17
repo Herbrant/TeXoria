@@ -104,6 +104,9 @@ pub struct Candidate {
 
 pub struct Client {
     agent: ureq::Agent,
+    doi_base: String,
+    arxiv_base: String,
+    crossref_base: String,
 }
 
 impl Default for Client {
@@ -114,17 +117,33 @@ impl Default for Client {
 
 impl Client {
     pub fn new() -> Self {
+        Self::with_bases(
+            "https://doi.org",
+            "https://export.arxiv.org",
+            "https://api.crossref.org",
+        )
+    }
+
+    /// A client that asks other servers than doi.org, arXiv's API and Crossref (each a scheme
+    /// and host, without a trailing slash): a mirror, or a local server in tests.
+    pub fn with_bases(doi: &str, arxiv: &str, crossref: &str) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
             .user_agent(USER_AGENT)
             .build()
             .into();
-        Self { agent }
+        let base = |s: &str| s.trim_end_matches('/').to_string();
+        Self {
+            agent,
+            doi_base: base(doi),
+            arxiv_base: base(arxiv),
+            crossref_base: base(crossref),
+        }
     }
 
     /// The BibTeX of a DOI, from its registration agency.
     pub fn doi(&self, doi: &str) -> Result<String> {
-        let url = format!("https://doi.org/{}", encode_path(doi.trim()));
+        let url = format!("{}/{}", self.doi_base, encode_path(doi.trim()));
         let text = self
             .agent
             .get(&url)
@@ -146,10 +165,7 @@ impl Client {
 
     /// The BibTeX of an arXiv preprint (its published DOI's if it has one).
     pub fn arxiv(&self, id: &str) -> Result<String> {
-        let url = format!(
-            "https://export.arxiv.org/api/query?id_list={}",
-            encode_query(id)
-        );
+        let url = format!("{}/api/query?id_list={}", self.arxiv_base, encode_query(id));
         let atom = self
             .agent
             .get(&url)
@@ -171,7 +187,8 @@ impl Client {
     /// Papers whose metadata match `query` (title, authors, year…).
     pub fn search(&self, query: &str) -> Result<Vec<Candidate>> {
         let url = format!(
-            "https://api.crossref.org/works?query.bibliographic={}&rows={ROWS}&select=DOI,title,author,issued,container-title",
+            "{}/works?query.bibliographic={}&rows={ROWS}&select=DOI,title,author,issued,container-title",
+            self.crossref_base,
             encode_query(query)
         );
         let response: CrossrefResponse = self
@@ -552,6 +569,177 @@ mod tests {
             "godel"
         );
         assert_eq!(make_key("@misc{x}", &HashSet::new()), "ref");
+    }
+
+    #[test]
+    fn classifies_prefixed_and_odd_input() {
+        let doi = |s: &str| Lookup::Doi(s.into());
+        assert_eq!(classify("doi.org/10.1/x"), doi("10.1/x"));
+        assert_eq!(classify("DOI: 10.1/X "), doi("10.1/X"));
+        assert_eq!(classify("http://doi.org/10.1/x"), doi("10.1/x"));
+        assert_eq!(classify("https://dx.doi.org/10.1/x"), doi("10.1/x"));
+        assert_eq!(
+            classify("https://arxiv.org/pdf/2301.01234v2.pdf"),
+            Lookup::Arxiv("2301.01234v2".into())
+        );
+        assert_eq!(classify("0704.0001"), Lookup::Arxiv("0704.0001".into()));
+        assert_eq!(
+            classify("hep-th/9901001"),
+            Lookup::Arxiv("hep-th/9901001".into())
+        );
+        for search in [
+            "",
+            "2301.012",
+            "23011.01234",
+            "2301.01234v",
+            "hep-th/990100",
+            "/9901001",
+        ] {
+            assert_eq!(classify(search), Lookup::Search(search.into()), "{search}");
+        }
+    }
+
+    #[test]
+    fn encodes_urls() {
+        assert_eq!(encode_query("a b&c=d/é~"), "a+b%26c%3Dd%2F%C3%A9~");
+        assert_eq!(
+            encode_path("10.1/a b(c);d:e?f#g"),
+            "10.1/a%20b(c);d:e%3Ff%23g"
+        );
+    }
+
+    #[test]
+    fn unescapes_entities_once() {
+        assert_eq!(
+            unescape("&lt;a&gt; &quot;b&quot; &apos;c&apos;"),
+            "<a> \"b\" 'c'"
+        );
+        assert_eq!(unescape("&amp;lt;"), "&lt;");
+        assert_eq!(unescape("AT&amp;T &unknown;"), "AT&T &unknown;");
+    }
+
+    #[test]
+    fn reads_odd_arxiv_feeds() {
+        let doi = ATOM.replace("</entry>", "<arxiv:doi> 10.1/pub </arxiv:doi></entry>");
+        assert_eq!(parse_arxiv(&doi).unwrap().doi.as_deref(), Some("10.1/pub"));
+        // An identifier that does not exist: an entry without a title.
+        let empty = ATOM.replace("Attention Is All\n    You Need", " ");
+        assert!(parse_arxiv(&empty).is_none());
+        // arXiv's error feed is not a preprint.
+        let error = ATOM.replace("abs/1706.03762v7", "api/errors#incorrect_id_format_for_x");
+        assert!(parse_arxiv(&error).is_none());
+        let undated = ATOM.replace("<published>2017-06-12T17:57:34Z</published>", "");
+        assert!(parse_arxiv(&undated).is_none());
+        let p = parse_arxiv(&ATOM.replace("<arxiv:primary_category", "<other")).unwrap();
+        assert_eq!(p.category, None);
+        assert!(!p.bibtex().contains("primaryClass"));
+    }
+
+    #[test]
+    fn reads_crossref_authors_and_dates() {
+        let work = |json: &str| {
+            serde_json::from_str::<Work>(json)
+                .unwrap()
+                .candidate()
+                .unwrap()
+        };
+        let c = work(
+            r#"{"DOI":"10.1/x","title":["T"],"author":[{"family":"Euclid"},{"given":"Only"}],
+                "issued":{"date-parts":[]}}"#,
+        );
+        assert_eq!(c.authors, vec!["Euclid"]);
+        assert_eq!(c.year, None);
+        assert!(serde_json::from_str::<Work>(r#"{"title":["T"]}"#).is_err());
+    }
+
+    #[test]
+    fn names_entries_from_their_fields() {
+        let key = |bib: &str| make_key(bib, &HashSet::new());
+        assert_eq!(
+            key(
+                "@book{x, author={Lamport, Leslie and Knuth, D.}, title={On the Design}, date={1986-01}}"
+            ),
+            "lamport1986design"
+        );
+        assert_eq!(
+            key("@book{x, title={Über die Hypothesen}, year={1854}}"),
+            "1854uber"
+        );
+        assert_eq!(key("@book{x, author={Ada}, year={n.d.}}"), "ada");
+        let taken: HashSet<_> = std::iter::once("ref".to_string())
+            .chain(('b'..='y').map(|c| format!("ref{c}")))
+            .collect();
+        assert_eq!(make_key("@misc{x}", &taken), "refz");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn classifies_every_doi(d in "10\\.[0-9]{4,5}(\\.[0-9]{1,3})?/[A-Za-z0-9._;()/:<>-]{1,20}") {
+            proptest::prop_assert_eq!(classify(&d), Lookup::Doi(d.clone()));
+            proptest::prop_assert_eq!(classify(&format!("https://doi.org/{d}")), Lookup::Doi(d.clone()));
+            proptest::prop_assert_eq!(classify(&format!(" doi:{d}\t")), Lookup::Doi(d.clone()));
+        }
+
+        #[test]
+        fn encodes_to_safe_ascii(s in "\\PC*") {
+            for (encoded, extra) in [(encode_query(&s), "+"), (encode_path(&s), "/();:")] {
+                proptest::prop_assert!(encoded.chars().all(|c| c.is_ascii_alphanumeric()
+                    || "-._~%".contains(c) || extra.contains(c)), "{}", encoded);
+                proptest::prop_assert_eq!(percent_decode(&encoded.replace('+', "%20")), s.clone());
+            }
+        }
+
+        #[test]
+        fn keys_are_ascii_and_free(
+            author in "\\PC{0,20}",
+            title in "\\PC{0,30}",
+            year in "[0-9]{0,4}",
+            taken in proptest::collection::hash_set("[a-z]{0,6}[0-9]{0,4}[a-z]?", 0..40),
+        ) {
+            let bib = format!("@misc{{x, author={{{}}}, title={{{}}}, year={{{year}}}}}",
+                author.replace(['{', '}'], ""), title.replace(['{', '}'], ""));
+            let key = make_key(&bib, &taken);
+            proptest::prop_assert!(!key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric()));
+            proptest::prop_assert!(!taken.contains(&key), "{} is taken", key);
+        }
+
+        #[test]
+        fn normalizing_is_idempotent(
+            kind in "[a-z]{1,10}",
+            fields in proptest::collection::vec(("[a-z]{1,8}", "[A-Za-z0-9 .,:;-]{0,20}", 0..3u8), 0..6),
+        ) {
+            let mut bib = format!("@{kind}{{orig,\n");
+            for (name, value, delim) in &fields {
+                let value = match delim {
+                    0 => format!("{{{value}}}"),
+                    1 => format!("\"{value}\""),
+                    _ => value.trim().replace([',', ' '], "").chars().take(1).collect::<String>() + "1",
+                };
+                bib.push_str(&format!("  {name} = {value},\n"));
+            }
+            bib.push('}');
+            let once = normalize(&bib, "key").unwrap();
+            proptest::prop_assert_eq!(normalize(&once, "key").unwrap(), once.clone());
+            let entry = &bib::parse(&once)[0];
+            proptest::prop_assert_eq!(&entry.key, "key");
+            proptest::prop_assert_eq!(entry.fields.len(), fields.len());
+        }
+    }
+
+    fn percent_decode(s: &str) -> String {
+        let mut out = Vec::new();
+        let b = s.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'%' {
+                out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap());
+                i += 3;
+            } else {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(out).unwrap()
     }
 
     /// Against the real services: `TEXORIA_CITE_ONLINE=1`.
