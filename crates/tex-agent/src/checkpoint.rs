@@ -4,14 +4,19 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
-use tex_project::files::{self, FileNode};
+use tex_project::files;
 
 /// Larger files are only compared by size and date, and cannot be restored.
 const MAX_FILE: u64 = 8 << 20;
 /// Past this much, the remaining files are only compared by size and date.
 const MAX_TOTAL: u64 = 200 << 20;
+/// Past this many files, or this deep, the checkpoint is incomplete.
+const MAX_FILES: usize = 200_000;
+const MAX_DEPTH: usize = 64;
+/// File times may be coarser than the clock.
+const CLOCK_SLACK: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Snapshot {
@@ -27,6 +32,9 @@ pub struct Checkpoint {
     /// Git's configuration and hooks (absolute paths), which run programs.
     /// `.git` is not part of the review, so changes there are told apart.
     git: BTreeMap<PathBuf, Option<Vec<u8>>>,
+    /// Every file was seen: one missing from `files` did not exist.
+    complete: bool,
+    taken: SystemTime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,36 +54,47 @@ pub struct Change {
     pub before: Option<Vec<u8>>,
     /// The contents now (`None` for a deleted file).
     pub after: Option<Vec<u8>>,
+    /// For an added file: it surely did not exist before, so undoing may
+    /// delete it.
+    pub removable: bool,
 }
 
 impl Change {
     /// Whether undoing it is possible.
     pub fn restorable(&self) -> bool {
-        self.kind == ChangeKind::Added || self.before.is_some()
+        match self.kind {
+            ChangeKind::Added => self.removable,
+            _ => self.before.is_some(),
+        }
     }
 }
 
 impl Checkpoint {
     /// Record the files of `dir` (not `.git` nor `.texoria`). Blocking.
     pub fn take(dir: &Path) -> Checkpoint {
+        let taken = SystemTime::now();
         let mut files = BTreeMap::new();
         let mut total = 0u64;
-        for path in walk(dir) {
+        let (paths, mut complete) = walk(dir);
+        for path in paths {
             let Ok(meta) = std::fs::metadata(&path) else {
+                complete = false;
                 continue;
             };
             let rel = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
             let len = meta.len();
+            let stamp = Snapshot::Stamp(len, meta.modified().ok());
             let snapshot = if len <= MAX_FILE && total + len <= MAX_TOTAL {
                 match std::fs::read(&path) {
                     Ok(bytes) => {
                         total += len;
                         Snapshot::Bytes(bytes)
                     }
-                    Err(_) => continue,
+                    // Still recorded: it existed.
+                    Err(_) => stamp,
                 }
             } else {
-                Snapshot::Stamp(len, meta.modified().ok())
+                stamp
             };
             files.insert(rel, snapshot);
         }
@@ -90,6 +109,8 @@ impl Checkpoint {
             dir: dir.to_path_buf(),
             files,
             git,
+            complete,
+            taken,
         }
     }
 
@@ -111,18 +132,22 @@ impl Checkpoint {
     /// What differs now, by path. Blocking.
     pub fn changes(&self) -> Vec<Change> {
         let now: BTreeSet<PathBuf> = walk(&self.dir)
+            .0
             .into_iter()
             .map(|p| p.strip_prefix(&self.dir).unwrap_or(&p).to_path_buf())
             .collect();
         let mut out = Vec::new();
         for (rel, before) in &self.files {
             let abs = self.dir.join(rel);
-            if !now.contains(rel) {
+            // Asked of the file itself, not of the walk, which may stop early.
+            let exists = std::fs::symlink_metadata(&abs).is_ok_and(|m| m.file_type().is_file());
+            if !exists {
                 out.push(Change {
                     path: rel.clone(),
                     kind: ChangeKind::Deleted,
                     before: bytes(before),
                     after: None,
+                    removable: false,
                 });
                 continue;
             }
@@ -148,20 +173,25 @@ impl Checkpoint {
                     kind: ChangeKind::Modified,
                     before: bytes(before),
                     after,
+                    removable: false,
                 });
             }
         }
         for rel in now.difference(&self.files.keys().cloned().collect()) {
             let abs = self.dir.join(rel);
-            let after = std::fs::metadata(&abs)
-                .ok()
+            let meta = std::fs::metadata(&abs).ok();
+            let after = meta
+                .as_ref()
                 .filter(|m| m.len() <= MAX_FILE)
                 .and_then(|_| std::fs::read(&abs).ok());
+            // Deleting a file the checkpoint missed would lose it for good.
+            let removable = self.complete && meta.is_some_and(|m| touched_since(&m, self.taken));
             out.push(Change {
                 path: rel.clone(),
                 kind: ChangeKind::Added,
                 before: None,
                 after,
+                removable,
             });
         }
         out.sort_by(|a, b| a.path.cmp(&b.path));
@@ -184,11 +214,18 @@ impl Checkpoint {
     /// Accept the current state of `rel`: it no longer counts as changed.
     pub fn keep(&mut self, rel: &Path) {
         let abs = self.dir.join(rel);
-        match std::fs::read(&abs) {
-            Ok(bytes) => {
-                self.files.insert(rel.to_path_buf(), Snapshot::Bytes(bytes));
+        let snapshot = std::fs::metadata(&abs).ok().and_then(|m| {
+            if m.len() > MAX_FILE {
+                Some(Snapshot::Stamp(m.len(), m.modified().ok()))
+            } else {
+                std::fs::read(&abs).ok().map(Snapshot::Bytes)
             }
-            Err(_) => {
+        });
+        match snapshot {
+            Some(s) => {
+                self.files.insert(rel.to_path_buf(), s);
+            }
+            None => {
                 self.files.remove(rel);
             }
         }
@@ -219,25 +256,68 @@ fn bytes(s: &Snapshot) -> Option<Vec<u8>> {
     }
 }
 
-/// Every file under `dir`, as the Files view lists them.
-fn walk(dir: &Path) -> Vec<PathBuf> {
-    fn collect(nodes: Vec<FileNode>, out: &mut Vec<PathBuf>) {
-        for n in nodes {
-            match n.children {
-                Some(children) => collect(children, out),
-                None => out.push(n.path),
+/// Whether the file was created, written or renamed since `since`.
+fn touched_since(meta: &std::fs::Metadata, since: SystemTime) -> bool {
+    let since = since.checked_sub(CLOCK_SLACK).unwrap_or(since);
+    #[cfg(unix)]
+    {
+        // The status change time follows a rename too, and cannot be set back.
+        use std::os::unix::fs::MetadataExt;
+        let changed = std::time::UNIX_EPOCH
+            + Duration::new(
+                meta.ctime().max(0) as u64,
+                meta.ctime_nsec().clamp(0, 999_999_999) as u32,
+            );
+        if changed >= since {
+            return true;
+        }
+    }
+    [meta.modified().ok(), meta.created().ok()]
+        .into_iter()
+        .flatten()
+        .any(|t| t >= since)
+}
+
+/// The regular files under `dir` (not links, which may point outside the
+/// project, nor what the Files view hides), and whether that is all of them.
+/// Unlike the Files view's scan, nothing is skipped to save time: a file
+/// missed here would look added later, and an undo would delete it.
+fn walk(dir: &Path) -> (Vec<PathBuf>, bool) {
+    fn visit(dir: &Path, depth: usize, out: &mut Vec<PathBuf>, complete: &mut bool) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            *complete = false;
+            return;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                *complete = false;
+                continue;
+            };
+            if files::is_hidden(&entry.file_name().to_string_lossy()) {
+                continue;
+            }
+            let Ok(kind) = entry.file_type() else {
+                *complete = false;
+                continue;
+            };
+            if kind.is_dir() {
+                if depth + 1 >= MAX_DEPTH {
+                    *complete = false;
+                } else {
+                    visit(&entry.path(), depth + 1, out, complete);
+                }
+            } else if kind.is_file() {
+                if out.len() >= MAX_FILES {
+                    *complete = false;
+                    return;
+                }
+                out.push(entry.path());
             }
         }
     }
-    let mut out = Vec::new();
-    collect(files::scan(dir), &mut out);
-    // Links are listed but may point outside the project.
-    out.retain(|p| {
-        std::fs::symlink_metadata(p)
-            .map(|m| m.file_type().is_file())
-            .unwrap_or(false)
-    });
-    out
+    let (mut out, mut complete) = (Vec::new(), true);
+    visit(dir, 0, &mut out, &mut complete);
+    (out, complete)
 }
 
 /// The changes as a Git-style patch, for the diff viewer.
@@ -344,6 +424,30 @@ mod tests {
     }
 
     #[test]
+    fn never_offers_to_delete_files_it_did_not_see() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("main.tex"), "x").unwrap();
+        let mut cp = Checkpoint::take(d);
+        std::fs::write(d.join("new.tex"), "y").unwrap();
+        let added = |cp: &Checkpoint| {
+            cp.changes()
+                .into_iter()
+                .find(|c| c.path == Path::new("new.tex"))
+                .unwrap()
+        };
+        assert!(added(&cp).restorable());
+
+        // A walk that stopped early: the file may have been there before.
+        cp.complete = false;
+        assert!(!added(&cp).restorable());
+        // A file older than the checkpoint was there already.
+        cp.complete = true;
+        cp.taken = SystemTime::now() + Duration::from_secs(3600);
+        assert!(!added(&cp).restorable());
+    }
+
+    #[test]
     fn tells_git_configuration_and_hooks_apart() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
@@ -373,6 +477,7 @@ mod tests {
             kind: ChangeKind::Modified,
             before: Some(b"\x89PNG\0a".to_vec()),
             after: Some(b"\x89PNG\0b".to_vec()),
+            removable: false,
         };
         assert!(patch(&[c]).contains("Binary files a/fig.png and b/fig.png differ"));
     }

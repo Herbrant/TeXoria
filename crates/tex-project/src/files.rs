@@ -94,7 +94,9 @@ fn scan_dir(dir: &Path, depth: usize, budget: &mut usize) -> Vec<FileNode> {
     out
 }
 
-fn is_hidden(name: &str) -> bool {
+/// Whether the Files view leaves `name` out (version control, build output,
+/// OS clutter).
+pub fn is_hidden(name: &str) -> bool {
     HIDDEN.iter().any(|h| h.eq_ignore_ascii_case(name))
 }
 
