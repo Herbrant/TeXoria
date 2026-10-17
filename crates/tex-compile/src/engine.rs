@@ -81,7 +81,12 @@ impl Job {
     }
 
     pub fn work_dir(&self) -> &Path {
-        self.root_file.parent().unwrap_or(Path::new("."))
+        // The parent of a bare `main.tex` is the empty path: no folder to
+        // run in.
+        self.root_file
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
     }
 
     pub fn artifact(&self, ext: &str) -> PathBuf {
@@ -558,6 +563,14 @@ mod tests {
         assert!(!job.has_project_rc());
         std::fs::write(dir.path().join(".latexmkrc"), "").unwrap();
         assert!(job.has_project_rc());
+    }
+
+    #[test]
+    fn bare_file_name_runs_in_the_current_folder() {
+        let job = Job::for_root("main.tex");
+        assert_eq!(job.work_dir(), Path::new("."));
+        let cmd = latexmk(Flavor::PdfLatex).command(&job);
+        assert_eq!(cmd.get_current_dir(), Some(Path::new(".")));
     }
 
     fn latexmk(flavor: Flavor) -> Engine {
