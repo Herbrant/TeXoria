@@ -47,6 +47,10 @@ impl Store {
 
     /// The dictionary for `code` if it is already on this machine.
     pub fn local(&self, code: &str) -> Option<Files> {
+        // Joined into paths: `../x` must not reach outside the folders.
+        if code.is_empty() || !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return None;
+        }
         let installed = system_names(code).into_iter().find_map(|name| {
             self.system.iter().find_map(|dir| {
                 let files = Files {
@@ -297,6 +301,34 @@ mod tests {
         );
         fs::write(&cached.dic, "").unwrap();
         assert_eq!(store.local("de-AT"), Some(cached));
+    }
+
+    #[test]
+    fn codes_stay_inside_the_dictionary_folders() {
+        let root = tempfile::tempdir().unwrap();
+        let system = root.path().join("system");
+        let cache = root.path().join("cache");
+        fs::create_dir_all(&system).unwrap();
+        let store = Store::with_dirs(&cache, vec![system.clone()]);
+        // A dictionary outside both folders...
+        fs::write(root.path().join("evil.aff"), "").unwrap();
+        fs::write(root.path().join("evil.dic"), "").unwrap();
+        let outside = store.cached("../../x");
+        fs::create_dir_all(outside.aff.parent().unwrap()).unwrap();
+        fs::write(&outside.aff, "").unwrap();
+        fs::write(&outside.dic, "").unwrap();
+        // ...is not reachable through a code.
+        for code in [
+            "../evil",
+            "../../x",
+            "/etc/evil",
+            "x/../../../evil",
+            "",
+            "it\0",
+        ] {
+            assert_eq!(store.local(code), None, "{code:?}");
+        }
+        assert!(store.download("../../x").is_err());
     }
 
     #[test]
