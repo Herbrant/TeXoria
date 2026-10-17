@@ -158,8 +158,14 @@ pub fn new_entry_path(dir: &Path, name: &str) -> Result<PathBuf, &'static str> {
     for c in Path::new(name).components() {
         match c {
             Component::Normal(part) => {
-                if is_hidden(&part.to_string_lossy()) {
+                let part_name = part.to_string_lossy();
+                if is_hidden(&part_name) {
                     return Err("That name is reserved.");
+                }
+                if cfg!(windows)
+                    && let Some(e) = windows_name_error(&part_name)
+                {
+                    return Err(e);
                 }
                 out.push(part);
             }
@@ -185,7 +191,31 @@ pub fn rename_target(path: &Path, name: &str) -> Result<PathBuf, &'static str> {
     if is_hidden(name) {
         return Err("That name is reserved.");
     }
+    if cfg!(windows)
+        && let Some(e) = windows_name_error(name)
+    {
+        return Err(e);
+    }
     Ok(path.with_file_name(name))
+}
+
+/// Why Windows cannot hold a file or folder called `name`, if it cannot: a
+/// device name (`con`, `aux.tex`), a reserved character (`a:b` would write an
+/// alternate data stream of `a`), or a trailing dot or space (dropped by
+/// Windows, so the file would get another name).
+fn windows_name_error(name: &str) -> Option<&'static str> {
+    if name.chars().any(|c| c < ' ' || "<>:\"|?*".contains(c)) {
+        return Some("A name cannot contain < > : \" | ? * on Windows.");
+    }
+    if name.ends_with(['.', ' ']) {
+        return Some("A name cannot end with a dot or a space on Windows.");
+    }
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit());
+    device.then_some("That name is reserved on Windows.")
 }
 
 /// Whether `to` names the same file as `from`: a rename that only changes
@@ -446,6 +476,54 @@ mod tests {
         // Same file exactly when the disk ignores case.
         assert_eq!(is_same_file(&lower, &upper), upper.exists());
         assert!(!is_same_file(&lower, &dir.path().join("gone.tex")));
+    }
+
+    #[test]
+    fn knows_the_names_windows_cannot_hold() {
+        for bad in [
+            "con", "CON", "nul.tex", "aux.tex", "Aux", "prn.bib", "com1", "LPT9.txt", "a:b", "a<b",
+            "a>b", "a\"b", "a|b", "a?b", "a*b", "a\tb", "name.", "name ", "...",
+        ] {
+            assert!(windows_name_error(bad).is_some(), "{bad}");
+        }
+        for good in [
+            "main.tex",
+            "con-clusion.tex",
+            "conclusion.tex",
+            "auxiliary.tex",
+            "com10",
+            "lpt",
+            "com",
+            ".latexmkrc",
+            "a.b.c",
+            "é.tex",
+        ] {
+            assert_eq!(windows_name_error(good), None, "{good}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_refuses_names_it_cannot_hold() {
+        let dir = Path::new(r"C:\p");
+        for name in ["aux.tex", "con", "sub/nul", "a:b.tex", "x."] {
+            assert!(new_entry_path(dir, name).is_err(), "{name}");
+            if !name.contains('/') {
+                assert!(rename_target(&dir.join("a.tex"), name).is_err(), "{name}");
+            }
+        }
+        assert!(new_entry_path(dir, "conclusion.tex").is_ok());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn other_systems_allow_names_windows_cannot_hold() {
+        let dir = Path::new("/p");
+        assert_eq!(new_entry_path(dir, "aux.tex"), Ok(dir.join("aux.tex")));
+        assert_eq!(
+            rename_target(&dir.join("a.tex"), "a:b"),
+            Ok(dir.join("a:b"))
+        );
     }
 
     mod props {
