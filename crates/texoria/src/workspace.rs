@@ -186,7 +186,7 @@ impl Workspace {
         if let Some(error) = settings.load_error.take() {
             window.defer(cx, move |window, cx| {
                 window.push_notification(
-                    Notification::warning(error).title("Settings were partly reset"),
+                    Notification::warning(error).title("Settings could not be read in full"),
                     cx,
                 )
             });

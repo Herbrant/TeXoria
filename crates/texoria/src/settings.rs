@@ -75,6 +75,10 @@ pub struct Settings {
     /// Why the file could not be read in full, to tell the user once.
     #[serde(skip)]
     pub load_error: Option<String>,
+    /// Where [`Settings::save`] writes: the file they were loaded from, `None` to keep them in
+    /// memory only (a file that could not be read, and tests).
+    #[serde(skip)]
+    pub file: Option<PathBuf>,
 }
 
 /// A project's open tabs, restored when it is opened again.
@@ -171,41 +175,69 @@ impl Default for Settings {
             check_updates: true,
             last_update_check: None,
             load_error: None,
+            file: None,
         }
     }
 }
 
+/// The settings file in the OS configuration directory. Never in tests, which must not read or
+/// change the user's settings.
 fn path() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
     directories::ProjectDirs::from("app", "TeXoria", "TeXoria")
         .map(|d| d.config_dir().join("settings.toml"))
 }
 
 impl Settings {
     pub fn load() -> Self {
-        let Some(p) = path() else {
-            return Self::default();
-        };
-        let Ok(text) = std::fs::read_to_string(&p) else {
-            return Self::default();
+        path().map_or_else(Self::default, Self::load_from)
+    }
+
+    /// The settings in `file`, saved back there.
+    pub fn load_from(file: PathBuf) -> Self {
+        let text = match std::fs::read_to_string(&file) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Self {
+                    file: Some(file),
+                    ..Self::default()
+                };
+            }
+            Err(e) => {
+                // Saving would replace the trusted folders and the dictionary with the
+                // defaults: leave the file alone until it can be read.
+                log::warn!("reading {}: {e}", file.display());
+                return Self {
+                    load_error: Some(format!(
+                        "{} could not be read, so the default settings are used and changes \
+                         will not be saved.\n{e}",
+                        file.display()
+                    )),
+                    ..Self::default()
+                };
+            }
         };
         let mut settings = Self::parse(&text);
         if let Some(e) = &settings.load_error {
             // The next save drops what could not be read: keep the file.
-            let backup = p.with_extension("toml.bak");
-            let kept = match std::fs::copy(&p, &backup) {
+            let backup = file.with_extension("toml.bak");
+            let kept = match std::fs::copy(&file, &backup) {
                 Ok(_) => format!("The file as it was is kept as {}.", backup.display()),
                 Err(err) => {
-                    log::warn!("backing up {}: {err}", p.display());
+                    log::warn!("backing up {}: {err}", file.display());
                     String::new()
                 }
             };
-            log::warn!("reading {}: {e}", p.display());
+            log::warn!("reading {}: {e}", file.display());
             settings.load_error = Some(
                 format!("Some settings could not be read and were reset. {kept}\n{e}")
                     .trim()
                     .to_string(),
             );
         }
+        settings.file = Some(file);
         settings
     }
 
@@ -242,13 +274,13 @@ impl Settings {
     }
 
     pub fn save(&self) {
-        let Some(p) = path() else { return };
+        let Some(p) = &self.file else { return };
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
         match toml::to_string_pretty(self) {
             Ok(s) => {
-                if let Err(e) = crate::atomic::write(&p, s.as_bytes()) {
+                if let Err(e) = crate::atomic::write(p, s.as_bytes()) {
                     log::warn!("saving settings: {e}");
                 }
             }
@@ -392,6 +424,53 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tests_never_use_the_real_settings() {
+        let s = Settings::load();
+        assert!(s.file.is_none());
+        s.save();
+    }
+
+    #[test]
+    fn saves_where_it_loaded_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config/settings.toml");
+        let mut s = Settings::load_from(file.clone());
+        assert!(s.load_error.is_none(), "a missing file is a first start");
+        s.vim_mode = true;
+        s.save();
+        let back = Settings::load_from(file);
+        assert!(back.vim_mode);
+        assert!(back.load_error.is_none());
+    }
+
+    #[test]
+    fn keeps_a_partly_unreadable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.toml");
+        std::fs::write(&file, "vim_mode = true\neditor_font_size = \"big\"\n").unwrap();
+        let s = Settings::load_from(file.clone());
+        assert!(s.vim_mode);
+        let error = s.load_error.as_deref().unwrap();
+        assert!(error.contains("settings.toml.bak"), "{error}");
+        let backup = std::fs::read_to_string(dir.path().join("settings.toml.bak")).unwrap();
+        assert!(backup.contains("\"big\""));
+    }
+
+    #[test]
+    fn never_overwrites_a_file_it_could_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.toml");
+        // Not UTF-8: reading it fails as a whole, and the trusted folders in it must survive.
+        let bytes = b"trusted_projects = [\"/caf\xe9\"]\n";
+        std::fs::write(&file, bytes).unwrap();
+        let mut s = Settings::load_from(file.clone());
+        assert!(s.load_error.is_some());
+        s.vim_mode = true;
+        s.save();
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    }
 
     #[test]
     fn sessions_are_per_project_and_capped() {
