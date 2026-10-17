@@ -365,9 +365,12 @@ pub fn find_root(file: &Path, text: &str) -> PathBuf {
     let dir = file.parent().unwrap_or(Path::new("."));
     for line in text.lines().take(20) {
         let l = line.trim_start_matches(['%', ' ', '\t']);
+        // TeXShop, TeXworks and LaTeX Workshop ignore its case.
+        const MAGIC: &str = "!TEX root";
         let rest = l
-            .strip_prefix("!TEX root")
-            .or_else(|| l.strip_prefix("!TeX root"));
+            .get(..MAGIC.len())
+            .filter(|m| m.eq_ignore_ascii_case(MAGIC))
+            .map(|_| &l[MAGIC.len()..]);
         if let Some(path) = rest.and_then(|r| r.trim().strip_prefix('=')) {
             return normalize(&dir.join(path.trim()));
         }
@@ -680,6 +683,18 @@ mod tests {
         assert_eq!(find_root(file, &late), file);
         // The file itself, as a root.
         assert_eq!(find_root(file, "\\documentclass{article}"), file);
+    }
+
+    #[test]
+    fn magic_comments_ignore_case() {
+        let file = Path::new("/p/ch/a.tex");
+        for magic in ["% !tex root = ../main.tex", "% !TEX ROOT = ../main.tex"] {
+            assert_eq!(
+                find_root(file, magic),
+                PathBuf::from("/p/main.tex"),
+                "{magic}"
+            );
+        }
     }
 
     #[test]
