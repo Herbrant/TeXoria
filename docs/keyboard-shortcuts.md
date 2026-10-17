@@ -19,6 +19,7 @@
 | Previous / next page (after clicking the preview) | ← / →, Page Up / Page Down | ← / →, Page Up / Page Down |
 | First / last page (after clicking the preview) | Home / End | Home / End |
 | Go to a page (after clicking the preview) | ⌘G | Ctrl+G |
+| Find in the PDF (after clicking the preview) | ⌘F, then ↵ / ⇧↵, Esc | Ctrl+F, then Enter / Shift+Enter, Esc |
 | Outline | ⌘1 | Ctrl+1 |
 | Files | ⌘⇧E | Ctrl+Shift+E |
 | Source control | ⌘⇧G | Ctrl+Shift+G |

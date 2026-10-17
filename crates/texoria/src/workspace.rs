@@ -4438,6 +4438,11 @@ impl Render for Workspace {
                 this.pdf.update(cx, |p, cx| p.fit_page(cx))
             }))
             .on_action(
+                cx.listener(|this, _: &crate::pdf_pane::FindInPdf, window, cx| {
+                    this.pdf.update(cx, |p, cx| p.open_find(window, cx))
+                }),
+            )
+            .on_action(
                 cx.listener(|this, _: &crate::pdf_pane::GoToPage, window, cx| {
                     this.pdf.update(cx, |p, cx| p.prompt_page(window, cx))
                 }),

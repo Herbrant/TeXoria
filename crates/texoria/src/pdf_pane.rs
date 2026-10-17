@@ -12,12 +12,13 @@ use std::time::Duration;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{
-    ActiveTheme, Icon, Sizable, button::Button, button::ButtonVariants, h_flex, v_flex,
+    ActiveTheme, Icon, Selectable as _, Sizable, button::Button, button::ButtonVariants, h_flex,
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use pdf_view::{
-    Bitmap, Event as RenderEvent, Link, LinkTarget, PageSize, Query, RenderKey, Renderer,
+    Bitmap, Event as RenderEvent, Hit, Link, LinkTarget, PageSize, Query, RenderKey, Renderer,
 };
 use synctex::{Rect, SyncTex};
 
@@ -39,7 +40,9 @@ actions!(
         FirstPage,
         LastPage,
         GoToPage,
-        FitPage
+        FitPage,
+        FindInPdf,
+        CloseFind
     ]
 );
 
@@ -61,6 +64,19 @@ pub enum PdfPaneEvent {
 struct Shown {
     key: RenderKey,
     image: Arc<RenderImage>,
+}
+
+/// The find bar: its field and what it found.
+struct Find {
+    input: Entity<InputState>,
+    match_case: bool,
+    hits: Vec<Hit>,
+    current: Option<usize>,
+    /// Of the search whose hits are awaited.
+    id: u64,
+    searching: bool,
+    _subscription: Subscription,
+    _debounce: Task<()>,
 }
 
 struct Highlight {
@@ -98,6 +114,8 @@ pub struct PdfPane {
     /// The links of the pages asked for so far (they are asked once).
     links: HashMap<usize, Vec<Link>>,
     asked_links: HashSet<usize>,
+    find: Option<Find>,
+    find_seq: u64,
     /// The "go to page" field of the toolbar, while it is open.
     page_input: Option<Entity<InputState>>,
     _page_input: Option<Subscription>,
@@ -153,6 +171,8 @@ impl PdfPane {
             focus: cx.focus_handle(),
             links: HashMap::new(),
             asked_links: HashSet::new(),
+            find: None,
+            find_seq: 0,
             page_input: None,
             _page_input: None,
             _events: events,
@@ -206,6 +226,8 @@ impl PdfPane {
                 self.doc_generation = generation;
                 self.links.clear();
                 self.asked_links.clear();
+                // Hits move with the text.
+                self.search(Duration::ZERO, cx);
                 self.synctex = self.pending_synctex.take();
                 self.pages = pages;
                 self.error = None;
@@ -256,8 +278,22 @@ impl PdfPane {
                     self.links.insert(page, links);
                 }
             }
+            RenderEvent::Found { id, hits, .. } => {
+                if let Some(f) = self.find.as_mut().filter(|f| f.id == id) {
+                    f.searching = false;
+                    f.hits = hits;
+                    // The first hit from where the reader is.
+                    let here = self.current_page();
+                    let f = self.find.as_mut().unwrap();
+                    f.current = f
+                        .hits
+                        .iter()
+                        .position(|h| h.page >= here)
+                        .or((!f.hits.is_empty()).then_some(0));
+                    self.reveal_hit(cx);
+                }
+            }
             RenderEvent::PageText { .. }
-            | RenderEvent::Found { .. }
             | RenderEvent::Snapshot { .. }
             | RenderEvent::Text { .. } => {}
         }
@@ -388,6 +424,178 @@ impl PdfPane {
     fn step_page(&mut self, delta: isize, cx: &mut Context<Self>) {
         let page = (self.current_page() as isize + delta).max(0) as usize;
         self.go_to(page, None, cx);
+    }
+
+    // ── Find ─────────────────────────────────────────────────────────────
+
+    /// Show the find bar (⌘F in the preview) with its text selected.
+    pub fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in PDF"));
+            let subscription =
+                cx.subscribe_in(&input, window, |this, _, ev: &InputEvent, _, cx| match ev {
+                    InputEvent::Change => this.search(Duration::from_millis(250), cx),
+                    InputEvent::PressEnter { shift, .. } => {
+                        this.next_hit(if *shift { -1 } else { 1 }, cx)
+                    }
+                    _ => {}
+                });
+            self.find = Some(Find {
+                input,
+                match_case: false,
+                hits: Vec::new(),
+                current: None,
+                id: 0,
+                searching: false,
+                _subscription: subscription,
+                _debounce: Task::ready(()),
+            });
+        }
+        if let Some(f) = &self.find {
+            f.input.update(cx, |i, cx| {
+                i.focus(window, cx);
+                i.select_all(window, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find.take().is_some() {
+            window.focus(&self.focus, cx);
+            cx.notify();
+        }
+    }
+
+    /// Search for the find bar's text after `delay`.
+    fn search(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        let Some(f) = &mut self.find else {
+            return;
+        };
+        self.find_seq += 1;
+        let id = self.find_seq;
+        f.id = id;
+        let text = f.input.read(cx).value().to_string();
+        let match_case = f.match_case;
+        if text.trim().is_empty() {
+            f.hits.clear();
+            f.current = None;
+            f.searching = false;
+            cx.notify();
+            return;
+        }
+        f.searching = true;
+        f._debounce = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            this.update(cx, |this, _| {
+                if let Some(r) = &this.renderer {
+                    r.query(Query::Search {
+                        id,
+                        text,
+                        match_case,
+                        whole_word: false,
+                    });
+                }
+            })
+            .ok();
+        });
+        cx.notify();
+    }
+
+    fn next_hit(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(f) = &mut self.find else {
+            return;
+        };
+        let n = f.hits.len() as isize;
+        if n == 0 {
+            return;
+        }
+        f.current = Some(f.current.map_or(0, |c| (c as isize + delta).rem_euclid(n)) as usize);
+        self.reveal_hit(cx);
+    }
+
+    /// Scroll the current hit into view, a third of the way down.
+    fn reveal_hit(&mut self, cx: &mut Context<Self>) {
+        let Some(hit) = self
+            .find
+            .as_ref()
+            .and_then(|f| f.hits.get(f.current?))
+            .cloned()
+        else {
+            cx.notify();
+            return;
+        };
+        let y = hit.rects.first().map_or(0.0, |r| r.y);
+        let above = f32::from(self.viewport.height) * 0.33 / self.zoom_factor();
+        self.go_to(hit.page, Some((y - above).max(0.0)), cx);
+    }
+
+    fn render_find(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let f = self.find.as_ref()?;
+        let theme = cx.theme();
+        let count: SharedString = if f.searching {
+            "…".into()
+        } else if f.input.read(cx).value().is_empty() {
+            "".into()
+        } else if f.hits.is_empty() {
+            "No results".into()
+        } else {
+            format!("{} of {}", f.current.map_or(0, |c| c + 1), f.hits.len()).into()
+        };
+        Some(
+            h_flex()
+                .absolute()
+                .top(px(10.))
+                .right(px(14.))
+                .gap_1()
+                .p_1()
+                .rounded(theme.radius_lg)
+                .bg(theme.popover)
+                .border_1()
+                .border_color(theme.border)
+                .shadow_md()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(div().w(px(200.)).child(Input::new(&f.input).small()))
+                .child(div().min_w(px(56.)).child(count))
+                .child(
+                    Button::new("pdf-find-case")
+                        .ghost()
+                        .xsmall()
+                        .icon(Glyph::CaseSensitive)
+                        .tooltip("Match Case")
+                        .selected(f.match_case)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(f) = &mut this.find {
+                                f.match_case = !f.match_case;
+                            }
+                            this.search(Duration::ZERO, cx);
+                        })),
+                )
+                .child(
+                    Button::new("pdf-find-prev")
+                        .ghost()
+                        .xsmall()
+                        .icon(Glyph::PrevChange)
+                        .tooltip("Previous (⇧↵)")
+                        .on_click(cx.listener(|this, _, _, cx| this.next_hit(-1, cx))),
+                )
+                .child(
+                    Button::new("pdf-find-next")
+                        .ghost()
+                        .xsmall()
+                        .icon(Glyph::NextChange)
+                        .tooltip("Next (↵)")
+                        .on_click(cx.listener(|this, _, _, cx| this.next_hit(1, cx))),
+                )
+                .child(
+                    Button::new("pdf-find-close")
+                        .ghost()
+                        .xsmall()
+                        .icon(Glyph::Close)
+                        .on_click(cx.listener(|this, _, window, cx| this.close_find(window, cx))),
+                ),
+        )
     }
 
     /// Open the toolbar's "go to page" field.
@@ -730,6 +938,8 @@ impl Render for PdfPane {
 
         let theme = cx.theme();
         let highlight_color = theme.primary.opacity(0.28);
+        let current_hit = theme.warning.opacity(0.55);
+        let other_hit = theme.warning.opacity(0.25);
         let shadow_page = theme.is_dark();
         let pages = rects.iter().enumerate().filter_map(|(i, r)| {
             // Elements only for pages near the viewport.
@@ -784,6 +994,27 @@ impl Render for PdfPane {
                         })),
                 );
             }
+            if let Some(f) = &self.find {
+                for (k, hit) in f.hits.iter().enumerate().filter(|(_, h)| h.page == i) {
+                    let color = if f.current == Some(k) {
+                        current_hit
+                    } else {
+                        other_hit
+                    };
+                    for r in &hit.rects {
+                        page = page.child(
+                            div()
+                                .absolute()
+                                .left(px(r.x * zoom - 1.0))
+                                .top(px(r.y * zoom - 1.0))
+                                .w(px(r.width * zoom + 2.0))
+                                .h(px(r.height * zoom + 2.0))
+                                .rounded(px(2.))
+                                .bg(color),
+                        );
+                    }
+                }
+            }
             if let Some(h) = self.highlight.as_ref().filter(|h| h.page == i) {
                 for (k, rect) in h.rects.iter().enumerate() {
                     page = page.child(
@@ -822,6 +1053,8 @@ impl Render for PdfPane {
             .on_action(cx.listener(|this, _: &LastPage, _, cx| this.go_to(usize::MAX, None, cx)))
             .on_action(cx.listener(|this, _: &GoToPage, window, cx| this.prompt_page(window, cx)))
             .on_action(cx.listener(|this, _: &FitPage, _, cx| this.fit_page(cx)))
+            .on_action(cx.listener(|this, _: &FindInPdf, window, cx| this.open_find(window, cx)))
+            .on_action(cx.listener(|this, _: &CloseFind, window, cx| this.close_find(window, cx)))
             .relative()
             .size_full()
             .bg(canvas_bg)
@@ -857,6 +1090,7 @@ impl Render for PdfPane {
                     ),
             )
             .child(self.render_toolbar(cx))
+            .children(self.render_find(cx))
             .into_any_element()
     }
 }

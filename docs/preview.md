@@ -36,6 +36,13 @@ The toolbar shows the page in the middle of the pane and how many there are: cli
 ⌘G, to type the page to go to. Once you have clicked the preview, ←/→ and Page Up/Page Down go to
 the previous or next page, Home and End to the first or last one.
 
+## Finding text
+
+Once you have clicked the preview, ⌘F (Ctrl+F) opens a find bar at the top of the pane (also
+*View* → *Find in PDF…*). Every occurrence is highlighted, the current one more strongly; ↵ and
+⇧↵ (or the arrows) go to the next and previous one, the button next to them matches the case,
+and Esc closes the bar. The search runs again when the PDF is rebuilt.
+
 ## Links
 
 Links in the PDF work as in a PDF reader: those made by `hyperref` (`\ref`, `\cite`, the table
