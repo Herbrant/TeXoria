@@ -374,7 +374,7 @@ fn run(cmd: &mut Command) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use semver::Version;
 
@@ -398,8 +398,6 @@ mod tests {
 
     #[test]
     fn replaces_an_appimage() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("TeXoria.AppImage");
         fs::write(&target, b"old").unwrap();
@@ -408,10 +406,14 @@ mod tests {
         };
         let relaunch = update(kind, "new.AppImage", b"new").install().unwrap();
         assert_eq!(fs::read(&target).unwrap(), b"new");
-        assert_eq!(
-            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-            0o755
-        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o755
+            );
+        }
         assert_eq!(relaunch.program, target);
         // Only the AppImage is left.
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
