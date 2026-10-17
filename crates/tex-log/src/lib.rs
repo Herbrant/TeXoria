@@ -162,7 +162,12 @@ pub fn parse_bytes(log: &[u8], root: &Path) -> Vec<Diagnostic> {
                 line: c[4].parse().ok(),
                 message: format!("{}full \\{}box {}", &c[1], &c[2], c[3].trim()),
             });
+            // The box's contents follow, up to a blank line: document text,
+            // whose parentheses do not open or close files.
             i += 1;
+            while i < lines.len() && !lines[i].trim().is_empty() {
+                i += 1;
+            }
             continue;
         }
 
@@ -528,6 +533,53 @@ Underfull \\vbox (badness 10000) detected at line 40
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn parentheses_in_box_contents_are_not_files() {
+        // chap.tex typesets an unbalanced `(` in an overfull box, which the
+        // log shows: main.tex is still the file once chap.tex is closed.
+        for name in [
+            "pdflatex-mixed.log",
+            "lualatex-mixed.log",
+            "xelatex-mixed.log",
+        ] {
+            let d = parse(&fixture(name), &root());
+            let find = |text: &str| {
+                d.iter()
+                    .find(|d| d.message.contains(text))
+                    .unwrap_or_else(|| panic!("{name}: {d:#?}"))
+            };
+            let overfull = find("Overfull");
+            assert_eq!(overfull.file.as_deref(), Some(Path::new("/proj/chap.tex")));
+            assert_eq!(overfull.line, Some(1));
+            let missing = find("`missing'");
+            assert_eq!(
+                missing.file.as_deref(),
+                Some(Path::new("/proj/main.tex")),
+                "{name}"
+            );
+            assert_eq!(missing.line, Some(5));
+        }
+
+        // And a `)` in them does not close the file.
+        let log = "\
+(./main.tex (./chap.tex
+Underfull \\hbox (badness 10000) in paragraph at lines 1--2
+[]\\OT1/cmr/m/n/10 (see) and) more
+ []
+
+LaTeX Warning: Something on input line 3.
+
+)
+LaTeX Warning: Other on input line 9.
+
+)
+";
+        let d = parse(log, &root());
+        assert_eq!(d.len(), 3, "{d:#?}");
+        assert_eq!(d[1].file.as_deref(), Some(Path::new("/proj/chap.tex")));
+        assert_eq!(d[2].file.as_deref(), Some(Path::new("/proj/main.tex")));
     }
 
     #[test]
