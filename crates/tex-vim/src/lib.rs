@@ -13,6 +13,12 @@ use std::ops::Range;
 
 pub use text::*;
 
+/// The most text a counted `p` puts in at once, in bytes.
+const MAX_PASTE: usize = 16 << 20;
+/// The most times a counted `.` replays the last change (each replay works
+/// on a copy of the whole text).
+const MAX_REPEAT: usize = 1000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -813,7 +819,9 @@ impl Vim {
                     return Vec::new();
                 }
                 self.start_change(c);
-                let text = reg.text.repeat(count);
+                let text = reg
+                    .text
+                    .repeat(count.min(MAX_PASTE / reg.text.len()).max(1));
                 if reg.linewise {
                     let text = if text.ends_with('\n') {
                         text
@@ -980,7 +988,7 @@ impl Vim {
         };
         self.replaying = true;
         let mut yanks = Vec::new();
-        for _ in 0..count {
+        for _ in 0..count.min(MAX_REPEAT) {
             for &k in &keys {
                 let c = Ctx {
                     text: &sim.text,

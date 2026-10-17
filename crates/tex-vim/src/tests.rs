@@ -328,3 +328,30 @@ fn angle_bracket_objects() {
     // An escaped bracket does not count.
     assert_eq!(run("{a \\} |b}", "di{"), "{|}");
 }
+
+#[test]
+fn huge_counts_are_bounded() {
+    // `100000p` of a large register would build gigabytes of text.
+    let mut vim = Vim::new();
+    let big = "x".repeat(10_000);
+    let c = Ctx {
+        text: "ab",
+        cursor: 0,
+        clipboard: Some(&big),
+        page_lines: 10,
+    };
+    let mut pasted = 0;
+    for k in parse_keys("100000p") {
+        for a in vim.key(&c, k) {
+            if let Action::Edit { text, .. } = a {
+                pasted = text.len();
+            }
+        }
+    }
+    assert!(pasted > 0 && pasted <= MAX_PASTE, "{pasted}");
+    assert_eq!(pasted % big.len(), 0);
+
+    // `.` is replayed a bounded number of times, each on a copy of the text.
+    let out = run("|ab", "ix<esc>100000.");
+    assert_eq!(out.matches('x').count(), MAX_REPEAT + 1);
+}
