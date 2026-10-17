@@ -135,7 +135,8 @@ pub struct OpenExternal {
     pub path: PathBuf,
 }
 
-/// Extra hover text for an offset of the buffer (a problem found there).
+/// Extra hover text for an offset of the buffer (a problem found there). Called
+/// outside the editor's updates, so it may read the editor.
 pub type HoverNote = Rc<dyn Fn(usize, &App) -> Option<String>>;
 
 /// Go to Definition and hover, from `tex_complete::nav`.
@@ -272,23 +273,30 @@ impl HoverProvider for LatexNavigation {
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Option<Hover>>> {
-        let notes: Vec<String> = self.notes.iter().filter_map(|n| n(offset, cx)).collect();
         let symbol = symbol_at(rope, offset);
         let about = symbol.as_ref().and_then(|sym| {
             let project = self.project.read().ok()?;
             nav::hover(&project, sym)
         });
-        let parts: Vec<String> = notes.into_iter().chain(about).collect();
-        if parts.is_empty() {
-            return Task::ready(Ok(None));
-        }
-        Task::ready(Ok(Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: parts.join("\n\n---\n\n"),
-            }),
-            range: symbol.map(|s| lsp_range(rope, s.range())),
-        })))
+        let range = symbol.map(|s| lsp_range(rope, s.range()));
+        // The editor calls this while it is being updated, and the notes read
+        // it (reading it now would panic): the task runs once the update is over.
+        let notes = self.notes.clone();
+        cx.spawn(async move |cx| {
+            let notes: Vec<String> =
+                cx.update(|cx| notes.iter().filter_map(|n| n(offset, cx)).collect());
+            let parts: Vec<String> = notes.into_iter().chain(about).collect();
+            if parts.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: parts.join("\n\n---\n\n"),
+                }),
+                range,
+            }))
+        })
     }
 }
 
