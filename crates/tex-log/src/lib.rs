@@ -58,6 +58,13 @@ pub fn needs_shell_escape(log: &str) -> bool {
 }
 
 pub fn parse(log: &str, root: &Path) -> Vec<Diagnostic> {
+    parse_bytes(log.as_bytes(), root)
+}
+
+/// [`parse`] for the log file's raw bytes. Prefer it to decoding the file
+/// first: pdfTeX and LuaTeX may wrap a line in the middle of a UTF-8
+/// character, which only decodes once the line is joined again.
+pub fn parse_bytes(log: &[u8], root: &Path) -> Vec<Diagnostic> {
     let lines = unwrap_lines(log);
     let mut out: Vec<Diagnostic> = Vec::new();
     let mut files = FileStack::default();
@@ -176,20 +183,41 @@ pub fn parse(log: &str, root: &Path) -> Vec<Diagnostic> {
 }
 
 /// Undo the engine's hard wrapping at [`WRAP_WIDTH`] columns.
-fn unwrap_lines(log: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut joining = false;
-    for raw in log.lines() {
-        let raw = raw.strip_suffix('\r').unwrap_or(raw);
-        if joining {
-            out.last_mut().unwrap().push_str(raw);
-        } else {
-            out.push(raw.to_string());
-        }
-        // Count chars, not bytes: TeX wraps on the (UTF-8 aware) output width.
-        joining = raw.chars().count() == WRAP_WIDTH;
+fn unwrap_lines(log: &[u8]) -> Vec<String> {
+    if log.is_empty() {
+        return Vec::new();
     }
-    out
+    let by_bytes = counts_bytes(log);
+    let log = log.strip_suffix(b"\n").unwrap_or(log);
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    let mut joining = false;
+    for raw in log.split(|&b| b == b'\n') {
+        let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+        match out.last_mut() {
+            Some(last) if joining => last.extend_from_slice(raw),
+            _ => out.push(raw.to_vec()),
+        }
+        let width = if by_bytes {
+            raw.len()
+        } else {
+            String::from_utf8_lossy(raw).chars().count()
+        };
+        joining = width == WRAP_WIDTH;
+    }
+    out.into_iter()
+        .map(|l| {
+            String::from_utf8(l).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into())
+        })
+        .collect()
+}
+
+/// Whether the engine wraps at [`WRAP_WIDTH`] bytes rather than characters,
+/// from the banner on the log's first line. pdfTeX and LuaTeX count bytes;
+/// XeTeX counts characters, and so does Tectonic (XeTeX), which writes no
+/// banner.
+fn counts_bytes(log: &[u8]) -> bool {
+    let banner = log.split(|&b| b == b'\n').next().unwrap_or_default();
+    banner.starts_with(b"This is ") && !banner.windows(5).any(|w| w == b"XeTeX")
 }
 
 /// Collect the lines following an error up to and including the `l.N`
@@ -473,10 +501,72 @@ Underfull \\vbox (badness 10000) detected at line 40
     }
 
     #[test]
+    fn wrapped_accented_lines_are_joined() {
+        // The same document through each engine: pdfTeX and LuaTeX wrap at 79
+        // bytes, XeTeX (and so Tectonic) at 79 characters.
+        let label = "sec:perché-qualità-già-così-città-però-più-università-novità-verità";
+        for name in [
+            "pdflatex-mixed.log",
+            "lualatex-mixed.log",
+            "xelatex-mixed.log",
+            "tectonic-mixed.log",
+        ] {
+            let d = parse(&fixture(name), &root());
+            let reference = d
+                .iter()
+                .find(|d| d.message.contains("sec:"))
+                .unwrap_or_else(|| panic!("{name}: {d:#?}"));
+            assert_eq!(
+                reference.message,
+                format!("Reference `{label}' on page 1 undefined"),
+                "{name}"
+            );
+            assert_eq!(reference.line, Some(3), "{name}");
+            assert_eq!(
+                reference.file.as_deref(),
+                Some(Path::new("/proj/main.tex")),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_inside_a_utf8_character() {
+        // pdfTeX breaks after the 79th byte, here the first byte of an `é`.
+        let label = "é".repeat(30);
+        let line =
+            format!("LaTeX Warning: Reference `{label}' on page 1 undefined on input line 3.");
+        let (head, tail) = line.as_bytes().split_at(WRAP_WIDTH);
+        assert!(std::str::from_utf8(head).is_err());
+        let mut log = b"This is pdfTeX, Version 3.141592653-2.6-1.40.29\n(./main.tex\n".to_vec();
+        log.extend_from_slice(head);
+        log.push(b'\n');
+        log.extend_from_slice(tail);
+        log.extend_from_slice(b"\n\n)\n");
+
+        let d = parse_bytes(&log, &root());
+        assert_eq!(d.len(), 1, "{d:#?}");
+        assert_eq!(
+            d[0].message,
+            format!("Reference `{label}' on page 1 undefined")
+        );
+        assert_eq!(d[0].line, Some(3));
+        // Decoding the file first cannot give the character back.
+        let lossy = parse(&String::from_utf8_lossy(&log), &root());
+        assert_ne!(lossy, d);
+    }
+
+    #[test]
+    fn invalid_utf8_is_replaced() {
+        let d = parse_bytes(b"(./main.tex\n! Bad \xff byte.\nl.2 x\n)\n", &root());
+        assert_eq!(d[0].message, "Bad \u{fffd} byte");
+    }
+
+    #[test]
     fn empty_and_blank_logs() {
         assert_eq!(parse("", &root()), vec![]);
         assert_eq!(parse("\n\n\r\n", &root()), vec![]);
-        assert_eq!(unwrap_lines(""), Vec::<String>::new());
+        assert_eq!(unwrap_lines(b""), Vec::<String>::new());
     }
 
     #[test]
@@ -609,7 +699,7 @@ l.5 \\hskip x
         let natural = "B".repeat(WRAP_WIDTH);
         let log = format!("{natural}\n\n! Oops.\nl.2 x\n");
         assert_eq!(
-            unwrap_lines(&log),
+            unwrap_lines(log.as_bytes()),
             vec![natural.as_str(), "! Oops.", "l.2 x"]
         );
         assert_eq!(parse(&log, &root())[0].line, Some(2));
@@ -717,6 +807,11 @@ l.4 y
                 let set: std::collections::HashSet<_> = once.iter().collect();
                 prop_assert_eq!(set.len(), once.len());
                 prop_assert_eq!(dedup(once.clone()), once);
+            }
+
+            #[test]
+            fn bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..400)) {
+                let _ = parse_bytes(&bytes, &root());
             }
 
             #[test]

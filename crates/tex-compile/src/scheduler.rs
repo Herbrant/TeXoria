@@ -330,7 +330,7 @@ impl Worker {
         let mut diagnostics = if status == Status::Cancelled {
             Vec::new()
         } else {
-            tex_log::parse(&log_text, job.work_dir())
+            tex_log::parse_bytes(&log, job.work_dir())
         };
         if let Some(limit) = timed_out {
             diagnostics.insert(
