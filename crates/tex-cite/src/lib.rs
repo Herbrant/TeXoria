@@ -66,28 +66,28 @@ pub fn classify(input: &str) -> Lookup {
     Lookup::Search(s.to_string())
 }
 
-/// `2301.01234`, `2301.01234v2`, or the old style `hep-th/9901001`.
+/// `2301.01234`, `2301.01234v2`, or the old style `hep-th/9901001` and `math.GT/0309136v1`.
 fn is_arxiv_id(s: &str) -> bool {
-    let id = s.split_once('v').map_or(s, |(id, version)| {
+    let id = s.rsplit_once('v').map_or(s, |(id, version)| {
         if version.chars().all(|c| c.is_ascii_digit()) && !version.is_empty() {
             id
         } else {
             s
         }
     });
-    if let Some((yymm, num)) = id.split_once('.') {
-        return yymm.len() == 4
-            && yymm.chars().all(|c| c.is_ascii_digit())
-            && (4..=5).contains(&num.len())
-            && num.chars().all(|c| c.is_ascii_digit());
-    }
+    let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit());
     if let Some((archive, num)) = id.split_once('/') {
+        // An archive, and for some of them a subject class: `math.GT`, `cs.AI`.
+        let (archive, class) = archive.split_once('.').unwrap_or((archive, "A"));
         return !archive.is_empty()
-            && archive
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c == '-' || c == '.')
+            && archive.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+            && !class.is_empty()
+            && class.chars().all(|c| c.is_ascii_uppercase())
             && num.len() == 7
-            && num.chars().all(|c| c.is_ascii_digit());
+            && digits(num);
+    }
+    if let Some((yymm, num)) = id.split_once('.') {
+        return yymm.len() == 4 && digits(yymm) && (4..=5).contains(&num.len()) && digits(num);
     }
     false
 }
@@ -496,6 +496,29 @@ mod tests {
             classify("attention is all you need"),
             Lookup::Search("attention is all you need".into())
         );
+    }
+
+    #[test]
+    fn classifies_old_arxiv_identifiers() {
+        for id in [
+            "math.GT/0309136",
+            "math.GT/0309136v1",
+            "solv-int/9901001v2",
+            "cs.AI/0101001",
+            "q-bio/0401001v12",
+        ] {
+            assert_eq!(classify(id), Lookup::Arxiv(id.into()), "{id}");
+            let url = format!("https://arxiv.org/abs/{id}");
+            assert_eq!(classify(&url), Lookup::Arxiv(id.into()), "{url}");
+        }
+        for not in [
+            "math./0309136",
+            "Math.GT/0309136",
+            "math.G1/0309136",
+            "math.GT/0309136v",
+        ] {
+            assert_eq!(classify(not), Lookup::Search(not.into()), "{not}");
+        }
     }
 
     const ATOM: &str = r#"<?xml version="1.0"?><feed><title>query</title>
