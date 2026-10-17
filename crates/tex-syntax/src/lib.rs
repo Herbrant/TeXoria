@@ -562,7 +562,7 @@ fn braced_after_options(text: &str, from: usize) -> Option<(&str, Range<usize>)>
             i += 1;
         }
         if b.get(i) == Some(&b'[') {
-            i += text[i..].find(']')? + 1;
+            i = group_end(b, i)? + 1;
         } else {
             break;
         }
@@ -570,21 +570,28 @@ fn braced_after_options(text: &str, from: usize) -> Option<(&str, Range<usize>)>
     if b.get(i) != Some(&b'{') {
         return None;
     }
+    let k = group_end(b, i)?;
+    let inner = &text[i + 1..k];
+    let t = inner.trim();
+    let start = i + 1 + (inner.len() - inner.trim_start().len());
+    (!t.is_empty()).then_some((t, start..start + t.len()))
+}
+
+/// Where the `[...]` or `{...}` group opened at `open` ends: escaped characters (`\}`) do not
+/// count, and an option's `]` inside braces (`[{a]b}]`) does not end it.
+fn group_end(b: &[u8], open: usize) -> Option<usize> {
+    let close = if b[open] == b'[' { b']' } else { b'}' };
     let mut depth = 0usize;
-    for (k, &c) in b.iter().enumerate().skip(i) {
-        match c {
+    let mut k = open + 1;
+    while k < b.len() {
+        match b[k] {
+            b'\\' => k += 1,
             b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    let inner = &text[i + 1..k];
-                    let t = inner.trim();
-                    let start = i + 1 + (inner.len() - inner.trim_start().len());
-                    return (!t.is_empty()).then_some((t, start..start + t.len()));
-                }
-            }
+            b'}' if depth > 0 => depth -= 1,
+            c if c == close && depth == 0 => return Some(k),
             _ => {}
         }
+        k += 1;
     }
     None
 }
@@ -1037,6 +1044,20 @@ See \ref{eq:e} and \cite{knuth, lamport}.
         let s = "ab{cd}";
         assert_eq!(braced_after_options(s, 2), Some(("cd", 3..5)));
         assert_eq!(braced_after_options(s, 6), None);
+    }
+
+    #[test]
+    fn braced_arguments_skip_escaped_braces_and_braces_in_options() {
+        fn arg(s: &str) -> Option<(&str, &str)> {
+            braced_after_options(s, 0).map(|(t, r)| (t, &s[r]))
+        }
+        assert_eq!(arg("{a\\}b}"), Some(("a\\}b", "a\\}b")));
+        assert_eq!(arg("{a\\{b}"), Some(("a\\{b", "a\\{b")));
+        assert_eq!(arg("{a\\\\}b}"), Some(("a\\\\", "a\\\\")));
+        assert_eq!(arg("[{a]b}]{key}"), Some(("key", "key")));
+        assert_eq!(arg("[\\]]{key}"), Some(("key", "key")));
+        let src = "\\bibitem{a\\}b} A.\n\\bibitem[{[1]}]{c} C.";
+        assert_eq!(names(&Index::from_text(src).bibitems), ["a\\}b", "c"]);
     }
 
     #[test]
