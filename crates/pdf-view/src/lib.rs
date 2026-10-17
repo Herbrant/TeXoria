@@ -451,8 +451,15 @@ fn top_down(r: PdfRect, page_height: f32) -> Rect {
     }
 }
 
+/// Page `index` of `doc`. PDFium counts pages with an `int`: a larger index
+/// is no page (a cast would wrap around to another one).
+fn page_at<'a>(doc: &'a PdfDocument, index: usize) -> Result<PdfPage<'a>, PdfiumError> {
+    let index = PdfPageIndex::try_from(index).map_err(|_| PdfiumError::PageIndexOutOfBounds)?;
+    doc.pages().get(index)
+}
+
 fn page_chars(doc: &PdfDocument, page: usize) -> Result<Vec<TextChar>, PdfiumError> {
-    let page = doc.pages().get(page as PdfPageIndex)?;
+    let page = page_at(doc, page)?;
     let height = page.height().value;
     let text = page.text()?;
     Ok(text
@@ -477,7 +484,7 @@ fn page_chars(doc: &PdfDocument, page: usize) -> Result<Vec<TextChar>, PdfiumErr
 }
 
 fn page_links(doc: &PdfDocument, index: usize) -> Result<Vec<Link>, PdfiumError> {
-    let page = doc.pages().get(index as PdfPageIndex)?;
+    let page = page_at(doc, index)?;
     let height = page.height().value;
     let pages = doc.pages();
     let mut out = Vec::new();
@@ -561,7 +568,7 @@ fn page_texts(doc: &PdfDocument, page: Option<usize>) -> Option<String> {
     let pages = doc.pages();
     let text_of = |p: PdfPage| p.text().ok().map(|t| t.all());
     match page {
-        Some(i) => text_of(pages.get(i as PdfPageIndex).ok()?),
+        Some(i) => text_of(page_at(doc, i).ok()?),
         None => Some(
             pages
                 .iter()
@@ -601,7 +608,7 @@ fn bitmap_size(w_pt: f32, h_pt: f32, scale: f32) -> (i32, i32) {
 }
 
 fn render_page(doc: &PdfDocument, key: RenderKey) -> Result<Bitmap, PdfiumError> {
-    let page = doc.pages().get(key.page as PdfPageIndex)?;
+    let page = page_at(doc, key.page)?;
     let PageSize { width, height } = page_size(&page);
     let (width, height) = bitmap_size(width, height, key.scale());
     let config = PdfRenderConfig::new()
@@ -868,6 +875,64 @@ mod tests {
         assert_eq!(text_of(&chars, Range { start: 9, end: 1 }), "");
         assert_eq!(text_of(&chars, 7..9), "");
         assert_eq!(text_of(&[], 0..1), "");
+    }
+
+    /// A page number that does not fit PDFium's `int` is no page, not another page.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn huge_page_numbers_are_out_of_range() {
+        let Some((r, rx)) = links_pdf() else {
+            return;
+        };
+        let huge = (1usize << 32) + 1;
+        r.query(Query::PageText { page: huge });
+        let Event::PageText { page, chars, .. } = next(&rx) else {
+            panic!("expected PageText")
+        };
+        assert_eq!(page, huge);
+        assert!(
+            chars.is_empty(),
+            "{}",
+            chars.iter().map(|c| c.ch).collect::<String>()
+        );
+        r.query(Query::Links { page: huge });
+        assert!(matches!(next(&rx), Event::Links { links, .. } if links.is_empty()));
+        r.query(Query::Text {
+            id: 1,
+            page: Some(huge),
+        });
+        assert!(matches!(next(&rx), Event::Text { id: 1, text: None }));
+        r.query(Query::Snapshot {
+            id: 2,
+            page: huge,
+            scale: 1.0,
+        });
+        assert!(matches!(
+            next(&rx),
+            Event::Snapshot {
+                id: 2,
+                bitmap: None
+            }
+        ));
+        // Nor is a page to render.
+        r.request(vec![
+            RenderKey {
+                generation: 1,
+                page: huge,
+                scale_milli: 1000,
+                dark: false,
+            },
+            RenderKey {
+                generation: 1,
+                page: 0,
+                scale_milli: 100,
+                dark: false,
+            },
+        ]);
+        let Event::Rendered { key, .. } = next(&rx) else {
+            panic!("expected Rendered")
+        };
+        assert_eq!(key.page, 0);
     }
 
     /// Renders the first page of `tests/fixtures/links/links.pdf` if PDFium is available.
