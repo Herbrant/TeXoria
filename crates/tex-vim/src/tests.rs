@@ -264,3 +264,38 @@ fn pastes_the_system_clipboard() {
         ]
     );
 }
+
+/// A context on `text` at `cursor`.
+fn ctx(text: &str, cursor: usize) -> Ctx<'_> {
+    Ctx {
+        text,
+        cursor,
+        clipboard: None,
+        page_lines: 10,
+    }
+}
+
+#[test]
+fn visual_mode_survives_a_text_that_changed() {
+    // Started past the end of the text it is now (an undo shrank it).
+    let mut vim = Vim::new();
+    vim.key(&ctx("aé€b", 6), Key::Char('v'));
+    let a = vim.key(&ctx("a€", 4), Key::Char('h'));
+    assert_eq!(a, vec![Action::Select(4..1)]);
+    // Ends inside what is now a multibyte character.
+    let mut vim = Vim::new();
+    vim.key(&ctx("aé", 1), Key::Char('v'));
+    let a = vim.key(&ctx("é", 1), Key::Char('l'));
+    assert_eq!(a, vec![Action::Select(0..2)]);
+    let mut vim = Vim::new();
+    vim.key(&ctx("ab\ncd", 4), Key::Char('V'));
+    let a = vim.key(&ctx("é", 1), Key::Char('d'));
+    assert_eq!(
+        a[1],
+        Action::Edit {
+            range: 0..2,
+            text: String::new()
+        }
+    );
+    assert_eq!(vim.mode(), Mode::Normal);
+}
