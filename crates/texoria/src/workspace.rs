@@ -528,11 +528,17 @@ impl Workspace {
         }
         // Only regular files: inverse search and diagnostics can point
         // anywhere, and reading a pipe or device would hang.
+        // Nor huge ones, which would freeze the editor.
         let read = std::fs::metadata(&file).and_then(|m| {
-            if m.is_file() {
-                std::fs::read_to_string(&file)
-            } else {
+            if !m.is_file() {
                 Err(std::io::Error::other("not a regular file"))
+            } else if m.len() > files::MAX_TEXT_BYTES {
+                Err(std::io::Error::other(format!(
+                    "it is too large to edit ({} MB)",
+                    m.len() >> 20
+                )))
+            } else {
+                std::fs::read_to_string(&file)
             }
         });
         let text = match read {
