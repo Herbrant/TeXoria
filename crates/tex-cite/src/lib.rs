@@ -338,12 +338,56 @@ fn between<'a>(s: &'a str, start: &str, end: &str) -> Option<&'a str> {
     Some(&s[from..to])
 }
 
+/// XML's predefined entities and character references, decoded in one pass (`&amp;lt;` is
+/// `&lt;`). Anything else, or a reference that is not a character, stays as it is.
 fn unescape(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        // Entities are short: never look far for their `;`.
+        let decoded = rest
+            .bytes()
+            .take(12)
+            .position(|b| b == b';')
+            .and_then(|end| Some((entity(&rest[1..end])?, end)));
+        match decoded {
+            Some((c, end)) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The character of an entity's name (between `&` and `;`).
+fn entity(name: &str) -> Option<char> {
+    let c = match name {
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        "amp" => '&',
+        _ => {
+            let num = name.strip_prefix('#')?;
+            let (digits, radix) = match num.strip_prefix(['x', 'X']) {
+                Some(hex) => (hex, 16),
+                None => (num, 10),
+            };
+            if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+                return None;
+            }
+            return char::from_u32(u32::from_str_radix(digits, radix).ok()?);
+        }
+    };
+    Some(c)
 }
 
 fn collapse(s: &str) -> String {
@@ -639,6 +683,17 @@ mod tests {
         );
         assert_eq!(unescape("&amp;lt;"), "&lt;");
         assert_eq!(unescape("AT&amp;T &unknown;"), "AT&T &unknown;");
+    }
+
+    #[test]
+    fn unescapes_numeric_entities() {
+        assert_eq!(unescape("G&#246;del &#x2013; &#X3b1;"), "Gödel – α");
+        assert_eq!(unescape("&amp;#38; &#38;lt;"), "&#38; &lt;");
+        // Not characters: left as they are.
+        assert_eq!(
+            unescape("&#; &#x; &#xD800; &#99999999999; &#12"),
+            "&#; &#x; &#xD800; &#99999999999; &#12"
+        );
     }
 
     #[test]
