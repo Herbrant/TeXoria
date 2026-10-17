@@ -13,8 +13,14 @@ notes="$(awk -v heading="## [$VERSION]" '
   in_section { print }
 ' "$ROOT/CHANGELOG.md")"
 
-# Drop leading and trailing blank lines.
-notes="$(printf '%s\n' "$notes" | sed -e '/./,$!d')"
+# Drop leading blank lines, and join wrapped lines: GitHub renders every line break of a release
+# body, unlike a Markdown file's.
+notes="$(printf '%s\n' "$notes" | sed -e '/./,$!d' | awk '
+  /^[[:space:]]*$/ { if (line != "") print line; print ""; line = ""; next }
+  line != "" && !/^(#|[-*+] |[0-9]+\. |```|\|)/ { sub(/^[[:space:]]+/, ""); line = line " " $0; next }
+  { if (line != "") print line; line = $0 }
+  END { if (line != "") print line }
+')"
 if [ -z "${notes//[[:space:]]/}" ]; then
   echo "CHANGELOG.md has no notes for $VERSION" >&2
   exit 1
