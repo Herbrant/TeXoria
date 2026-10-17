@@ -412,4 +412,107 @@ mod tests {
         assert_eq!(keys(&e), ["a"]);
         assert!(!e[0].truncated);
     }
+
+    #[test]
+    fn odd_keys_and_stray_at_signs() {
+        let src = "contact: me@example.org\n@ misc{x}\n@misc{café_2020, title={é}}\n\
+                   @misc{has space, title={x}}\n@misc{, title={x}}\n@misc\n@misc{only}";
+        let e = parse(src);
+        assert_eq!(keys(&e), ["café_2020", "only"]);
+        assert_eq!(&src[e[0].key_range.clone()], "café_2020");
+        assert_eq!(e[1].fields, []);
+        // Not entries, though BibTeX reads them.
+        let e = parse("@comment{a, title={x}}@preamble{\"x\"}@string(s = {x})@misc{k}");
+        assert_eq!(keys(&e), ["k"]);
+    }
+
+    #[test]
+    fn rows_can_go_back() {
+        let src = "a\nb\nc\nd";
+        let mut rows = Rows { src, at: 0, row: 0 };
+        assert_eq!(rows.row_of(6), 3);
+        assert_eq!(rows.row_of(2), 1);
+        assert_eq!(rows.row_of(4), 2);
+        assert_eq!(rows.row_of(0), 0);
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::sample::select;
+
+        const PIECES: &[&str] = &[
+            "@misc{",
+            "@article(",
+            "@string{",
+            "@comment{",
+            "k",
+            "key,",
+            " title = ",
+            "{",
+            "}",
+            "(",
+            ")",
+            "\"",
+            "#",
+            ",",
+            "=",
+            " ",
+            "\n",
+            "\r\n",
+            "@",
+            "é",
+            "year=2000",
+            "x",
+            "date={2020-01}",
+            "\\{",
+        ];
+
+        fn bib() -> impl Strategy<Value = String> {
+            proptest::collection::vec(select(PIECES), 0..40).prop_map(|v| v.concat())
+        }
+
+        fn check(src: &str) -> Result<(), TestCaseError> {
+            for e in parse(src) {
+                prop_assert_eq!(&src[e.key_range.clone()], e.key.as_str());
+                prop_assert!(e.range.start <= e.key_range.start && e.key_range.end <= e.range.end);
+                prop_assert!(src.is_char_boundary(e.range.end));
+                prop_assert_eq!(
+                    e.line as usize,
+                    src[..e.key_range.start].matches('\n').count()
+                );
+                for f in &e.fields {
+                    prop_assert!(f.range.start <= f.range.end && f.range.end <= src.len());
+                    prop_assert!(src.is_char_boundary(f.range.start));
+                    prop_assert!(src.is_char_boundary(f.range.end));
+                    prop_assert_eq!(f.line as usize, src[..f.range.start].matches('\n').count());
+                }
+            }
+            Ok(())
+        }
+
+        proptest! {
+            #[test]
+            fn ranges_and_rows_hold_on_bib_like_text(src in bib()) {
+                check(&src)?;
+            }
+
+            #[test]
+            fn never_panics_on_any_text(src in any::<String>()) {
+                check(&src)?;
+            }
+
+            #[test]
+            fn rows_match_a_naive_count(
+                src in "[a\n]{0,40}",
+                offsets in proptest::collection::vec(0usize..=40, 1..8),
+            ) {
+                let mut rows = Rows { src: &src, at: 0, row: 0 };
+                for o in offsets {
+                    let o = o.min(src.len());
+                    prop_assert_eq!(rows.row_of(o) as usize, src[..o].matches('\n').count());
+                }
+            }
+        }
+    }
 }
