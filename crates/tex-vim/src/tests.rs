@@ -29,6 +29,13 @@ fn run_with(vim: &mut Vim, start: &str, keys: &str) -> String {
                     } else if key == Key::Enter {
                         text.insert(cursor, '\n');
                         cursor += 1;
+                    } else if key == Key::Tab {
+                        text.insert_str(cursor, "  ");
+                        cursor += 2;
+                    } else if key == Key::Backspace && cursor > 0 {
+                        let before = prev_char(&text, cursor);
+                        text.replace_range(before..cursor, "");
+                        cursor = before;
                     }
                 }
                 Action::Edit { range, text: new } => {
@@ -60,6 +67,11 @@ fn parse_keys(s: &str) -> Vec<Key> {
                 "esc" => Some(Key::Escape),
                 "cr" => Some(Key::Enter),
                 "bs" => Some(Key::Backspace),
+                "tab" => Some(Key::Tab),
+                "left" => Some(Key::Left),
+                "right" => Some(Key::Right),
+                "up" => Some(Key::Up),
+                "down" => Some(Key::Down),
                 n if n.starts_with("c-") => n[2..].chars().next().map(Key::Ctrl),
                 _ => None,
             };
@@ -395,4 +407,299 @@ fn visual_put() {
     let mut vim = Vim::new();
     run_with(&mut vim, "|ab", "vp");
     assert_eq!(vim.mode(), Mode::Visual);
+}
+
+#[test]
+fn more_motions() {
+    assert_eq!(run("|a.b c.d", "W"), "a.b |c.d");
+    assert_eq!(run("|a.b c.d", "E"), "a.|b c.d");
+    assert_eq!(run("a.b c.|d", "B"), "a.b |c.d");
+    assert_eq!(run("|a\nb\n\nc", "}"), "a\nb\n|\nc");
+    assert_eq!(run("a\n\nb\n|c", "{"), "a\n|\nb\nc");
+    assert_eq!(run("|a\n\nb\n\nc", "2}"), "a\n\nb\n|\nc");
+    assert_eq!(run("ab,c|d", "F,"), "ab|,cd");
+    assert_eq!(run("ab,c|d", "T,"), "ab,|cd");
+    assert_eq!(run("|a,b,c,d", "2f,,"), "a|,b,c,d");
+    assert_eq!(run("|a,b,c", "t,;"), "a,|b,c");
+    assert_eq!(run("a,b,c,|d", "T,,"), "a,b,c,|d");
+    assert_eq!(run("a,b,c,|d", "F,;"), "a,b|,c,d");
+    assert_eq!(run("a,b,c,|d", "F,,"), "a,b,c|,d");
+    assert_eq!(run("a,b,|c,d", "T,;"), "a,|b,c,d");
+    // No find yet: `;` does nothing.
+    assert_eq!(run("a|,b", ";"), "a|,b");
+    assert_eq!(run("|ab\ncd\nef", "2$"), "ab\nc|d\nef");
+    assert_eq!(run("|ab\ncd", "9$"), "ab\nc|d");
+    assert_eq!(run("|abc", "<right><right><left>"), "a|bc");
+    assert_eq!(run("|abc", "  <bs>"), "a|bc");
+    assert_eq!(run("a|b\ncd", "<down>"), "ab\nc|d");
+    assert_eq!(run("ab\nc|d", "<up>"), "a|b\ncd");
+    assert_eq!(run("a|b\ncd", "<cr>"), "ab\nc|d");
+    assert_eq!(run("|ab\ncd", "3l"), "a|b\ncd");
+    assert_eq!(run("ab|c", "9h"), "|abc");
+    assert_eq!(run("a|b\ncd", "5j"), "ab\nc|d");
+    assert_eq!(run("ab\nc|d", "k5k"), "a|b\ncd");
+    assert_eq!(run("|(a)", "%"), "(a|)");
+    assert_eq!(run("|ab", "%"), "|ab");
+    assert_eq!(run("|ab", "zq"), "|ab");
+}
+
+#[test]
+fn pages() {
+    let text: String = (0..30).map(|i| format!("l{i}\n")).collect();
+    let at = |line: usize| {
+        let mut t = text.clone();
+        t.insert(line_offset(&text, line), '|');
+        t
+    };
+    // Half of the 10 visible lines.
+    assert_eq!(run(&at(0), "<c-d>"), at(5));
+    assert_eq!(run(&at(0), "2<c-d>"), at(10));
+    assert_eq!(run(&at(12), "<c-u>"), at(7));
+    assert_eq!(run(&at(3), "<c-u>"), at(0));
+    assert_eq!(
+        run(&at(0), "v<c-d>d"),
+        at(0).replace(&text[..line_offset(&text, 5) + 1], "")
+    );
+}
+
+#[test]
+fn more_searches() {
+    assert_eq!(run("|a foo b foo", "/foo<cr>N"), "a foo b |foo");
+    assert_eq!(run("a foo b |foo c foo", "?foo<cr>n"), "a foo b foo c |foo");
+    assert_eq!(run("a foo b |foo c foo", "?foo<cr>N"), "a foo b |foo c foo");
+    // An empty search repeats the last one.
+    assert_eq!(run("|a foo b foo", "/foo<cr>/<cr>"), "a foo b |foo");
+    // Nothing to repeat yet, or nothing found.
+    assert_eq!(run("|a foo", "n"), "|a foo");
+    assert_eq!(run("|a foo", "/<cr>"), "|a foo");
+    assert_eq!(run("|a foo", "/bar<cr>"), "|a foo");
+    assert_eq!(run("|a foo", "/\\<\\><cr>"), "|a foo");
+    // Capitals match the case exactly.
+    assert_eq!(run("|a foo Foo", "/Foo<cr>"), "a foo |Foo");
+    assert_eq!(run("|a foo food foo", "/\\<foo\\><cr>n"), "a foo food |foo");
+    assert_eq!(run("|a foo foo", "2n"), "|a foo foo");
+    assert_eq!(run("|a foo b foo c", "/foo<cr>2n"), "a |foo b foo c");
+    // `*` on a blank or past the text.
+    assert_eq!(run("a| b", "*"), "a| b");
+    assert_eq!(run("a\n|", "*"), "a\n|");
+    assert_eq!(run("|é x é", "*"), "é x |é");
+}
+
+#[test]
+fn command_line() {
+    let mut vim = Vim::new();
+    let c = ctx("a\nb\nc", 0);
+    let typed = |vim: &mut Vim, keys: &str| {
+        let mut out = Vec::new();
+        for k in parse_keys(keys) {
+            out = vim.key(&c, k);
+        }
+        out
+    };
+    for (cmd, want) in [
+        (":w<cr>", vec![Action::Write]),
+        (":write<cr>", vec![Action::Write]),
+        (":q<cr>", vec![Action::Quit]),
+        (":q!<cr>", vec![Action::Quit]),
+        (":quit<cr>", vec![Action::Quit]),
+        (":x<cr>", vec![Action::Write, Action::Quit]),
+        (":xit<cr>", vec![Action::Write, Action::Quit]),
+        (": wq <cr>", vec![Action::Write, Action::Quit]),
+        (":nope<cr>", vec![]),
+        (":2<cr>", vec![Action::Cursor(2)]),
+        (":0<cr>", vec![Action::Cursor(0)]),
+        (":99<cr>", vec![Action::Cursor(4)]),
+        (":wx<bs><cr>", vec![Action::Write]),
+        (":w<esc>", vec![]),
+        (":w<c-c>", vec![]),
+    ] {
+        assert_eq!(typed(&mut vim, cmd), want, "{cmd}");
+        assert_eq!(vim.status(), "", "{cmd}");
+    }
+    typed(&mut vim, ":ab<tab><left>");
+    assert_eq!(vim.status(), ":ab");
+    typed(&mut vim, "<bs>");
+    assert_eq!(vim.status(), ":a");
+    // Backspace on an empty line closes it.
+    typed(&mut vim, "<bs><bs>");
+    assert_eq!(vim.status(), "");
+    assert_eq!(typed(&mut vim, "j"), vec![Action::Cursor(2)]);
+}
+
+#[test]
+fn status_and_reset() {
+    let mut vim = Vim::default();
+    let c = ctx("ab", 0);
+    for k in parse_keys("2d") {
+        vim.key(&c, k);
+    }
+    assert_eq!(vim.status(), "2d");
+    vim.key(&c, Key::Escape);
+    assert_eq!(vim.status(), "");
+    vim.key(&c, Key::Char('/'));
+    vim.key(&c, Key::Char('x'));
+    assert_eq!(vim.status(), "/x");
+    vim.reset();
+    assert_eq!(vim.status(), "");
+    vim.key(&c, Key::Char('i'));
+    assert_eq!(vim.mode(), Mode::Insert);
+    vim.reset();
+    assert_eq!(vim.mode(), Mode::Normal);
+    // A change interrupted by reset is not repeated.
+    assert_eq!(vim.key(&c, Key::Char('.')), vec![]);
+    assert_eq!(Mode::Normal.label(), "NORMAL");
+    assert_eq!(Mode::Insert.label(), "INSERT");
+    assert_eq!(Mode::Visual.label(), "VISUAL");
+    assert_eq!(Mode::VisualLine.label(), "VISUAL LINE");
+}
+
+#[test]
+fn invalid_keys_are_dropped() {
+    for keys in [
+        "di<c-d>", "r<c-d>", "g<c-d>", "gx", "f<c-d>", "d<c-d>", "<c-x>", "diz", "U",
+    ] {
+        let mut vim = Vim::new();
+        assert_eq!(run_with(&mut vim, "a|b", keys), "a|b", "{keys}");
+        assert_eq!(vim.status(), "", "{keys}");
+    }
+    let mut vim = Vim::new();
+    assert_eq!(run_with(&mut vim, "a|b", "vi<c-d>"), "ab|");
+    assert_eq!(vim.mode(), Mode::Visual);
+}
+
+#[test]
+fn block_cursor() {
+    let vim = Vim::new();
+    assert_eq!(vim.block("é", 0), Some(0..2));
+    assert_eq!(vim.block("aé", 9), Some(1..3));
+    assert_eq!(vim.block("a€\nb", 4), Some(1..4));
+    assert_eq!(vim.block("a\n\nb", 2), None);
+}
+
+#[test]
+fn more_operators() {
+    assert_eq!(run("|foo bar", "ywP"), "foo| foo bar");
+    assert_eq!(run("a|b\ncd", "yj"), "|ab\ncd");
+    assert_eq!(run("|foo bar", "y$P"), "foo ba|rfoo bar");
+    assert_eq!(run("  a|b\nc", "ccx<esc>"), "  |x\nc");
+    assert_eq!(run("a\n  |b", "ccx<esc>"), "a\n  |x");
+    assert_eq!(run("  |ab\nc", "Sx<esc>"), "  |x\nc");
+    assert_eq!(run("a|bc", "Cx<esc>"), "a|x");
+    assert_eq!(run("|abc", "2sx<esc>"), "|xc");
+    assert_eq!(run("|ab", "9sx<esc>"), "|x");
+    assert_eq!(run("|a\nb", ">j"), "  |a\n  b");
+    assert_eq!(run("  a\n  |b", "<k"), "|a\nb");
+    assert_eq!(run("\t|a", "<<"), "|a");
+    assert_eq!(run(" |a", "<<"), "|a");
+    assert_eq!(run("|a\n\nb", "3>>"), "  |a\n\n  b");
+    assert_eq!(run("|ab", "yl3p"), "aaa|ab");
+    assert_eq!(run("|ab", "yl3P"), "aa|aab");
+    assert_eq!(run("a\n|b", "yyp"), "a\nb\n|b");
+    assert_eq!(run("|  a\nb", "yyjp"), "  a\nb\n  |a");
+    assert_eq!(run("|  a\nb", "yyjP"), "  a\n  |a\nb");
+    assert_eq!(run("|a\n\nb", "ylj2p"), "a\na|a\nb");
+    assert_eq!(run("|ab", "p"), "|ab");
+    assert_eq!(run("|ab", "3rx"), "|ab");
+    assert_eq!(run("|abc", "2rx"), "x|xc");
+    assert_eq!(run("a\n|\nb", "x"), "a\n|\nb");
+    assert_eq!(run("|ab", "X"), "|ab");
+    assert_eq!(run("|ab", "9x"), "|");
+    assert_eq!(run("ab|c", "9X"), "|c");
+    assert_eq!(run("a|b", "dk"), "a|b");
+    assert_eq!(run("a\n|b", "dk"), "|");
+    assert_eq!(run("|a\nb\nc", "dG"), "|");
+    assert_eq!(run("a\n|b\nc", "dgg"), "|c");
+    assert_eq!(run("|ab cd", "d$"), "|");
+    assert_eq!(run("|ab cd", "de"), "| cd");
+    assert_eq!(run("|ab cd", "dE"), "| cd");
+    assert_eq!(run("|ab  \ncd", "dw"), "|\ncd");
+    assert_eq!(run("|  ab", "cwx<esc>"), "|xab");
+    assert_eq!(run("|a.b c", "cWx<esc>"), "|x c");
+    assert_eq!(run("a(|b)", "d%"), "a|)");
+    assert_eq!(run("a|(b)", "d%"), "|a");
+    assert_eq!(run("|a b", "dfz"), "|a b");
+    assert_eq!(run("|a\nb", "dd"), "|b");
+    assert_eq!(run("|a", "dd"), "|");
+    assert_eq!(run("|a\nb", "5dd"), "|");
+}
+
+#[test]
+fn joins() {
+    assert_eq!(run("|a\nb\nc", "3J"), "a b| c");
+    assert_eq!(run("|a\nb", "J"), "a| b");
+    assert_eq!(run("|a", "J"), "|a");
+    assert_eq!(run("a\n|b", "J"), "a\n|b");
+    assert_eq!(run("|f(a\n)", "J"), "f(a|)");
+    assert_eq!(run("|a  \n   b", "J"), "a| b");
+    assert_eq!(run("|\nb", "J"), "|b");
+    assert_eq!(run("|a\n\nb", "J"), "a|\nb");
+    assert_eq!(run("|a\nb\nc", "9J"), "a b| c");
+}
+
+#[test]
+fn more_repeats() {
+    assert_eq!(run("|a\nb", "ox<esc>j."), "a\nx\nb\n|x");
+    assert_eq!(run("|a\nb", "Ox<esc>j."), "x\n|x\na\nb");
+    assert_eq!(run("|abcd", "rxl."), "x|xcd");
+    assert_eq!(run("|ab", "ylp."), "aa|ab");
+    assert_eq!(run("|abc", "~."), "AB|c");
+    assert_eq!(run("|a b c", "D."), "|");
+    assert_eq!(run("|abc", "x."), "|c");
+    assert_eq!(run("|a\nb\nc", ">>j."), "  a\n  |b\nc");
+    // Insertions are replayed with their Tab and Backspace.
+    assert_eq!(run("|ab", "ixy<bs><tab><esc>."), "x x |  ab");
+    assert_eq!(run("|ab", "ix<cr>y<esc>."), "x\nx\n|yyab");
+    // A failed change is not recorded; a yank is not a change.
+    assert_eq!(run("|a b c", "dwdi(."), "|c");
+    assert_eq!(run("|a b", "dwyl."), "|");
+    assert_eq!(run("|ab", "di(."), "|ab");
+    assert_eq!(run("|ab", "."), "|ab");
+    // The yanks of a repeated change reach the register.
+    assert_eq!(run("|a b c", "dw.P"), "b| c");
+}
+
+#[test]
+fn more_visual() {
+    assert_eq!(run("a b|cd e", "viwd"), "a | e");
+    assert_eq!(run("a (b|c) e", "va(d"), "a | e");
+    assert_eq!(run("|a\nb\nc", "Vj>"), "  |a\n  b\nc");
+    assert_eq!(run("  |a\n  b\nc", "Vj<"), "|a\nb\nc");
+    assert_eq!(run("|abc", "vlx"), "|c");
+    assert_eq!(run("|abc", "vly"), "|abc");
+    assert_eq!(run("|abc", "vlcx<esc>"), "|xc");
+    assert_eq!(run("|ab ab", "v/ab<cr>d"), "|b");
+    assert_eq!(run("|a\nb\nc", "vjVd"), "|c");
+    assert_eq!(run("|a\nb\nc", "Vjvd"), "|\nc");
+    assert_eq!(run("|ab", "vlX<esc>"), "a|b");
+    assert_eq!(run("a|b", "vhd"), "|");
+    assert_eq!(run("|a\nb", "Vjd"), "|");
+    assert_eq!(run("a\n|b", "Vkd"), "|");
+    assert_eq!(run("ab|", "vd"), "|a");
+    // An empty object selects nothing.
+    assert_eq!(run("a(|)b", "vi(d"), "a(|b");
+    let mut vim = Vim::new();
+    assert_eq!(run_with(&mut vim, "a|b", "vv"), "a|b");
+    assert_eq!(vim.mode(), Mode::Normal);
+    assert_eq!(run_with(&mut vim, "a|b", "VV"), "a|b");
+    assert_eq!(vim.mode(), Mode::Normal);
+    run_with(&mut vim, "a|b", "vV");
+    assert_eq!(vim.mode(), Mode::VisualLine);
+    run_with(&mut vim, "a|b", "<c-[>");
+    assert_eq!(vim.mode(), Mode::Normal);
+}
+
+#[test]
+fn more_text_objects() {
+    assert_eq!(run("a `b|c` d", "di`"), "a `|` d");
+    assert_eq!(run("'a|b'", "ci'x<esc>"), "'|x'");
+    assert_eq!(run("a b.|c d", "diW"), "a | d");
+    assert_eq!(run("a b.|c d", "daW"), "a |d");
+    assert_eq!(run("x\n\\begin{a}\n|y\n\\end{a}\nz", "dae"), "x\n|\nz");
+    assert_eq!(run("a \\(b|c\\) d", "di$"), "a \\(|\\) d");
+    assert_eq!(run("a \\(b|c\\) d", "da$"), "a | d");
+    assert_eq!(run("a [b|c] d", "da]"), "a | d");
+    assert_eq!(run("a {b|c} d", "diB"), "a {|} d");
+    assert_eq!(run("a (b|c) d", "dib"), "a (|) d");
+    assert_eq!(run("a \"b|c\" d", "da\""), "a | d");
+    assert_eq!(run("a |b", "di\""), "a |b");
 }
