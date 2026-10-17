@@ -158,15 +158,13 @@ pub fn check(
         let found = match cached {
             Some(found) => found,
             None => {
-                let found: Vec<Problem> = server
-                    .check(text, &chunk, language, &rules)?
-                    .into_iter()
-                    .map(|p| Problem {
-                        range: p.range.start - start..p.range.end - start,
-                        ..p
-                    })
-                    .collect();
-                cache.lock().unwrap().insert(key, found.clone());
+                let found = relative(server.check(text, &chunk, language, &rules)?, start..end);
+                let mut cache = cache.lock().unwrap();
+                if cache.len() >= CACHE_CHUNKS {
+                    // Old chunks are mostly text that has been edited since.
+                    cache.clear();
+                }
+                cache.insert(key, found.clone());
                 found
             }
         };
@@ -176,6 +174,23 @@ pub fn check(
         }));
     }
     Ok(out)
+}
+
+/// Chunks whose findings are kept, beyond which the cache starts over.
+const CACHE_CHUNKS: usize = 4096;
+
+/// `problems` found in the chunk `chunk` of the text, with ranges relative to it. Those
+/// outside it (a server answering about another text) are dropped.
+fn relative(problems: Vec<Problem>, chunk: std::ops::Range<usize>) -> Vec<Problem> {
+    problems
+        .into_iter()
+        .filter(|p| chunk.start <= p.range.start && p.range.start <= p.range.end)
+        .filter(|p| p.range.end <= chunk.end)
+        .map(|p| Problem {
+            range: p.range.start - chunk.start..p.range.end - chunk.start,
+            ..p
+        })
+        .collect()
 }
 
 /// An underlined finding: where it was, the text there, and the finding.
@@ -399,5 +414,37 @@ impl CodeActionProvider for GrammarActions {
             window.dispatch_action(Box::new(action), cx);
         }
         Task::ready(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    fn problem(range: std::ops::Range<usize>) -> Problem {
+        Problem {
+            range,
+            message: String::new(),
+            replacements: Vec::new(),
+            rule: "R".into(),
+            issue_type: "grammar".into(),
+        }
+    }
+
+    #[test]
+    fn findings_are_made_relative_to_their_chunk() {
+        let found = relative(
+            vec![
+                problem(10..12),
+                problem(3..5),
+                problem(18..25),
+                problem(19..20),
+            ],
+            10..20,
+        );
+        let ranges: Vec<_> = found.iter().map(|p| p.range.clone()).collect();
+        // Before the chunk or past its end: not about this chunk.
+        assert_eq!(ranges, [0..2, 9..10]);
     }
 }
