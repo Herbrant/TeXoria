@@ -15,15 +15,25 @@ env:
   GIT_CONFIG_COUNT: 1
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
+  # Tests that need these fail instead of skipping (test_support::skip).
+  TEXORIA_REQUIRE_GIT: 1
+  TEXORIA_REQUIRE_PDFIUM: 1
+  TEXORIA_REQUIRE_TEX: 1
 
 jobs:
   test:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-24.04, windows-latest]
+        # Every platform a release is built for (release.yml).
+        include:
+          - { name: macos-aarch64, os: macos-latest }
+          - { name: macos-x86_64, os: macos-15-intel }
+          - { name: linux-x86_64, os: ubuntu-24.04 }
+          - { name: linux-aarch64, os: ubuntu-22.04-arm }
+          - { name: windows-x86_64, os: windows-latest }
     defaults:
       run:
         shell: bash
@@ -31,16 +41,29 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt, clippy, llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
 
-      - name: Install Linux dependencies (GPUI)
+      - name: Install Linux dependencies (GPUI, TeX)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc g++ clang libfontconfig-dev libwayland-dev \
             libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev \
-            libasound2-dev libvulkan1
+            libasound2-dev libvulkan1 \
+            latexmk texlive-latex-base texlive-latex-recommended texlive-fonts-recommended \
+            texlive-binaries cm-super
+
+      # The sample project (tests/fixtures/sample) needs latexmk, BibTeX, amsmath and T1 fonts.
+      - name: Install TinyTeX (macOS, Windows)
+        if: runner.os != 'Linux'
+        uses: r-lib/actions/setup-tinytex@v2
+      - name: Install TeX packages (macOS, Windows)
+        if: runner.os != 'Linux'
+        run: tlmgr install latexmk cm-super amsfonts
 
       - name: Fetch PDFium
         run: ./scripts/fetch-pdfium.sh
@@ -51,8 +74,41 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Test
-        run: cargo test --workspace --no-fail-fast
+      - name: Test with coverage
+        run: |
+          cargo llvm-cov --workspace --no-fail-fast --json --summary-only \
+            --output-path target/coverage.json
+          cargo llvm-cov report --lcov --output-path target/lcov.info
+
+      - name: Coverage minimums
+        run: ./scripts/coverage-check.sh target/coverage.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.name }}
+          path: |
+            target/coverage.json
+            target/lcov.info
+          if-no-files-found: ignore
+
+      - name: Doctests
+        run: cargo test --workspace --doc
+
+      # Tectonic downloads its support files on first use: keep them between runs.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/Tectonic
+            ~/Library/Caches/Tectonic
+            ~/AppData/Local/TectonicProject
+          key: tectonic-${{ matrix.name }}-${{ hashFiles('scripts/fetch-tectonic.sh') }}
+      - name: Test the bundled engine (Tectonic)
+        env:
+          TEXORIA_REQUIRE_TECTONIC: 1
+        run: |
+          ./scripts/fetch-tectonic.sh
+          cargo test -p tex-compile --test real_engine -- --ignored compiles_sample_with_tectonic
 
       - name: Build release
         run: cargo build -p texoria --release
