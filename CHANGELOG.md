@@ -3,6 +3,19 @@
 Notable changes to TeXoria, newest first. Each release's section is also its GitHub release notes
 (`scripts/release-notes.sh`), so every release must have one before it is tagged.
 
+## [0.4.1] - 2026-10-17
+
+### Fixed
+
+- TeXoria no longer crashes when the pointer rests on the text after a click: the hover read the
+  editor while the editor was updating it. ([5ba2d1d](https://github.com/Herbrant/TeXoria/commit/5ba2d1d))
+
+### Build and documentation
+
+- The new tests pass on Windows. ([7e451ba](https://github.com/Herbrant/TeXoria/commit/7e451ba))
+
+**Full changelog**: [v0.4.0...v0.4.1](https://github.com/Herbrant/TeXoria/compare/v0.4.0...v0.4.1)
+
 ## [0.4.0] - 2026-10-17
 
 ### Added
