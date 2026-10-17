@@ -64,6 +64,27 @@ fn finds_the_main_file_of_a_folder() {
 }
 
 #[test]
+fn run_summaries() {
+    let done = |status| CompileState::Done {
+        status,
+        elapsed: Duration::from_secs(1),
+        errors: 0,
+        warnings: 0,
+    };
+    assert_eq!(
+        run_summary(&done(Status::Success)),
+        "The last run succeeded."
+    );
+    assert_eq!(run_summary(&done(Status::Failed)), "The last run failed.");
+    assert!(run_summary(&done(Status::Cancelled)).contains("stopped"));
+    assert!(run_summary(&CompileState::Idle).contains("not been built"));
+    assert_eq!(
+        run_summary(&CompileState::Failed("No TeX engine".into())),
+        "No TeX engine"
+    );
+}
+
+#[test]
 fn file_uris() {
     assert_eq!(
         file_uri(Path::new("/home/me/a b.tex")),

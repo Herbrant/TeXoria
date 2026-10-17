@@ -3059,18 +3059,7 @@ impl Workspace {
     }
 
     fn problems_report(&self) -> String {
-        let head = match &self.state {
-            CompileState::Idle => "The document has not been built yet.".to_string(),
-            CompileState::Running => {
-                "A build is running; the problems of the previous run:".to_string()
-            }
-            CompileState::Done { status, .. } => match status {
-                Status::Success => "The last run succeeded.".to_string(),
-                _ => "The last run failed.".to_string(),
-            },
-            CompileState::Failed(msg) => msg.to_string(),
-        };
-        format!("{head}\n{}", self.problems_text())
+        format!("{}\n{}", run_summary(&self.state), self.problems_text())
     }
 
     fn problems_text(&self) -> String {
@@ -5317,6 +5306,22 @@ fn remove(path: &Path) -> std::io::Result<()> {
 
 /// In a directory, the `.tex` file that has `\documentclass` (preferring
 /// `main.tex`).
+/// How the last build went, for an agent's `problems` call.
+fn run_summary(state: &CompileState) -> String {
+    match state {
+        CompileState::Idle => "The document has not been built yet.".to_string(),
+        CompileState::Running => {
+            "A build is running; the problems of the previous run:".to_string()
+        }
+        CompileState::Done { status, .. } => match status {
+            Status::Success => "The last run succeeded.".to_string(),
+            Status::Failed => "The last run failed.".to_string(),
+            Status::Cancelled => "The last run was stopped before it finished.".to_string(),
+        },
+        CompileState::Failed(msg) => msg.to_string(),
+    }
+}
+
 fn find_main_file(dir: &Path) -> Option<PathBuf> {
     let main = dir.join("main.tex");
     if main.is_file() {
