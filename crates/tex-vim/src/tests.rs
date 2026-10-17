@@ -135,6 +135,13 @@ fn text_objects() {
 }
 
 #[test]
+fn math_object_outside_a_formula() {
+    assert_eq!(run("|", "di$"), "|");
+    assert_eq!(run("|é", "di$"), "|é");
+    assert_eq!(run("a |€ b", "ca$"), "a |€ b");
+}
+
+#[test]
 fn inserts_and_opens_lines() {
     assert_eq!(run("|ab", "ix<esc>"), "|xab");
     assert_eq!(run("|ab", "ax<esc>"), "a|xb");

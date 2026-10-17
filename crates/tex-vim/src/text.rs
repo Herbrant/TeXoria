@@ -437,7 +437,8 @@ pub fn math_object(t: &str, i: usize, around: bool) -> Option<Range<usize>> {
             return Some(if around { *s..e + el } else { s + sl..*e });
         }
     }
-    let open = t[..=i.min(t.len().saturating_sub(1))].rfind("\\(")?;
+    // Up to the character at `i` included (the cursor may be on the `(` of `\(`).
+    let open = t[..next_char(t, i.min(t.len()))].rfind("\\(")?;
     let close = open + t[open..].find("\\)")?;
     (close + 2 > i).then(|| {
         if around {
@@ -522,5 +523,18 @@ mod tests {
         assert_eq!(&nested[environment_object(nested, x, false).unwrap()], "x");
         let paren = "see \\(y\\) now";
         assert_eq!(&paren[math_object(paren, 6, false).unwrap()], "y");
+    }
+
+    #[test]
+    fn math_object_without_formula() {
+        // No `$` pair: the `\(` lookup must not slice an empty text or a multibyte character.
+        assert_eq!(math_object("", 0, false), None);
+        assert_eq!(math_object("é", 0, true), None);
+        assert_eq!(math_object("a€b", 1, false), None);
+        let t = "\\(é\\)";
+        assert_eq!(math_object(t, 2, false), Some(2..4));
+        assert_eq!(math_object(t, 1, true), Some(0..6));
+        // At the end of the text, after a closed formula.
+        assert_eq!(math_object(t, t.len(), false), None);
     }
 }
