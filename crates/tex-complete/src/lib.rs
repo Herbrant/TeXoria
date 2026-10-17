@@ -1191,6 +1191,15 @@ mod tests {
         }
 
         #[test]
+        fn comments_start_after_an_even_number_of_backslashes(s in "[a\\\\%é]{0,20}") {
+            // A `%` preceded by an even run of backslashes.
+            let naive = s.char_indices().find(|&(i, c)| {
+                c == '%' && s[..i].chars().rev().take_while(|&c| c == '\\').count() % 2 == 0
+            });
+            prop_assert_eq!(comment_start(&s), naive.map(|(i, _)| i));
+        }
+
+        #[test]
         fn unclosed_brace_matches_a_naive_search(s in "[a{}é]{0,30}") {
             prop_assert_eq!(unclosed_brace(&s), naive_unclosed_brace(&s));
         }
