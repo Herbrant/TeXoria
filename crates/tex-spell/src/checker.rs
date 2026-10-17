@@ -75,6 +75,7 @@ impl Speller {
     }
 
     /// The ranges among `words` (byte ranges of `text`) that are misspelled.
+    /// Ranges that are not a slice of `text` (from an older text) are skipped.
     pub fn misspelled(
         &self,
         text: &str,
@@ -84,7 +85,9 @@ impl Speller {
         words
             .iter()
             .filter(|r| {
-                let w = &text[(*r).clone()];
+                let Some(w) = text.get((*r).clone()) else {
+                    return false;
+                };
                 !personal.contains(w) && !personal.contains(&w.to_lowercase()) && !self.check(w)
             })
             .cloned()
@@ -175,6 +178,16 @@ mod tests {
             *s.cache.lock().unwrap(),
             HashMap::from([("hello".to_string(), true)])
         );
+    }
+
+    #[test]
+    fn skips_ranges_outside_the_text() {
+        let s = speller();
+        let text = "città wrld";
+        // Inside `à`, past the end, reversed: not words of this text.
+        #[allow(clippy::reversed_empty_ranges)]
+        let words = vec![0..6, 3..5, 7..11, 8..20, 9..8];
+        assert_eq!(s.misspelled(text, &words, &HashSet::new()), vec![7..11]);
     }
 
     #[test]
