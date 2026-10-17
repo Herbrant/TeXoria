@@ -9,7 +9,8 @@ use std::sync::{Arc, RwLock};
 
 use gpui_kit::component::highlighter::{LanguageConfig, LanguageRegistry};
 use gpui_kit::component::input::{
-    CompletionProvider, DefinitionProvider, HoverProvider, Rope, RopeExt, ShowDocumentHandler,
+    CompletionProvider, DefinitionProvider, EditorState, HoverProvider, Rope, RopeExt,
+    ShowDocumentHandler,
 };
 use gpui_kit::*;
 use lsp_types::{
@@ -288,5 +289,21 @@ impl HoverProvider for LatexNavigation {
             }),
             range: symbol.map(|s| lsp_range(rope, s.range())),
         })))
+    }
+}
+
+/// Open a package's documentation (`texdoc`, else texdoc.org).
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = texoria, no_json)]
+pub struct PackageDocs {
+    pub name: String,
+}
+
+/// The package named where the cursor is (`\usepackage{…}`).
+pub fn package_at_cursor(editor: &Entity<EditorState>, cx: &App) -> Option<String> {
+    let state = editor.read(cx);
+    match symbol_at(state.text(), state.cursor()) {
+        Some(Symbol::Package { name, .. }) => Some(name),
+        _ => None,
     }
 }

@@ -33,7 +33,9 @@ changes in every open tab.
 
 Hovering shows what a name stands for: a citation's authors, title and year, what a label is
 attached to, how many times a label is referenced, a file's size, what a command does, and a
-link to a package's documentation.
+link to a package's documentation. Right-click a package in `\usepackage{…}` and choose
+*Documentation of …* to open its manual: the copy installed with your TeX distribution
+(through `texdoc`), or else the one on [texdoc.org](https://texdoc.org).
 
 ## Comments
 

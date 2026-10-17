@@ -249,6 +249,66 @@ pub fn detect(bundled_dir: Option<&Path>) -> Vec<Engine> {
     engines
 }
 
+/// A TeX distribution's program (`texdoc`, `kpsewhich`…), looked for like
+/// latexmk, with the `PATH` to run it with (its folder first).
+pub fn find_tex_tool(name: &str) -> Option<(PathBuf, OsString)> {
+    let (tool, dir) = find_tool(name, &tex_bin_dirs())?;
+    let extra: Vec<PathBuf> = dir.into_iter().collect();
+    Some((tool, prepend_path(&extra)))
+}
+
+/// The local documentation of `package` (a PDF or HTML file), from `texdoc`.
+pub fn texdoc(package: &str) -> Option<PathBuf> {
+    // A name, never an option.
+    let valid = !package.is_empty()
+        && !package.starts_with('-')
+        && package
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if !valid {
+        return None;
+    }
+    let (texdoc, path) = find_tex_tool("texdoc")?;
+    let mut cmd = Command::new(texdoc);
+    cmd.args(["-l", "-M", "-I", package])
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn().ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
+    parse_texdoc(&out)
+}
+
+/// The first result of `texdoc -M`: `name \t score \t path \t lang \t description`.
+fn parse_texdoc(out: &str) -> Option<PathBuf> {
+    out.lines()
+        .filter_map(|l| l.split('\t').nth(2))
+        .map(PathBuf::from)
+        .find(|p| p.is_absolute())
+}
+
 /// Look for `name` on `PATH` first, then in `fallback` dirs. Returns the
 /// binary and, if found in a fallback dir, that dir (to add to `PATH`).
 fn find_tool(name: &str, fallback: &[PathBuf]) -> Option<(PathBuf, Option<PathBuf>)> {
@@ -357,6 +417,22 @@ fn bundled_tectonic_dirs() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_texdoc_output() {
+        let out = "amsmath\t10\t/tl/doc/latex/amsmath/amsldoc.pdf\t\tUser's guide\namsmath\t1\t/tl/doc/amsmath.tex\t\t\n";
+        assert_eq!(
+            parse_texdoc(out),
+            Some(PathBuf::from("/tl/doc/latex/amsmath/amsldoc.pdf"))
+        );
+        assert_eq!(parse_texdoc(""), None);
+    }
+
+    #[test]
+    fn texdoc_refuses_options() {
+        assert_eq!(texdoc("-h"), None);
+        assert_eq!(texdoc("a b"), None);
+    }
 
     #[test]
     fn job_paths() {

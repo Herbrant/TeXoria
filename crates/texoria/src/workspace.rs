@@ -41,7 +41,7 @@ use crate::edit;
 use crate::file_tree::{FileOp, FileTree, FileTreeEvent};
 use crate::git_panel::{self, GitOp, GitPanel, GitPanelEvent};
 use crate::latex::{
-    self, CursorFixup, LatexCompletions, LatexNavigation, OpenExternal, OpenLocation,
+    self, CursorFixup, LatexCompletions, LatexNavigation, OpenExternal, OpenLocation, PackageDocs,
 };
 use crate::overleaf;
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
@@ -761,6 +761,29 @@ impl Workspace {
                 cx,
             );
         }
+    }
+
+    /// Open a package's documentation: the local one, else texdoc.org's.
+    fn package_docs(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let valid = !name.starts_with('-')
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+        if !valid {
+            return;
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            let package = name.clone();
+            let local = cx
+                .background_spawn(async move { tex_compile::texdoc(&package) })
+                .await;
+            this.update_in(cx, |this, window, cx| match local {
+                Some(doc) => this.open_external(&doc, window, cx),
+                None => cx.open_url(&format!("https://texdoc.org/pkg/{name}")),
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn prompt_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3514,7 +3537,15 @@ impl Render for Workspace {
                         let editor = b.editor.clone();
                         move |menu, window, cx| {
                             let selected = !editor.read(cx).selected_range().is_empty();
-                            let menu = if selected { agent_menu(menu) } else { menu };
+                            let mut menu = if selected { agent_menu(menu) } else { menu };
+                            if let Some(name) = latex::package_at_cursor(&editor, cx) {
+                                menu = menu
+                                    .menu(
+                                        format!("Documentation of {name}"),
+                                        Box::new(PackageDocs { name }),
+                                    )
+                                    .separator();
+                            }
                             spelling(menu, window, cx)
                         }
                     })
@@ -3678,6 +3709,9 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, a: &OpenLocation, window, cx| {
                 this.reveal_range(a.file.clone(), a.range.clone(), window, cx)
+            }))
+            .on_action(cx.listener(|this, a: &PackageDocs, window, cx| {
+                this.package_docs(a.name.clone(), window, cx)
             }))
             .on_action(cx.listener(|this, a: &OpenExternal, window, cx| {
                 this.open_external(&a.path, window, cx)
