@@ -41,7 +41,8 @@ documentation, written for users, each entry linking its commits
 `compare/vPREV...vX.Y.Z` link. `.github/workflows/release.yml` checks that the
 tag matches the version (`scripts/version.sh`), builds on native runners (macOS arm64/x64,
 Ubuntu 22.04 x64/arm64 for an old enough glibc, Windows x64), publishes the GitHub release with
-`SHA256SUMS`, and renders `crates/texoria/packaging/{homebrew,aur}/*.in`
+`SHA256SUMS` and `SHA256SUMS.minisig` (signed with the secret `MINISIGN_SECRET_KEY`, trusted
+comment `texoria X.Y.Z`, checked against `crates/tex-update/src/texoria.pub`), and renders `crates/texoria/packaging/{homebrew,aur}/*.in`
 (`scripts/render-manifests.sh`) into the cask pushed to `Herbrant/homebrew-tap`
 (secret `HOMEBREW_TAP_TOKEN`) and the AUR `texoria-bin` package (secret `AUR_SSH_PRIVATE_KEY`).
 Pre-release tags (`v1.2.0-rc.1`) skip Homebrew and the AUR; a manual run only builds artifacts.
@@ -79,7 +80,8 @@ texoria ─┬─ tex-compile ── tex-log
          ├─ tex-complete ── tex-project ── tex-syntax
          ├─ tex-spell ── tex-syntax
          ├─ synctex
-         └─ pdf-view (PDFium)
+         ├─ pdf-view (PDFium)
+         └─ tex-update (self-update)
 ```
 
 - **tex-compile**: `engine::detect()` returns engines best-first — system latexmk (pdfLaTeX,
@@ -230,6 +232,22 @@ texoria ─┬─ tex-compile ── tex-log
   `target/` (`dev_vendor_dir`): a release build must never look at build-machine paths.
   `fetch-*.sh` verify pinned SHA-256s (`scripts/sha256.sh`): update them when bumping versions
   (`release.yml` pins nfpm the same way).
+- **tex-update**: updates of copies no package manager looks after. `InstallKind::classify`
+  (pure, over paths) tells them apart: a writable `TeXoria.app` (`.dmg`/install.sh), the NSIS
+  per-user install (`uninstall.exe` next to the exe), `$APPIMAGE`, install.sh's Linux prefix
+  (`bin/texoria` + `lib/texoria`) update themselves; Homebrew (a `Caskroom/texoria` folder),
+  `/usr` and `/opt` (deb/rpm/AUR), translocated or read-only apps only get instructions; a binary
+  in `target/{debug,release}` is `Dev` and never checks. The latest version comes from the
+  `releases/latest` redirect (no API). Nothing is installed unless `SHA256SUMS` verifies against
+  the embedded minisign key with the trusted comment `texoria <version>`, and the download
+  matches it. The download goes to a `.texoria-update-*` folder next to its target (same file
+  system), removed if anything fails; the install renames the new copy over the old one
+  (macOS: `hdiutil` + `ditto` + `codesign --verify` first), and `Relaunch` waits for the app's
+  PID to exit before starting it again. Windows runs `setup.exe /P /R /NS /D=<dir>` instead.
+  Asset names are those of `release.yml`. `TEXORIA_UPDATE_URL` replaces the releases URL (and,
+  in debug builds only, `TEXORIA_UPDATE_KEY` the key) to test against a local server.
+  In the app, `updater.rs` holds the state shown in the status bar; the workspace saves
+  everything before `Updater::install` and quits on `UpdaterEvent::Installed`.
 - **tex-syntax**: `tree-sitter` must stay on the same major version that gpui-kit uses.
 
 ## Conventions

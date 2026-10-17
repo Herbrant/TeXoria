@@ -14,6 +14,7 @@ mod settings;
 mod settings_window;
 mod spell;
 mod theme;
+mod updater;
 mod workspace;
 
 use std::path::PathBuf;
@@ -50,6 +51,7 @@ actions!(
         OpenFromOverleaf,
         SyncOverleaf,
         OpenSettings,
+        CheckForUpdates,
         ToggleAgent,
         EditWithAgent,
         FixWithAgent,
@@ -87,6 +89,7 @@ fn bind_keys(cx: &mut App) {
 fn set_menus(cx: &mut App) {
     cx.set_menus([
         Menu::new("TeXoria").items([
+            MenuItem::action("Check for Updates…", CheckForUpdates),
             MenuItem::action("Settings…", OpenSettings),
             MenuItem::separator(),
             MenuItem::action("Quit TeXoria", Quit),

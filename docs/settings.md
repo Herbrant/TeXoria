@@ -44,6 +44,12 @@ change its files, so TeXoria asks before letting them (see [Git](git.md#trusting
 lists the folders you allowed, separately for Git, for `latexmkrc` and for agents. Remove a
 folder and TeXoria will ask again.
 
+## Updates
+
+| Setting | Default | |
+|---|---|---|
+| Check for updates | On | Look for a new release at startup, at most once a day. **Check for Updates…** in the TeXoria menu looks right away. See [Updating](installation.md#updating). |
+
 ## Where files are stored
 
 Settings are a TOML file, `settings.toml`, that you can also edit by hand while TeXoria is

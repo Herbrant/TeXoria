@@ -638,6 +638,33 @@ impl SettingsWindow {
                 )),
             ])
     }
+
+    fn updates_page(&self, cx: &App) -> SettingPage {
+        let t = self.target.clone();
+        let how = t.read(cx, |w| {
+            let kind = w.updater().read(cx).kind().clone();
+            if kind.self_updating() {
+                "When a new version is out, “Update to …” appears in the status bar: TeXoria \
+                 downloads it, checks its signature and restarts into it."
+                    .to_string()
+            } else if let Some(how) = kind.instructions() {
+                format!("This copy does not update itself. {how}")
+            } else {
+                "This copy was built from source.".to_string()
+            }
+        });
+        SettingPage::new("Updates").groups([SettingGroup::new().title("Updates").item(
+            SettingItem::new(
+                "Check for updates",
+                bool_field(&t, |s| s.check_updates, |s, v| s.check_updates = v)
+                    .default_value(Settings::default().check_updates),
+            )
+            .description(format!(
+                "Look for a new release at startup, at most once a day. \
+                 Check for Updates… in the TeXoria menu looks right away. {how}"
+            )),
+        )])
+    }
 }
 
 /// A switch bound to one `bool` of the settings.
@@ -726,6 +753,7 @@ impl Render for SettingsWindow {
             self.git_page(cx),
             self.agents_page(cx),
             self.trust_page(cx),
+            self.updates_page(cx),
         ];
         let theme = cx.theme();
         v_flex()

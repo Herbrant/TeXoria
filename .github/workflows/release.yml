@@ -1,7 +1,8 @@
 name: Release
 
 # Pushing a tag vX.Y.Z (matching [workspace.package] version) builds every package, publishes a
-# GitHub release with the version's section of CHANGELOG.md as its notes, and updates the
+# GitHub release with the version's section of CHANGELOG.md as its notes and a signed
+# SHA256SUMS (for the in-app updater, crates/tex-update), and updates the
 # Homebrew cask and the AUR package (publish.yml). Tags with a pre-release suffix (v1.2.0-rc.1)
 # are published as pre-releases and skip Homebrew/AUR. Running the workflow by hand only builds
 # the packages (downloadable as workflow artifacts).
@@ -147,6 +148,25 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum -- * | tee SHA256SUMS
+      # The in-app updater (crates/tex-update) only installs packages listed in a SHA256SUMS
+      # signed with this key, for this version (the trusted comment).
+      - name: Sign the checksums
+        working-directory: dist
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::the MINISIGN_SECRET_KEY secret is not set"
+            exit 1
+          fi
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          key="$RUNNER_TEMP/minisign.key"
+          (umask 077 && printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key")
+          minisign -S -s "$key" -m SHA256SUMS -t "texoria $VERSION"
+          rm -f "$key"
+          minisign -V -p ../crates/tex-update/src/texoria.pub -m SHA256SUMS
       - name: Release notes
         env:
           VERSION: ${{ needs.version.outputs.version }}

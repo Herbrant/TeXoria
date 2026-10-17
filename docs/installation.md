@@ -25,7 +25,7 @@ installs it without root:
 - **Linux**: `~/.local/bin/texoria`, its libraries in `~/.local/lib/texoria`, plus a menu entry
   and icons in `~/.local/share`.
 
-Run it again to update. It accepts a few environment variables (pass them to `sh`, as in
+TeXoria then [updates itself](#updating). It accepts a few environment variables (pass them to `sh`, as in
 `curl … | TEXORIA_VERSION=0.1.0 sh`):
 
 | Variable | Meaning |
@@ -84,13 +84,45 @@ Use the quick install above, or one of the release's portable builds:
 - `texoria-<version>-linux-<arch>.tar.gz`: a `usr/` tree to extract under any prefix
   (`/usr/local`, `~/.local`, …).
 
+## Updating
+
+TeXoria looks for a new release when it starts, at most once a day (turn it off in
+[Settings](settings.md#updates)), and right away with **Check for Updates…** in the TeXoria menu.
+When there is one, the status bar shows it on the right. What happens next depends on how you
+installed TeXoria:
+
+| Installed with | How it updates |
+|---|---|
+| `.dmg`, install script (macOS) | **Update to X.Y.Z** downloads the release; **Restart to Update** saves your files, replaces `TeXoria.app` and reopens the project |
+| Windows installer | The same; the installer runs without questions once TeXoria has quit, and starts it again |
+| AppImage | The same; the AppImage file is replaced |
+| Install script (Linux) | The same; `bin/texoria` and `lib/texoria` under the prefix are replaced |
+| Homebrew | `brew upgrade --cask texoria` |
+| AUR, `.deb`, `.rpm` | Your package manager |
+
+Before installing anything, TeXoria checks that the release's `SHA256SUMS` is signed with the
+project's release key (a [minisign](https://jedisct1.github.io/minisign/) key whose public half
+is built into the app) and that the download matches it.
+
+An app it cannot replace — run straight from the disk image, from a folder you cannot write to,
+or one macOS moved to a temporary location because it was never moved out of `Downloads` — is
+only told about the new version: move it to Applications first, or download the release by hand.
+Running the install script again also updates.
+
 ## Verifying downloads
 
-Each release has a `SHA256SUMS` file. Check a download with:
+Each release has a `SHA256SUMS` file, signed in `SHA256SUMS.minisig`. Check a download with:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS            # Linux
 shasum -a 256 --check --ignore-missing SHA256SUMS        # macOS
+```
+
+and, with [minisign](https://jedisct1.github.io/minisign/), that `SHA256SUMS` comes from the
+release workflow:
+
+```sh
+minisign -V -m SHA256SUMS -P RWT1t4IPXYpPnfg23bOLpF8VMtWvMGCV2TASNWAGxMQgtBNxqqkYah15
 ```
 
 ## Code signing

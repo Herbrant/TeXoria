@@ -16,6 +16,7 @@ tex-project.workspace = true
 tex-complete.workspace = true
 tex-spell.workspace = true
 tex-agent.workspace = true
+tex-update.workspace = true
 pdf-view.workspace = true
 
 anyhow.workspace = true

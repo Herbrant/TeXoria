@@ -39,6 +39,7 @@ tex-project = { path = "crates/tex-project" }
 tex-complete = { path = "crates/tex-complete" }
 tex-spell = { path = "crates/tex-spell" }
 tex-agent = { path = "crates/tex-agent" }
+tex-update = { path = "crates/tex-update" }
 pdf-view = { path = "crates/pdf-view" }
 
 [profile.release]

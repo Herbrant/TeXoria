@@ -11,7 +11,8 @@ texoria ─┬─ tex-compile ── tex-log
          ├─ tex-complete ── tex-project ── tex-syntax
          ├─ tex-spell ── tex-syntax
          ├─ synctex
-         └─ pdf-view (PDFium)
+         ├─ pdf-view (PDFium)
+         └─ tex-update (self-update)
 ```
 
 | Crate | Role |
@@ -27,6 +28,7 @@ texoria ─┬─ tex-compile ── tex-log
 | [`tex-spell`](../../crates/tex-spell) | Prose extraction, language detection, Hunspell dictionaries |
 | [`synctex`](../../crates/synctex) | `.synctex(.gz)` reader, forward and inverse search |
 | [`pdf-view`](../../crates/pdf-view) | PDF rasterization with PDFium on a dedicated thread |
+| [`tex-update`](../../crates/tex-update) | Updates: latest release, signed checksums, download and install |
 
 ## Build
 
@@ -96,6 +98,9 @@ hooks), so they only start in projects the user allowed, a third permission; the
 write through TeXoria must be inside the project.
 
 The permissions are stored in the settings for exact directories, never their subdirectories.
+Updates only install a package listed in a `SHA256SUMS` signed by the release workflow's
+minisign key for that very version; the public key is built into the app.
+
 Credentials are passed to Git through the environment, never on the command line, in a URL or
 in `.git/config`; Overleaf tokens are only sent over HTTPS and live in the system keychain.
 
@@ -110,6 +115,7 @@ in `.git/config`; Overleaf tokens are only sent over HTTPS and live in the syste
   LaTeX language and completions with the editor.
 - `settings.rs` and `settings_window.rs` hold the settings (TOML in the OS config folder) and
   their window. Files are written atomically (temp file + rename).
+- `updater.rs` checks for releases, downloads them and installs them on restart (`tex-update`).
 - Actions, key bindings and menus are declared in `main.rs`.
 
 [`AGENTS.md`](../../AGENTS.md) goes deeper into each crate and the invariants to preserve.

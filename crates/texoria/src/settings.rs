@@ -46,6 +46,10 @@ pub struct Settings {
     pub custom_agents: Vec<CustomAgent>,
     /// Project directories coding agents may work in.
     pub agent_projects: Vec<PathBuf>,
+    /// Look for a new release at startup, at most once a day.
+    pub check_updates: bool,
+    /// When a check last found no new release (Unix seconds).
+    pub last_update_check: Option<u64>,
     /// Why the file could not be read in full, to tell the user once.
     #[serde(skip)]
     pub load_error: Option<String>,
@@ -119,6 +123,8 @@ impl Default for Settings {
             agent: None,
             custom_agents: Vec::new(),
             agent_projects: Vec::new(),
+            check_updates: true,
+            last_update_check: None,
             load_error: None,
         }
     }

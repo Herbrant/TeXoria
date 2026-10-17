@@ -1,0 +1,19 @@
+[package]
+name = "tex-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+tempfile.workspace = true
+flate2.workspace = true
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+sha2 = "0.10"
+semver = "1"
+minisign-verify = "0.3"
+tar = "0.4"
+
+[dev-dependencies]
+minisign = "0.7"
