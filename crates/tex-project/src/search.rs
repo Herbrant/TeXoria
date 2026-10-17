@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use regex::{NoExpand, Regex, RegexBuilder};
+use regex::{Regex, RegexBuilder};
 
 use crate::files::{self, FileNode};
 
@@ -62,17 +62,27 @@ impl Query {
     }
 
     /// `text` with every match replaced by `replacement`, and how many there were.
+    /// Empty matches are skipped, as [`find`] does.
     pub fn replace_all(&self, regex: &Regex, text: &str, replacement: &str) -> (String, usize) {
-        let count = regex.find_iter(text).filter(|m| !m.is_empty()).count();
-        if count == 0 {
-            return (text.to_string(), 0);
+        let mut out = String::with_capacity(text.len());
+        let mut count = 0;
+        let mut last = 0;
+        for caps in regex.captures_iter(text) {
+            let m = caps.get(0).expect("group 0 is the whole match");
+            if m.is_empty() {
+                continue;
+            }
+            out.push_str(&text[last..m.start()]);
+            if self.regex {
+                caps.expand(replacement, &mut out);
+            } else {
+                out.push_str(replacement);
+            }
+            last = m.end();
+            count += 1;
         }
-        let out = if self.regex {
-            regex.replace_all(text, replacement)
-        } else {
-            regex.replace_all(text, NoExpand(replacement))
-        };
-        (out.into_owned(), count)
+        out.push_str(&text[last..]);
+        (out, count)
     }
 }
 
@@ -295,6 +305,51 @@ mod tests {
             groups.replace_all(&re, r"an \emph{idea}", r"\textit{$1}"),
             (r"an \textit{idea}".to_string(), 1)
         );
+    }
+
+    #[test]
+    fn replaces_only_the_matches_it_counts() {
+        // Empty matches are never listed, so they are not replaced either.
+        let star = Query {
+            regex: true,
+            ..query("a*")
+        };
+        let re = star.compile().unwrap();
+        assert_eq!(find(&re, "baab", 10).len(), 1);
+        assert_eq!(star.replace_all(&re, "baab", "X"), ("bXb".to_string(), 1));
+        let caret = Query {
+            regex: true,
+            ..query("^")
+        };
+        let re = caret.compile().unwrap();
+        assert_eq!(
+            caret.replace_all(&re, "a\nb", "> "),
+            ("a\nb".to_string(), 0)
+        );
+        // `$0` and named groups expand in regex mode only.
+        let named = Query {
+            regex: true,
+            ..query(r"(?<w>\w+)!")
+        };
+        let re = named.compile().unwrap();
+        assert_eq!(
+            named.replace_all(&re, "hi! yo!", "[$w/$0]"),
+            ("[hi/hi!] [yo/yo!]".to_string(), 2)
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn replace_all_counts_what_it_replaces(
+            text in "[ab\n ]{0,40}",
+            pattern in "[ab*+?^$|.]{1,4}",
+        ) {
+            let q = Query { regex: true, ..query(&pattern) };
+            let Ok(re) = q.compile() else { return Ok(()) };
+            let (out, n) = q.replace_all(&re, &text, "\u{1}");
+            proptest::prop_assert_eq!(n, find(&re, &text, usize::MAX).len());
+            proptest::prop_assert_eq!(out.matches('\u{1}').count(), n);
+        }
     }
 
     #[test]
