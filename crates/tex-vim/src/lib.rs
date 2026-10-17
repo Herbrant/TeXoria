@@ -4,7 +4,8 @@
 //! Normal, insert, visual and visual-line modes; counts; the operators `d c
 //! y > <` with motions and text objects (including LaTeX's `ie`/`ae`
 //! environments and `i$`/`a$` inline math); `x X s S r J p P u Ctrl-R . ~ D C
-//! Y`; search with `/ ? n N *`; and the ex commands `:w :q :wq :x :<line>`.
+//! Y`, with `x r J p P ~ u U` acting on the visual selection; search with
+//! `/ ? n N *`; and the ex commands `:w :q :wq :x :<line>`.
 //! In insert mode keys are passed to the editor, except Escape.
 
 mod text;
@@ -355,6 +356,14 @@ impl Vim {
         }
     }
 
+    /// The selected range with its head at `head`, start first.
+    fn selected(&mut self, t: &str, head: usize) -> Range<usize> {
+        match self.selection(t, head) {
+            Action::Select(r) => r.start.min(r.end)..r.start.max(r.end),
+            _ => unreachable!("selection() always selects"),
+        }
+    }
+
     fn command_key(&mut self, ctx: &Ctx, key: Key) -> Vec<Action> {
         if matches!(key, Key::Escape | Key::Ctrl('[') | Key::Ctrl('c')) {
             self.pending.clear();
@@ -438,7 +447,7 @@ impl Vim {
             Key::Char(c) => match c {
                 'x' | 'X' | 's' | 'S' | 'D' | 'C' | 'Y' | 'J' | 'p' | 'P' | 'u' | '.' | 'i'
                 | 'a' | 'I' | 'A' | 'o' | 'O' | 'v' | 'V' | ':' | '/' | '?' | 'n' | 'N' | '*'
-                | '~' => Some(c),
+                | '~' | 'U' => Some(c),
                 _ => None,
             },
             Key::Ctrl('r') => Some('R'),
@@ -523,10 +532,7 @@ impl Vim {
             }
             Cmd::VisualOp(op) => {
                 let linewise = self.mode == Mode::VisualLine;
-                let range = match self.selection(t, cur) {
-                    Action::Select(r) => r.start.min(r.end)..r.start.max(r.end),
-                    _ => return Vec::new(),
-                };
+                let range = self.selected(t, cur);
                 self.mode = Mode::Normal;
                 self.operate(ctx, op, range, linewise)
             }
@@ -537,6 +543,21 @@ impl Vim {
                 }
                 _ => Vec::new(),
             },
+            Cmd::Replace(c, _) if matches!(self.mode, Mode::Visual | Mode::VisualLine) => {
+                let range = self.selected(t, cur);
+                self.mode = Mode::Normal;
+                let new: String = t[range.clone()]
+                    .chars()
+                    .map(|ch| if ch == '\n' { ch } else { c })
+                    .collect();
+                vec![
+                    Action::Edit {
+                        range: range.clone(),
+                        text: new,
+                    },
+                    Action::Cursor(range.start),
+                ]
+            }
             Cmd::Replace(c, count) => {
                 let end = line_end(t, cur);
                 let mut e = cur;
@@ -693,13 +714,33 @@ impl Vim {
         let ls = line_start(t, cur);
         let le = line_end(t, cur);
         match c {
-            'x' | 'X' | 'D' | 'C' | 's' | 'S' | 'Y' | '~' | 'J' | 'p' | 'P' | 'o' | 'O' | 'i'
-            | 'a' | 'I' | 'A'
-                if visual && !matches!(c, 'x' | 'J' | '~' | 'p' | 'P') =>
-            {
+            'X' | 'D' | 'C' | 's' | 'S' | 'Y' | 'o' | 'O' | 'i' | 'a' | 'I' | 'A' if visual => {
                 Vec::new()
             }
             'x' if visual => self.run(ctx, Cmd::VisualOp('d')),
+            '~' | 'u' | 'U' if visual => {
+                let range = self.selected(t, cur);
+                self.mode = Mode::Normal;
+                let new = change_case(&t[range.clone()], c);
+                vec![
+                    Action::Edit {
+                        range: range.clone(),
+                        text: new,
+                    },
+                    Action::Cursor(range.start),
+                ]
+            }
+            'J' if visual => {
+                let range = self.selected(t, cur);
+                self.mode = Mode::Normal;
+                let last = prev_char(t, range.end).max(range.start);
+                let lines = line_of(t, last) - line_of(t, range.start) + 1;
+                let actions = self.join(t, range.start, lines);
+                // `.` repeats changes made in normal mode only.
+                self.recording = None;
+                actions
+            }
+            'p' | 'P' if visual => self.put_over_selection(ctx, cur, c == 'p', count),
             'x' | 'X' => {
                 if le == ls {
                     return Vec::new();
@@ -756,16 +797,7 @@ impl Vim {
                         e = next_char(t, e);
                     }
                 }
-                let toggled: String = t[cur..e]
-                    .chars()
-                    .flat_map(|ch| {
-                        if ch.is_uppercase() {
-                            ch.to_lowercase().collect::<Vec<_>>()
-                        } else {
-                            ch.to_uppercase().collect()
-                        }
-                    })
-                    .collect();
+                let toggled = change_case(&t[cur..e], '~');
                 // After the toggled text, or on its last character at the end of the line.
                 let cursor = if e < le {
                     cur + toggled.len()
@@ -780,39 +812,7 @@ impl Vim {
                     Action::Cursor(cursor),
                 ]
             }
-            'J' => {
-                self.start_change(c);
-                let n = count.max(2) - 1;
-                let mut end = le;
-                for _ in 0..n {
-                    if end >= t.len() {
-                        break;
-                    }
-                    end = line_end(t, end + 1);
-                }
-                if end == le {
-                    self.recording = None;
-                    return Vec::new();
-                }
-                let joined: Vec<&str> = t[ls..end].split('\n').collect();
-                let mut new = joined[0].trim_end().to_string();
-                let mut cursor = new.len();
-                for part in &joined[1..] {
-                    let part = part.trim_start();
-                    cursor = new.len();
-                    if !part.is_empty() && !part.starts_with(')') && !new.is_empty() {
-                        new.push(' ');
-                    }
-                    new.push_str(part);
-                }
-                vec![
-                    Action::Edit {
-                        range: ls..end,
-                        text: new,
-                    },
-                    Action::Cursor(ls + cursor),
-                ]
-            }
+            'J' => self.join(t, cur, count),
             'p' | 'P' => {
                 let reg = self.paste_register(ctx);
                 if reg.text.is_empty() {
@@ -974,6 +974,90 @@ impl Vim {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// `J`: join `count` lines (at least two) from the one of `cur`.
+    fn join(&mut self, t: &str, cur: usize, count: usize) -> Vec<Action> {
+        let ls = line_start(t, cur);
+        let le = line_end(t, cur);
+        self.start_change('J');
+        let n = count.max(2) - 1;
+        let mut end = le;
+        for _ in 0..n {
+            if end >= t.len() {
+                break;
+            }
+            end = line_end(t, end + 1);
+        }
+        if end == le {
+            self.recording = None;
+            return Vec::new();
+        }
+        let joined: Vec<&str> = t[ls..end].split('\n').collect();
+        let mut new = joined[0].trim_end().to_string();
+        let mut cursor = new.len();
+        for part in &joined[1..] {
+            let part = part.trim_start();
+            cursor = new.len();
+            if !part.is_empty() && !part.starts_with(')') && !new.is_empty() {
+                new.push(' ');
+            }
+            new.push_str(part);
+        }
+        vec![
+            Action::Edit {
+                range: ls..end,
+                text: new,
+            },
+            Action::Cursor(ls + cursor),
+        ]
+    }
+
+    /// `p` / `P` in visual mode: the register (`count` times) replaces the
+    /// selection, which `p` (`yank`) puts in the register.
+    fn put_over_selection(
+        &mut self,
+        ctx: &Ctx,
+        cur: usize,
+        yank: bool,
+        count: usize,
+    ) -> Vec<Action> {
+        let t = ctx.text;
+        let reg = self.paste_register(ctx);
+        if reg.text.is_empty() {
+            return Vec::new();
+        }
+        let linewise = self.mode == Mode::VisualLine;
+        let range = self.selected(t, cur);
+        self.mode = Mode::Normal;
+        let mut text = reg
+            .text
+            .repeat(count.min(MAX_PASTE / reg.text.len()).max(1));
+        let old = t[range.clone()].to_string();
+        let mut actions = Vec::new();
+        if yank {
+            self.yank(old.clone(), linewise);
+            actions.push(Action::Yank(old.clone()));
+        }
+        let cursor = if linewise || reg.linewise {
+            // Whole lines: they stay lines, the cursor on the first one.
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            if linewise && !old.ends_with('\n') {
+                text.pop();
+            }
+            if !linewise {
+                text.insert(0, '\n');
+            }
+            let first = usize::from(!linewise);
+            range.start + first_non_blank(&text, first)
+        } else {
+            range.start + prev_char(&text, text.len())
+        };
+        actions.push(Action::Edit { range, text });
+        actions.push(Action::Cursor(cursor));
+        actions
     }
 
     /// `.`: the last change again, `count` times.
@@ -1190,6 +1274,19 @@ impl Vim {
             _ => p,
         })
     }
+}
+
+/// `text` with its case toggled (`~`), lowered (`u`) or raised (`U`).
+fn change_case(text: &str, how: char) -> String {
+    text.chars()
+        .flat_map(|ch| {
+            if how == 'u' || (how == '~' && ch.is_uppercase()) {
+                ch.to_lowercase().collect::<Vec<_>>()
+            } else {
+                ch.to_uppercase().collect()
+            }
+        })
+        .collect()
 }
 
 /// `i`, kept inside `t` and moved back to a character boundary.

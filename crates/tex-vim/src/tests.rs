@@ -355,3 +355,44 @@ fn huge_counts_are_bounded() {
     let out = run("|ab", "ix<esc>100000.");
     assert_eq!(out.matches('x').count(), MAX_REPEAT + 1);
 }
+
+#[test]
+fn visual_case_and_replace() {
+    assert_eq!(run("|abc def", "vl~"), "|ABc def");
+    assert_eq!(run("ab|c\nx", "vh~"), "a|BC\nx");
+    assert_eq!(run("|ab\ncd\nef", "Vj~"), "|AB\nCD\nef");
+    assert_eq!(run("|ABC", "vlu"), "|abC");
+    assert_eq!(run("|abc", "vlU"), "|ABc");
+    assert_eq!(run("|abc", "vlrx"), "|xxc");
+    assert_eq!(run("|ab\ncd\ne", "Vjrx"), "|xx\nxx\ne");
+    assert_eq!(run("|éab", "vlrü"), "|üüb");
+    let mut vim = Vim::new();
+    run_with(&mut vim, "|ab", "vl~");
+    assert_eq!(vim.mode(), Mode::Normal);
+}
+
+#[test]
+fn visual_join() {
+    assert_eq!(run("|a\nb\nc\nd", "vjjJ"), "a b| c\nd");
+    assert_eq!(run("|a\nb\nc", "vJ"), "a| b\nc");
+    assert_eq!(run("|a\nb\nc", "VjJ"), "a| b\nc");
+    assert_eq!(run("a\n|b", "vkJ"), "a| b");
+}
+
+#[test]
+fn visual_put() {
+    // `p` puts the replaced text in the register, `P` keeps it.
+    assert_eq!(run("|foo bar", "yiwwviwp"), "foo fo|o");
+    assert_eq!(run("|foo bar", "yiwwviwp0viwp"), "ba|r foo");
+    assert_eq!(run("|foo bar", "yiwwviwP0viwP"), "fo|o foo");
+    assert_eq!(run("|a b", "yiwwv2p"), "a a|a");
+    // Lines into characters, characters into lines, lines into lines.
+    assert_eq!(run("|a\nxyz", "yyjlvp"), "a\nx\n|a\nz");
+    assert_eq!(run("|ab\ncd", "yiwjVp"), "ab\n|ab");
+    assert_eq!(run("|ab\ncd\nef", "yyjVp"), "ab\n|ab\nef");
+    assert_eq!(run("|ab\ncd\nef", "yiwjVp"), "ab\n|ab\nef");
+    // Nothing to put: still selecting.
+    let mut vim = Vim::new();
+    run_with(&mut vim, "|ab", "vp");
+    assert_eq!(vim.mode(), Mode::Visual);
+}
