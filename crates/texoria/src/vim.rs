@@ -191,3 +191,60 @@ impl Block {
         self.shown = range;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::prelude::v1::test;
+
+    use gpui_kit::Keystroke;
+    use tex_vim::{Key, Mode};
+
+    use super::key_of;
+
+    fn key(keys: &str, mode: Mode) -> Option<Key> {
+        key_of(&Keystroke::parse(keys).unwrap(), mode)
+    }
+
+    #[test]
+    fn app_shortcuts_stay_the_apps() {
+        for mode in [Mode::Normal, Mode::Insert, Mode::Visual] {
+            assert_eq!(key("cmd-s", mode), None);
+            assert_eq!(key("cmd-r", mode), None);
+            assert_eq!(key("ctrl-s", mode), None, "Save on Windows and Linux");
+            assert_eq!(key("ctrl-o", mode), None);
+            assert_eq!(key("f12", mode), None);
+        }
+    }
+
+    /// The Ctrl keys Vim takes, as docs/writing.md says (Ctrl-R is redo, not Build).
+    #[test]
+    fn vim_takes_its_ctrl_keys_in_every_mode() {
+        for mode in [Mode::Normal, Mode::Insert, Mode::Visual] {
+            for c in ['r', 'd', 'u', 'c', '['] {
+                assert_eq!(key(&format!("ctrl-{c}"), mode), Some(Key::Ctrl(c)), "{c}");
+            }
+        }
+    }
+
+    #[test]
+    fn insert_mode_leaves_moves_to_the_editor() {
+        assert_eq!(key("a", Mode::Insert), Some(Key::Char('a')));
+        assert_eq!(key("escape", Mode::Insert), Some(Key::Escape));
+        assert_eq!(key("enter", Mode::Insert), Some(Key::Enter));
+        assert_eq!(key("left", Mode::Insert), None);
+        assert_eq!(key("left", Mode::Normal), Some(Key::Left));
+        // As the platform reports Shift-A: the key, and the character it types.
+        let shift_a = Keystroke {
+            key_char: Some("A".into()),
+            ..Keystroke::parse("shift-a").unwrap()
+        };
+        assert_eq!(key_of(&shift_a, Mode::Normal), Some(Key::Char('A')));
+        // Alt combinations type characters on some layouts: not Vim commands.
+        assert_eq!(key("alt-x", Mode::Normal), None);
+        let space = Keystroke {
+            key_char: Some(" ".into()),
+            ..Keystroke::parse("space").unwrap()
+        };
+        assert_eq!(key_of(&space, Mode::Normal), Some(Key::Char(' ')));
+    }
+}
