@@ -184,6 +184,10 @@ impl SyncTex {
             };
             match first {
                 b'{' => {
+                    // A page left open ends where the next one starts.
+                    if let Some(page) = current.take() {
+                        st.pages.push(page);
+                    }
                     let next = st.pages.len() + 1;
                     let n = line[1..]
                         .trim()
@@ -613,6 +617,15 @@ Count:10
         // An unreadable one too.
         let st = SyncTex::parse(&doc("", "{1\n}1\n{x\n}x\n"), Path::new("/")).unwrap();
         assert_eq!(st.page_count(), 2);
+    }
+
+    #[test]
+    fn page_without_closing_brace_before_the_next() {
+        let content = "{1\n(1,3:0,655360:655360,65536,0\n{2\n(1,9:0,655360:655360,65536,0\n}2\n";
+        let st = SyncTex::parse(&doc("", content), Path::new("/")).unwrap();
+        assert_eq!(st.page_count(), 2);
+        assert_eq!(st.forward(Path::new("/proj/main.tex"), 3).unwrap().page, 0);
+        assert_eq!(st.forward(Path::new("/proj/main.tex"), 9).unwrap().page, 1);
     }
 
     #[test]
