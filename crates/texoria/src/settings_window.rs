@@ -276,6 +276,19 @@ impl SettingsWindow {
                          at any time). A tex-fmt.toml in the project folder changes its rules.",
                     ),
                 ),
+            SettingGroup::new().title("Checks").item(
+                SettingItem::new(
+                    "Check references",
+                    bool_field(&t, |s| s.live_checks, |s, v| s.live_checks = v)
+                        .default_value(Settings::default().live_checks),
+                )
+                .description(
+                    "Underline, as you type, references and citations to labels and entries \
+                     that do not exist, duplicate labels, missing files and pictures, and \
+                     flaws of the .bib files (duplicate keys, missing fields, bad DOIs). They \
+                     are listed with the problems.",
+                ),
+            ),
             SettingGroup::new()
                 .title("Spelling")
                 .item(

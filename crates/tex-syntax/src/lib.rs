@@ -100,6 +100,8 @@ pub struct KeyRef {
     pub name: String,
     /// Bytes of the key in the source.
     pub range: Range<usize>,
+    /// 0-based row of the key.
+    pub line: u32,
     /// The command it appears in, with its backslash (`\cref`, `\citep`).
     pub command: String,
 }
@@ -197,12 +199,17 @@ impl<'a> Walk<'a> {
     fn field_texts(&self, node: Node, field: &str, inner: &str) -> Vec<String> {
         self.field_items(node, field, inner)
             .into_iter()
-            .map(|(t, _)| t)
+            .map(|(t, _, _)| t)
             .collect()
     }
 
-    /// Like `field_texts`, with the byte range of each trimmed item.
-    fn field_items(&self, node: Node, field: &str, inner: &str) -> Vec<(String, Range<usize>)> {
+    /// Like `field_texts`, with the byte range and row of each trimmed item.
+    fn field_items(
+        &self,
+        node: Node,
+        field: &str,
+        inner: &str,
+    ) -> Vec<(String, Range<usize>, u32)> {
         let mut out = Vec::new();
         let mut cursor = node.walk();
         for group in node.children_by_field_name(field, &mut cursor) {
@@ -212,7 +219,7 @@ impl<'a> Walk<'a> {
                 let t = raw.trim();
                 if !t.is_empty() {
                     let start = item.start_byte() + (raw.len() - raw.trim_start().len());
-                    out.push((t.to_string(), start..start + t.len()));
+                    out.push((t.to_string(), start..start + t.len(), Self::line(item)));
                 }
             }
         }
@@ -234,7 +241,8 @@ impl<'a> Walk<'a> {
         let command = self.command_name(node);
         self.field_items(node, field, inner)
             .into_iter()
-            .map(|(name, range)| KeyRef {
+            .map(|(name, range, line)| KeyRef {
+                line,
                 name,
                 range,
                 command: command.clone(),
@@ -382,7 +390,7 @@ impl<'a> Walk<'a> {
                 index.citations.extend(self.key_refs(node, "keys", "text"));
             }
             "latex_include" => {
-                for (path, range) in self.field_items(node, "path", "path") {
+                for (path, range, _) in self.field_items(node, "path", "path") {
                     index.includes.push(Include {
                         kind: IncludeKind::Tex,
                         path,
@@ -392,7 +400,7 @@ impl<'a> Walk<'a> {
                 }
             }
             "bibtex_include" => {
-                for (path, range) in self.field_items(node, "paths", "path") {
+                for (path, range, _) in self.field_items(node, "paths", "path") {
                     index.includes.push(Include {
                         kind: IncludeKind::Bib,
                         path,
@@ -402,7 +410,7 @@ impl<'a> Walk<'a> {
                 }
             }
             "biblatex_include" => {
-                for (path, range) in self.field_items(node, "glob", "pattern") {
+                for (path, range, _) in self.field_items(node, "glob", "pattern") {
                     index.includes.push(Include {
                         kind: IncludeKind::Bib,
                         path,
@@ -412,7 +420,7 @@ impl<'a> Walk<'a> {
                 }
             }
             "graphics_include" => {
-                for (path, range) in self.field_items(node, "path", "path") {
+                for (path, range, _) in self.field_items(node, "path", "path") {
                     index.includes.push(Include {
                         kind: IncludeKind::Graphics,
                         path,
@@ -468,6 +476,7 @@ impl<'a> Walk<'a> {
                         if let Some((key, range)) = braced_after_options(self.text, after) {
                             index.bibitems.push(KeyRef {
                                 name: key.to_string(),
+                                line: Self::line(node),
                                 range,
                                 command: name.to_string(),
                             });
@@ -509,6 +518,7 @@ impl<'a> Walk<'a> {
                     let (name, range) = self.group_item(n);
                     index.environments.push(KeyRef {
                         name,
+                        line: Self::line(n),
                         range,
                         command: self.command_name(node),
                     });

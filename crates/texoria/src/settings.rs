@@ -40,6 +40,9 @@ pub struct Settings {
     /// Overleaf Server Pro instances (`https://latex.example.org`).
     pub overleaf_servers: Vec<String>,
     pub theme: ThemeChoice,
+    /// Underline references, citations and files that do not exist, and
+    /// flaws of the bibliography, as you type.
+    pub live_checks: bool,
     /// Underline misspelled words.
     pub spell_check: bool,
     /// Words never reported as misspelled.
@@ -139,6 +142,7 @@ impl Default for Settings {
             git_timeout_secs: 120,
             overleaf_servers: Vec::new(),
             theme: ThemeChoice::System,
+            live_checks: true,
             spell_check: true,
             spell_words: Vec::new(),
             spell_languages: Vec::new(),

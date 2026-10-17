@@ -36,6 +36,7 @@ use crate::agent_panel::{
 use crate::agent_tools::{AppTools, ToolCall};
 use crate::assets::Glyph;
 use crate::atomic;
+use crate::checks::{self, BufferChecks};
 use crate::diff_view::{DiffSource, DiffView, DiffViewEvent};
 use crate::edit;
 use crate::file_tree::{FileOp, FileTree, FileTreeEvent};
@@ -84,6 +85,7 @@ struct Buffer {
     last_len: usize,
     soft_wrap: bool,
     spell: BufferSpell,
+    checks: BufferChecks,
     _subscription: Subscription,
 }
 
@@ -114,6 +116,8 @@ pub struct Workspace {
     compiler: Option<Compiler>,
     state: CompileState,
     diagnostics: Vec<Diagnostic>,
+    /// The live checks' findings, for the whole project.
+    issues: Vec<tex_project::check::Issue>,
     outline: Vec<ProjectOutlineItem>,
     show_sidebar: bool,
     sidebar: Sidebar,
@@ -151,6 +155,7 @@ pub struct Workspace {
     spell: Spell,
     updater: Entity<Updater>,
     _live: Task<()>,
+    _checks: Task<()>,
     _update_checks: Task<()>,
     _compile_events: Task<()>,
     _tool_calls: Task<()>,
@@ -270,6 +275,7 @@ impl Workspace {
             compiler: None,
             state: CompileState::Idle,
             diagnostics: Vec::new(),
+            issues: Vec::new(),
             outline: Vec::new(),
             show_sidebar: true,
             sidebar: Sidebar::Outline,
@@ -296,6 +302,7 @@ impl Workspace {
             spell,
             updater,
             _live: Task::ready(()),
+            _checks: Task::ready(()),
             _update_checks: Task::ready(()),
             _compile_events: Task::ready(()),
             _tool_calls: tool_task,
@@ -402,6 +409,9 @@ impl Workspace {
         }
         if self.settings.agent_projects != old.agent_projects {
             self.sync_agent(cx);
+        }
+        if self.settings.live_checks != old.live_checks {
+            self.reindex(cx);
         }
         if self.settings.theme != old.theme {
             theme::apply(self.settings.theme, Some(window), cx);
@@ -586,6 +596,8 @@ impl Workspace {
             self.root = Some(root.clone());
             *self.project.write().unwrap() = Project::open(&root);
             self.refresh_outline(cx);
+            self.issues.clear();
+            self.run_checks(Vec::new(), cx);
             self.show_old_pdf = self.settings.recent.contains(&root);
             self.settings.push_recent(root.clone());
             self.settings.save();
@@ -669,7 +681,10 @@ impl Workspace {
             project: self.project.clone(),
             fixups: self.fixups.clone(),
         });
-        let navigation = Rc::new(LatexNavigation::new(self.project.clone()));
+        let checks = BufferChecks::new(&editor, cx);
+        let mut navigation = LatexNavigation::new(self.project.clone());
+        navigation.notes.push(checks.hover_note(&editor));
+        let navigation = Rc::new(navigation);
         let busy = self.agent_busy;
         editor.update(cx, |state, cx| {
             state.set_readonly(busy, cx);
@@ -705,9 +720,12 @@ impl Workspace {
             last_len,
             soft_wrap,
             spell,
+            checks,
             _subscription: subscription,
         });
         self.active = self.buffers.len() - 1;
+        // The project indexed this file from disk: the issues match its text.
+        self.underline_issues(self.active, cx);
         self.remember_session();
         self.spellcheck(self.active, Duration::ZERO, cx);
         self.apply_diagnostics(cx);
@@ -876,14 +894,83 @@ impl Workspace {
 
     /// Re-index open buffers so outline and completions follow unsaved edits.
     fn reindex(&mut self, cx: &mut Context<Self>) {
+        let mut texts = Vec::new();
         {
             let mut project = self.project.write().unwrap();
             for b in &self.buffers {
                 let text = b.editor.read(cx).text().to_string();
                 project.update(&b.path, &text);
+                texts.push((b.editor.clone(), text));
             }
         }
         self.refresh_outline(cx);
+        self.run_checks(texts, cx);
+    }
+
+    /// Check the project (as indexed from `texts`, the buffers' text) in the
+    /// background, then underline what was found.
+    fn run_checks(&mut self, texts: Vec<(Entity<EditorState>, String)>, cx: &mut Context<Self>) {
+        if !self.settings.live_checks || self.root.is_none() {
+            self._checks = Task::ready(());
+            if !self.issues.is_empty() {
+                self.issues.clear();
+                for b in &self.buffers {
+                    b.checks.clear(cx);
+                }
+                cx.notify();
+            }
+            return;
+        }
+        let project = self.project.clone();
+        self._checks = cx.spawn(async move |this, cx| {
+            let issues = cx
+                .background_spawn(async move {
+                    let project = project.read().unwrap();
+                    tex_project::check::run(&project)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.issues = issues;
+                for ix in 0..this.buffers.len() {
+                    let editor = &this.buffers[ix].editor;
+                    // Edited meanwhile: the next check is on its way.
+                    let same = texts
+                        .iter()
+                        .find(|(e, _)| e == editor)
+                        .is_some_and(|(_, t)| *editor.read(cx).text() == *t);
+                    if same {
+                        this.underline_issues(ix, cx);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+    }
+
+    /// Underline the issues of buffer `ix`.
+    fn underline_issues(&self, ix: usize, cx: &mut App) {
+        let b = &self.buffers[ix];
+        let issues: Vec<&tex_project::check::Issue> =
+            self.issues.iter().filter(|i| i.file == b.path).collect();
+        let colors = (cx.theme().danger, cx.theme().warning);
+        b.checks.set(&b.editor, &issues, colors, cx);
+    }
+
+    /// The problems to list: the last build's, without those a live check
+    /// also reports, then the live checks'.
+    fn problems(&self) -> Vec<Diagnostic> {
+        let keys: std::collections::HashSet<&str> = self
+            .issues
+            .iter()
+            .filter_map(|i| i.key.as_deref())
+            .collect();
+        self.diagnostics
+            .iter()
+            .filter(|d| !checks::duplicates(d, &keys))
+            .cloned()
+            .chain(self.issues.iter().map(checks::diagnostic))
+            .collect()
     }
 
     fn refresh_outline(&mut self, cx: &mut Context<Self>) {
@@ -1859,6 +1946,7 @@ impl Workspace {
                 }
                 // .bib files may have been edited outside the app.
                 self.project.write().unwrap().reload_bibs();
+                self.reindex(cx);
             }
         }
         cx.notify();
@@ -2139,10 +2227,9 @@ impl Workspace {
             return;
         };
         let problems: Vec<Diagnostic> = self
-            .diagnostics
-            .iter()
+            .problems()
+            .into_iter()
             .filter(|d| d.severity != Severity::Info)
-            .cloned()
             .collect();
         if problems.is_empty() {
             return;
@@ -2251,10 +2338,9 @@ impl Workspace {
     fn problems_text(&self) -> String {
         let dir = self.project_dir().unwrap_or_default();
         let problems: Vec<Diagnostic> = self
-            .diagnostics
-            .iter()
+            .problems()
+            .into_iter()
             .filter(|d| d.severity != Severity::Info)
-            .cloned()
             .collect();
         tex_agent::prompt::format_diagnostics(&dir, &problems)
     }
@@ -2741,6 +2827,7 @@ impl Workspace {
             for ix in 0..self.buffers.len() {
                 self.spellcheck(ix, Duration::ZERO, cx);
             }
+            self.reindex(cx);
         }
     }
 
@@ -3292,8 +3379,8 @@ impl Workspace {
             .as_ref()
             .and_then(|r| r.parent())
             .map(Path::to_path_buf);
-        let rows = self
-            .diagnostics
+        let problems = self.problems();
+        let rows = problems
             .iter()
             .filter(|d| d.severity != Severity::Info)
             .enumerate()
@@ -3412,13 +3499,12 @@ impl Workspace {
             .buffers
             .get(self.active)
             .map(|b| b.editor.read(cx).cursor_position());
-        let errors = self
-            .diagnostics
+        let problems = self.problems();
+        let errors = problems
             .iter()
             .filter(|d| d.severity == Severity::Error)
             .count();
-        let warnings = self
-            .diagnostics
+        let warnings = problems
             .iter()
             .filter(|d| d.severity == Severity::Warning)
             .count();

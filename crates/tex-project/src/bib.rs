@@ -15,6 +15,8 @@ pub struct BibEntry {
     /// Bytes from the `@` to the closing delimiter (or the end of the file).
     pub range: Range<usize>,
     pub key_range: Range<usize>,
+    /// 0-based row of the key.
+    pub line: u32,
     /// The closing delimiter is missing.
     pub truncated: bool,
 }
@@ -26,6 +28,8 @@ pub struct BibField {
     pub value: String,
     /// Bytes of the raw value, delimiters excluded.
     pub range: Range<usize>,
+    /// 0-based row of the value's start.
+    pub line: u32,
 }
 
 impl BibEntry {
@@ -41,6 +45,8 @@ pub fn parse(src: &str) -> Vec<BibEntry> {
     let b = src.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
+    // Rows are counted as the parse moves forward.
+    let mut rows = Rows { src, at: 0, row: 0 };
     while let Some(at) = src[i..].find('@') {
         let entry_start = i + at;
         i += at + 1;
@@ -79,6 +85,7 @@ pub fn parse(src: &str) -> Vec<BibEntry> {
             fields: Vec::new(),
             range: entry_start..close.map_or(src.len(), |c| c + 1),
             key_range: key_start..key_start + key.len(),
+            line: rows.row_of(key_start),
             truncated: close.is_none(),
         };
         for (name, value, range) in fields_of(fields) {
@@ -92,11 +99,42 @@ pub fn parse(src: &str) -> Vec<BibEntry> {
                 }
                 _ => {}
             }
-            entry.fields.push(BibField { name, value, range });
+            let line = rows.row_of(range.start);
+            entry.fields.push(BibField {
+                name,
+                value,
+                range,
+                line,
+            });
         }
         out.push(entry);
     }
     out
+}
+
+/// 0-based rows of increasing offsets, without counting from the start each time.
+struct Rows<'a> {
+    src: &'a str,
+    at: usize,
+    row: u32,
+}
+
+impl Rows<'_> {
+    fn row_of(&mut self, offset: usize) -> u32 {
+        if offset >= self.at {
+            self.row += self.src.as_bytes()[self.at..offset]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count() as u32;
+        } else {
+            self.row = self.src.as_bytes()[..offset]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count() as u32;
+        }
+        self.at = offset;
+        self.row
+    }
 }
 
 /// Index of the delimiter closing the one at `open`, honoring nesting.
@@ -215,6 +253,9 @@ mod tests {
         let year = &e[0].fields[2];
         assert_eq!(&src[year.range.clone()], "1984");
         assert_eq!(e[1].field("date"), Some("1986-01-01"));
+        assert_eq!(e[0].line, 3);
+        assert_eq!(title.line, 5);
+        assert_eq!(e[1].line, 8);
         assert!(!e[0].truncated);
     }
 

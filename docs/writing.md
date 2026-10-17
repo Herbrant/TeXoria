@@ -84,6 +84,21 @@ expression, `$1`, `$2`… in the replacement stand for its groups.
 After each run, the errors and warnings of the TeX log are underlined in the source and listed
 in the *Problems* panel (⌘⇧M). Click a problem to jump to its line.
 
+Some problems are found as you type, without building, and underlined with a wavy line (hover
+it to read why):
+
+- a `\ref` to a label that does not exist, and a label defined twice;
+- a `\cite` of a key that is in no `.bib` file (nor `\bibitem`), once the bibliography can be
+  read;
+- an `\input`, `\include`, `\bibliography` or `\includegraphics` whose file does not exist
+  (pictures are looked for with the usual extensions and in `\graphicspath`);
+- in `.bib` files: entries that are not closed, keys used twice, fields an entry type needs
+  (an `@article` without `journal`, a `@book` without `publisher`…) and DOIs that are not
+  DOIs.
+
+They are listed with the problems of the last run, and the TeX warnings they repeat are left
+out. Turn them off in [Settings](settings.md) → *Editor* → *Check references*.
+
 ## Spell checking
 
 Misspelled words are underlined with a wavy line. Only the prose is checked: commands, math,

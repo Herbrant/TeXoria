@@ -4,6 +4,7 @@ mod agent_panel;
 mod agent_tools;
 mod assets;
 mod atomic;
+mod checks;
 mod diff_view;
 mod edit;
 mod file_tree;

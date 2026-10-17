@@ -2,6 +2,7 @@
 //! `\include`, and the bibliographies they reference.
 
 pub mod bib;
+pub mod check;
 pub mod files;
 pub mod search;
 
