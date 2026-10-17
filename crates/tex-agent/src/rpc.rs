@@ -93,6 +93,41 @@ impl fmt::Display for RpcError {
 
 impl std::error::Error for RpcError {}
 
+/// Longer lines are cut (and then dropped as invalid JSON): a misbehaving
+/// program must not exhaust the memory.
+const MAX_LINE: usize = 256 << 20;
+
+/// One line of `reader`, without its line break, decoded lossily (a stray
+/// byte that is not UTF-8 must not end the connection). At most `max` bytes
+/// are kept; the rest of a longer line is skipped. `None` at the end.
+pub(crate) fn read_line(reader: &mut impl BufRead, max: usize) -> std::io::Result<Option<String>> {
+    let mut line = Vec::new();
+    let mut any = false;
+    loop {
+        let buf = match reader.fill_buf() {
+            Ok(buf) => buf,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        if buf.is_empty() {
+            return Ok(any.then(|| String::from_utf8_lossy(&line).into_owned()));
+        }
+        any = true;
+        let end = buf.iter().position(|&b| b == b'\n');
+        let chunk = &buf[..end.unwrap_or(buf.len())];
+        let room = max.saturating_sub(line.len());
+        line.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        let used = end.map_or(buf.len(), |i| i + 1);
+        reader.consume(used);
+        if end.is_some() {
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
+        }
+    }
+}
+
 type Writer = Arc<Mutex<Box<dyn Write + Send>>>;
 type Reply = oneshot::Sender<Result<Value, RpcError>>;
 /// `None` once the connection is closed: later requests fail right away.
@@ -156,7 +191,7 @@ pub struct Connection {
 
 impl Connection {
     pub fn new<R, W>(
-        reader: R,
+        mut reader: R,
         writer: W,
         mut handler: impl FnMut(Incoming) + Send + 'static,
     ) -> Self
@@ -174,8 +209,7 @@ impl Connection {
         std::thread::Builder::new()
             .name("json-rpc".into())
             .spawn(move || {
-                for line in reader.lines() {
-                    let Ok(line) = line else { break };
+                while let Ok(Some(line)) = read_line(&mut reader, MAX_LINE) {
                     let line = line.trim();
                     if line.is_empty() {
                         continue;
@@ -393,6 +427,27 @@ mod tests {
         bw.write_all(b"Starting agent v1.0...\n\n{\"jsonrpc\":\"2.0\",\"method\":\"ok\"}\n")
             .unwrap();
         assert_eq!(rx.recv().unwrap(), "ok");
+    }
+
+    #[test]
+    fn lines_survive_bad_bytes_and_huge_lengths() {
+        let mut input: &[u8] = b"caf\xe9\r\nabcdefgh\nlast";
+        assert_eq!(read_line(&mut input, 100).unwrap().unwrap(), "caf\u{fffd}");
+        assert_eq!(read_line(&mut input, 3).unwrap().unwrap(), "abc");
+        assert_eq!(read_line(&mut input, 100).unwrap().unwrap(), "last");
+        assert_eq!(read_line(&mut input, 100).unwrap(), None);
+
+        let (ar, mut bw) = std::io::pipe().unwrap();
+        let (_br, aw) = std::io::pipe().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let _a = Connection::new(BufReader::new(ar), aw, move |msg| {
+            if let Incoming::Notification { method, .. } = msg {
+                tx.send(method).unwrap();
+            }
+        });
+        bw.write_all(b"\xff\xfe log\n{\"jsonrpc\":\"2.0\",\"method\":\"still\"}\n")
+            .unwrap();
+        assert_eq!(rx.recv().unwrap(), "still");
     }
 
     #[test]

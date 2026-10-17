@@ -138,8 +138,7 @@ fn serve(stream: TcpStream, token: &str, tools: &dyn Tools) -> io::Result<()> {
     if !same(first.trim_end().as_bytes(), token.as_bytes()) {
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, "bad token"));
     }
-    for line in reader.lines() {
-        let line = line?;
+    while let Some(line) = crate::rpc::read_line(&mut reader, 64 << 20)? {
         if line.trim().is_empty() {
             continue;
         }

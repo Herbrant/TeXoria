@@ -1,7 +1,7 @@
 //! A running agent, spoken to with ACP over its stdin/stdout.
 
 use std::future::Future;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -92,8 +92,10 @@ impl Agent {
             let stderr = stderr.clone();
             let name = spec.name.clone();
             std::thread::spawn(move || {
-                for line in BufReader::new(stderr_pipe).lines() {
-                    let Ok(line) = line else { break };
+                // Drained to the end whatever it holds: a full pipe would
+                // block the agent.
+                let mut pipe = BufReader::new(stderr_pipe);
+                while let Ok(Some(line)) = crate::rpc::read_line(&mut pipe, STDERR_TAIL) {
                     log::debug!("{name}: {line}");
                     let mut tail = stderr.lock().unwrap();
                     tail.push_str(&line);
