@@ -121,6 +121,17 @@ fn deletes_changes_and_yanks() {
 }
 
 #[test]
+fn toggles_case_up_to_a_multibyte_end() {
+    // At the end of the line the cursor stays on the last toggled character.
+    assert_eq!(run("|é", "~"), "|É");
+    assert_eq!(run("a|é\nb", "~"), "a|É\nb");
+    assert_eq!(run("|aé", "3~"), "A|É");
+    assert_eq!(run("|éa", "~"), "É|a");
+    // `İ` lower-cases to two characters.
+    assert_eq!(run("|İ", "~"), "i|\u{307}");
+}
+
+#[test]
 fn text_objects() {
     assert_eq!(run("f(a, |b) x", "di("), "f(|) x");
     assert_eq!(run("f(a, |b) x", "da("), "f| x");

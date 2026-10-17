@@ -757,18 +757,19 @@ impl Vim {
                         }
                     })
                     .collect();
-                let after = cur + toggled.len();
-                let mut actions = vec![Action::Edit {
-                    range: cur..e,
-                    text: toggled,
-                }];
-                let line_end_after = after + (le - e);
-                actions.push(Action::Cursor(if after < line_end_after {
-                    after
+                // After the toggled text, or on its last character at the end of the line.
+                let cursor = if e < le {
+                    cur + toggled.len()
                 } else {
-                    after.saturating_sub(1).max(cur)
-                }));
-                actions
+                    cur + prev_char(&toggled, toggled.len())
+                };
+                vec![
+                    Action::Edit {
+                        range: cur..e,
+                        text: toggled,
+                    },
+                    Action::Cursor(cursor),
+                ]
             }
             'J' => {
                 self.start_change(c);
