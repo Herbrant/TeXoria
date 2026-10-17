@@ -1,5 +1,5 @@
 //! TeXoria's own tools for the agent (the build, the problems, the
-//! outline), served over MCP.
+//! outline, the PDF's pages…), served over MCP.
 //!
 //! Agents start MCP servers as programs speaking on stdin/stdout, so the app
 //! listens on a loopback port and the agent runs `texoria --mcp-bridge`, which
@@ -36,15 +36,28 @@ pub struct Tool {
     pub input_schema: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolResult {
     pub text: String,
+    /// Pictures sent after the text.
+    pub images: Vec<ToolImage>,
     pub is_error: bool,
+}
+
+/// A picture in a tool's answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolImage {
+    /// The file, base64-encoded.
+    pub data: String,
+    /// `image/png`…
+    pub mime_type: String,
 }
 
 impl ToolResult {
     pub fn ok(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            images: Vec::new(),
             is_error: false,
         }
     }
@@ -52,8 +65,25 @@ impl ToolResult {
     pub fn error(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            images: Vec::new(),
             is_error: true,
         }
+    }
+
+    pub fn with_image(mut self, image: ToolImage) -> Self {
+        self.images.push(image);
+        self
+    }
+
+    /// The MCP `content` of the answer.
+    fn content(&self) -> Value {
+        let mut content = vec![json!({ "type": "text", "text": self.text })];
+        content.extend(
+            self.images
+                .iter()
+                .map(|i| json!({ "type": "image", "data": i.data, "mimeType": i.mime_type })),
+        );
+        Value::Array(content)
     }
 }
 
@@ -194,7 +224,7 @@ fn handle(msg: &Value, tools: &dyn Tools) -> Option<Value> {
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
                 let r = tools.call(name, args);
                 Ok(json!({
-                    "content": [{ "type": "text", "text": r.text }],
+                    "content": r.content(),
                     "isError": r.is_error,
                 }))
             }
@@ -265,6 +295,10 @@ mod tests {
         fn call(&self, name: &str, arguments: Value) -> ToolResult {
             match name {
                 "echo" => ToolResult::ok(arguments.to_string()),
+                "picture" => ToolResult::ok("a dot").with_image(ToolImage {
+                    data: "iVBORw0KGgo=".into(),
+                    mime_type: "image/png".into(),
+                }),
                 _ => ToolResult::error("no such tool"),
             }
         }
@@ -301,9 +335,14 @@ mod tests {
                 json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"a":1}}}),
                 json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"nope"}}),
                 json!({"jsonrpc":"2.0","id":5,"method":"resources/list"}),
+                json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"picture"}}),
             ],
         );
-        assert_eq!(replies.len(), 5);
+        assert_eq!(replies.len(), 6);
+        let picture = &replies[5]["result"]["content"];
+        assert_eq!(picture[0]["text"], "a dot");
+        assert_eq!(picture[1]["type"], "image");
+        assert_eq!(picture[1]["mimeType"], "image/png");
         assert_eq!(replies[0]["result"]["protocolVersion"], "2025-03-26");
         assert_eq!(replies[1]["result"]["tools"][0]["name"], "echo");
         assert_eq!(replies[2]["result"]["content"][0]["text"], "{\"a\":1}");

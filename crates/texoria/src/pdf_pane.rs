@@ -144,6 +144,10 @@ pub struct PdfPane {
     presenting: Option<Presenting>,
     /// The bitmaps the pane itself wants (the presentation's come first).
     pane_wanted: Vec<RenderKey>,
+    /// Snapshots and texts asked for by the agents' tools.
+    snapshots: HashMap<u64, smol::channel::Sender<Option<Bitmap>>>,
+    texts_wanted: HashMap<u64, smol::channel::Sender<Option<String>>>,
+    query_seq: u64,
     /// The "go to page" field of the toolbar, while it is open.
     page_input: Option<Entity<InputState>>,
     _page_input: Option<Subscription>,
@@ -206,6 +210,9 @@ impl PdfPane {
             selection: None,
             presenting: None,
             pane_wanted: Vec::new(),
+            snapshots: HashMap::new(),
+            texts_wanted: HashMap::new(),
+            query_seq: 0,
             page_input: None,
             _page_input: None,
             _events: events,
@@ -354,7 +361,18 @@ impl PdfPane {
                     self.texts.insert(page, chars);
                 }
             }
-            RenderEvent::Snapshot { .. } | RenderEvent::Text { .. } => {}
+            RenderEvent::Snapshot { id, bitmap } => {
+                if let Some(tx) = self.snapshots.remove(&id) {
+                    let _ = tx.try_send(bitmap);
+                }
+                return;
+            }
+            RenderEvent::Text { id, text } => {
+                if let Some(tx) = self.texts_wanted.remove(&id) {
+                    let _ = tx.try_send(text);
+                }
+                return;
+            }
         }
         cx.notify();
     }
@@ -913,6 +931,51 @@ impl PdfPane {
             renderer.request(wanted.clone());
             self.last_request = wanted;
         }
+    }
+
+    // ── For the agents ───────────────────────────────────────────────────
+
+    pub fn page_count(&self) -> usize {
+        self.pages.len()
+    }
+
+    /// A bitmap of `page` (0-based) at `scale` pixels per point.
+    pub fn snapshot(&mut self, page: usize, scale: f32) -> smol::channel::Receiver<Option<Bitmap>> {
+        let (tx, rx) = smol::channel::bounded(1);
+        match &self.renderer {
+            Some(r) => {
+                self.query_seq += 1;
+                self.snapshots.insert(self.query_seq, tx);
+                r.query(Query::Snapshot {
+                    id: self.query_seq,
+                    page,
+                    scale,
+                });
+            }
+            None => {
+                let _ = tx.try_send(None);
+            }
+        }
+        rx
+    }
+
+    /// The text of `page` (0-based), or of every page.
+    pub fn text(&mut self, page: Option<usize>) -> smol::channel::Receiver<Option<String>> {
+        let (tx, rx) = smol::channel::bounded(1);
+        match &self.renderer {
+            Some(r) => {
+                self.query_seq += 1;
+                self.texts_wanted.insert(self.query_seq, tx);
+                r.query(Query::Text {
+                    id: self.query_seq,
+                    page,
+                });
+            }
+            None => {
+                let _ = tx.try_send(None);
+            }
+        }
+        rx
     }
 
     // ── Presentation ─────────────────────────────────────────────────────

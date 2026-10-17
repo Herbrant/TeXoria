@@ -13,6 +13,7 @@ const TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 pub struct ToolCall {
     pub name: String,
+    pub arguments: Value,
     pub reply: mpsc::Sender<ToolResult>,
 }
 
@@ -48,15 +49,62 @@ impl Tools for AppTools {
                 name: "outline",
                 description: "The document's structure: its parts, chapters, sections, \
                     figures and tables, with their file and line.",
+                input_schema: none.clone(),
+            },
+            Tool {
+                name: "pdf_page",
+                description: "A picture (PNG) of a page of the PDF the user sees, as last \
+                    built: to check the layout (figures, tables, overfull lines, page \
+                    breaks). Build first if the sources changed.",
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "page": { "type": "integer", "minimum": 1, "description": "1-based" },
+                        "scale": {
+                            "type": "number",
+                            "minimum": 0.5,
+                            "maximum": 3,
+                            "description": "Pixels per PDF point (default 1.5)"
+                        }
+                    },
+                    "required": ["page"]
+                }),
+            },
+            Tool {
+                name: "pdf_text",
+                description: "The text of the PDF as last built: one page, or every page \
+                    (separated by form feeds) if no page is given.",
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "page": { "type": "integer", "minimum": 1, "description": "1-based" }
+                    }
+                }),
+            },
+            Tool {
+                name: "bib_search",
+                description: "Entries of the project's bibliography whose key, title, \
+                    authors or year contain every word of the query, with their key to \
+                    \\cite. An empty query lists them all.",
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "query": { "type": "string" } }
+                }),
+            },
+            Tool {
+                name: "word_count",
+                description: "How many words the document has, in the text, headings and \
+                    captions, with its formulas, in total and per file.",
                 input_schema: none,
             },
         ]
     }
 
-    fn call(&self, name: &str, _: Value) -> ToolResult {
+    fn call(&self, name: &str, arguments: Value) -> ToolResult {
         let (reply, answer) = mpsc::channel();
         let call = ToolCall {
             name: name.to_string(),
+            arguments,
             reply,
         };
         if self.tx.send_blocking(call).is_err() {

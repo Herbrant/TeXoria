@@ -30,7 +30,9 @@ directories.workspace = true
 # Versions shared with gpui-kit (completion items, async channels, frames).
 lsp-types = { version = "0.97", features = ["proposed"] }
 smol = "2"
-image = { version = "0.25", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+# Pictures in the agents' tool answers.
+base64 = "0.22"
 # The system language: fallback for spell checking and regional variants.
 sys-locale = "0.3"
 tempfile.workspace = true

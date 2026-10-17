@@ -67,7 +67,8 @@ pub fn preamble(root: &Path, dir: &Path) -> String {
          - Edit the source files in place; the user reviews your changes and can undo them.\n\
          - To build the document and get its errors and warnings, use the `build` tool \
          of the `{SERVER_NAME}` MCP server, not latexmk or another engine: TeXoria shows \
-         the result in its preview.\n\
+         the result in its preview. Its `pdf_page` tool shows you a page of the PDF, to \
+         check the layout; `bib_search` finds the keys to cite.\n\
          - Build files are in `.texoria/`: never edit them.\n\
          - Keep the document's language, style and LaTeX conventions.",
         dir = dir.display(),

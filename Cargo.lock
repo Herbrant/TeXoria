@@ -6989,6 +6989,7 @@ name = "texoria"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "directories",
  "embed-resource",
  "env_logger",

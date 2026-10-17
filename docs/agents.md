@@ -90,13 +90,17 @@ file yourself. Agents can still run commands of their own, with your permission.
 
 ## TeXoria's tools
 
-TeXoria gives each agent three tools, over MCP, under the name `texoria`:
+TeXoria gives each agent these tools, over MCP, under the name `texoria`:
 
 | Tool | |
 |---|---|
 | `build` | Save and build with the engine chosen in TeXoria, and get the errors and warnings. |
-| `problems` | The errors and warnings of the last run. |
+| `problems` | The errors and warnings of the last run, and those found as you type (undefined references, missing files, `.bib` flaws). |
 | `outline` | The document's parts, sections, figures and tables, with their file and line. |
+| `pdf_page` | A picture of a page of the PDF, so that the agent can check the layout it produced. |
+| `pdf_text` | The text of a page of the PDF, or of all of it. |
+| `bib_search` | The bibliography entries matching some words, with their keys. |
+| `word_count` | The document's words, as in the status bar. |
 
 The agent starts them with `texoria --mcp-bridge`, which only talks to the TeXoria window that
 started the agent.

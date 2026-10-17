@@ -132,7 +132,8 @@ texoria ─┬─ tex-compile ── tex-log
   It also watches `.git/config` and the hooks (`git_changes`), which the review does not show.
   Through `fs/*` an agent reaches only the project, outside `.git`, and cannot write
   `latexmkrc` (`agent_panel::writable`). `mcp.rs` serves TeXoria's tools (`build`,
-  `problems`, `outline`) on a loopback port; agents start `texoria --mcp-bridge` (handled in
+  `problems`, `outline`, `pdf_page` with a PNG, `pdf_text`, `bib_search`, `word_count`) on a
+  loopback port; agents start `texoria --mcp-bridge` (handled in
   `main.rs` before the UI), which relays stdio there after a random token (`getrandom`; before
   it, a connection gets little time, memory and company).
   `cargo run -p tex-agent --example probe -- <id> <prompt>` talks to an installed agent.

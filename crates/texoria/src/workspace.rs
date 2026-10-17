@@ -2808,17 +2808,158 @@ impl Workspace {
             }
             "problems" => reply(ToolResult::ok(self.problems_report())),
             "outline" => reply(ToolResult::ok(self.outline_report())),
+            "pdf_page" => self.tool_pdf_page(call, cx),
+            "pdf_text" => self.tool_pdf_text(call, cx),
+            "bib_search" => {
+                let query = call.arguments["query"].as_str().unwrap_or("").to_string();
+                reply(ToolResult::ok(self.bib_report(&query)))
+            }
+            "word_count" => reply(ToolResult::ok(self.word_count_report())),
             other => reply(ToolResult::error(format!("Unknown tool: {other}"))),
         }
+    }
+
+    /// `pdf_page`: a PNG of a page of the PDF.
+    fn tool_pdf_page(&mut self, call: ToolCall, cx: &mut Context<Self>) {
+        let pages = self.pdf.read(cx).page_count();
+        let page = call.arguments["page"].as_u64().unwrap_or(0) as usize;
+        if pages == 0 {
+            let _ = call
+                .reply
+                .send(ToolResult::error("There is no PDF yet: build first."));
+            return;
+        }
+        if page == 0 || page > pages {
+            let _ = call.reply.send(ToolResult::error(format!(
+                "The PDF has pages 1 to {pages}."
+            )));
+            return;
+        }
+        let scale = call.arguments["scale"]
+            .as_f64()
+            .unwrap_or(1.5)
+            .clamp(0.5, 3.0) as f32;
+        let bitmap = self.pdf.update(cx, |p, _| p.snapshot(page - 1, scale));
+        cx.spawn(async move |_, cx| {
+            let result = match bitmap.recv().await.ok().flatten() {
+                Some(b) => cx
+                    .background_spawn(async move { png_of(b) })
+                    .await
+                    .map(|data| {
+                        ToolResult::ok(format!("Page {page} of {pages}.")).with_image(
+                            mcp::ToolImage {
+                                data,
+                                mime_type: "image/png".into(),
+                            },
+                        )
+                    })
+                    .unwrap_or_else(|e| ToolResult::error(format!("Cannot encode the page: {e}"))),
+                None => ToolResult::error("The page could not be rendered."),
+            };
+            let _ = call.reply.send(result);
+        })
+        .detach();
+    }
+
+    /// `pdf_text`: the text of a page, or of the whole PDF.
+    fn tool_pdf_text(&mut self, call: ToolCall, cx: &mut Context<Self>) {
+        let pages = self.pdf.read(cx).page_count();
+        if pages == 0 {
+            let _ = call
+                .reply
+                .send(ToolResult::error("There is no PDF yet: build first."));
+            return;
+        }
+        let page = call.arguments["page"].as_u64().map(|p| p as usize);
+        if page.is_some_and(|p| p == 0 || p > pages) {
+            let _ = call.reply.send(ToolResult::error(format!(
+                "The PDF has pages 1 to {pages}."
+            )));
+            return;
+        }
+        let text = self.pdf.update(cx, |p, _| p.text(page.map(|p| p - 1)));
+        cx.spawn(async move |_, _| {
+            let result = match text.recv().await.ok().flatten() {
+                Some(t) => ToolResult::ok(t),
+                None => ToolResult::error("The text could not be read."),
+            };
+            let _ = call.reply.send(result);
+        })
+        .detach();
+    }
+
+    /// `bib_search`: the bibliography entries matching every word of `query`.
+    fn bib_report(&self, query: &str) -> String {
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        let project = self.project.read().unwrap();
+        let mut lines = Vec::new();
+        for (file, entries) in project.bib_files() {
+            for e in entries {
+                let hay = format!(
+                    "{} {} {} {}",
+                    e.key,
+                    e.title.as_deref().unwrap_or(""),
+                    e.author.as_deref().unwrap_or(""),
+                    e.year.as_deref().unwrap_or("")
+                )
+                .to_lowercase();
+                if words.iter().all(|w| hay.contains(w)) {
+                    lines.push(format!(
+                        "{} — {} ({}) {} [{}]",
+                        e.key,
+                        e.author.as_deref().unwrap_or("?"),
+                        e.year.as_deref().unwrap_or("n.d."),
+                        e.title.as_deref().unwrap_or(""),
+                        self.relative(file).display()
+                    ));
+                }
+            }
+        }
+        for (file, index) in project.indexes() {
+            for b in &index.bibitems {
+                if words.iter().all(|w| b.name.to_lowercase().contains(w)) {
+                    lines.push(format!(
+                        "{} — \\bibitem [{}]",
+                        b.name,
+                        self.relative(file).display()
+                    ));
+                }
+            }
+        }
+        if lines.is_empty() {
+            "No entry matches.".to_string()
+        } else {
+            lines.join("\n")
+        }
+    }
+
+    /// `word_count`: the document's words, in total and per file.
+    fn word_count_report(&self) -> String {
+        let t = self.total_words();
+        let mut out = format!(
+            "{} words: {} in the text, {} in headings, {} in captions; {} inline and {} \
+             displayed formulas.",
+            t.words(),
+            t.text,
+            t.headers,
+            t.captions,
+            t.inline_math,
+            t.display_math
+        );
+        for (file, c) in &self.word_counts {
+            out.push_str(&format!(
+                "\n{}: {} words",
+                self.relative(file).display(),
+                c.words()
+            ));
+        }
+        out
     }
 
     /// Answer every pending `build` call with `result`.
     fn answer_waiters(&mut self, result: ToolResult) {
         for w in std::mem::take(&mut self.tool_waiters) {
-            let _ = w.reply.send(ToolResult {
-                text: result.text.clone(),
-                is_error: result.is_error,
-            });
+            let _ = w.reply.send(result.clone());
         }
     }
 
@@ -2829,10 +2970,7 @@ impl Workspace {
             .partition(|w| id > w.after);
         self.tool_waiters = waiting;
         for w in done {
-            let _ = w.reply.send(ToolResult {
-                text: result.text.clone(),
-                is_error: result.is_error,
-            });
+            let _ = w.reply.send(result.clone());
         }
     }
 
@@ -4869,6 +5007,23 @@ fn apply_format(editor: &Entity<EditorState>, new: String, window: &mut Window, 
         state.replace(new, window, cx);
         state.set_cursor_position(cursor, window, cx);
     });
+}
+
+/// A BGRA bitmap as a base64 PNG.
+fn png_of(bitmap: pdf_view::Bitmap) -> Result<String, image::ImageError> {
+    use base64::Engine as _;
+    let mut rgba = bitmap.bgra;
+    for px in rgba.as_chunks_mut::<4>().0 {
+        px.swap(0, 2);
+    }
+    let image = image::RgbaImage::from_raw(bitmap.width, bitmap.height, rgba).ok_or_else(|| {
+        image::ImageError::Parameter(image::error::ParameterError::from_kind(
+            image::error::ParameterErrorKind::DimensionMismatch,
+        ))
+    })?;
+    let mut png = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut png, image::ImageFormat::Png)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(png.into_inner()))
 }
 
 /// `12,345`.
