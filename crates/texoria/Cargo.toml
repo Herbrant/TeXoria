@@ -18,6 +18,7 @@ tex-spell.workspace = true
 tex-agent.workspace = true
 tex-update.workspace = true
 tex-cite.workspace = true
+tex-vim.workspace = true
 pdf-view.workspace = true
 
 anyhow.workspace = true

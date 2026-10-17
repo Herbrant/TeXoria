@@ -80,6 +80,7 @@ texoria ─┬─ tex-compile ── tex-log
          ├─ tex-complete ── tex-project ── tex-syntax
          ├─ tex-spell ── tex-syntax
          ├─ tex-cite (DOI, arXiv, Crossref) ── tex-project
+         ├─ tex-vim (Vim emulation on plain text)
          ├─ synctex
          ├─ pdf-view (PDFium)
          └─ tex-update (self-update)

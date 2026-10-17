@@ -6985,6 +6985,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-vim"
+version = "0.3.0"
+
+[[package]]
 name = "texoria"
 version = "0.3.0"
 dependencies = [
@@ -7016,6 +7020,7 @@ dependencies = [
  "tex-spell",
  "tex-syntax",
  "tex-update",
+ "tex-vim",
  "toml 0.9.12+spec-1.1.0",
 ]
 

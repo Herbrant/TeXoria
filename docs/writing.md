@@ -66,6 +66,27 @@ The entry is written, one field per line, at the end of the project's `.bib` fil
 under a new key like `knuth1984texbook`, and `\cite{…}` is inserted at the cursor (just the key,
 if the cursor is in a `\cite` already). Only these lookups, when you ask for them, go online.
 
+## Vim mode
+
+Turn on *Edit* → *Vim Mode*, or [Settings](settings.md) → *Editor* → *Vim mode*, to edit with
+Vim's keys. The status bar shows the mode (`-- NORMAL --`, `-- INSERT --`, `-- VISUAL --`,
+`-- VISUAL LINE --`) and what you typed of a command; normal mode draws a block cursor.
+
+| | |
+|---|---|
+| Modes | `i a I A o O` insert, `v V` visual, Esc (or Ctrl-[) back to normal |
+| Motions | `h j k l w b e W B E 0 ^ $ gg G f F t T ; , % { }`, Ctrl-D / Ctrl-U, with counts (`3w`, `5G`) |
+| Operators | `d c y > <` with a motion or a text object, doubled for lines (`dd`, `3yy`, `>>`) |
+| Text objects | `iw aw iW aW i( a( i{ a{ i[ a[ i" a"`, and for LaTeX `ie`/`ae` (the environment around the cursor) and `i$`/`a$` (inline math) |
+| Edits | `x X s S r D C Y J ~ p P`, `u` undo, Ctrl-R redo, `.` repeats the last change |
+| Search | `/` and `?` (ignoring case unless the text has a capital), `n N`, `*` for the word under the cursor |
+| Commands | `:w`, `:q` (closes the tab), `:wq`, `:x`, `:42` (go to line 42) |
+
+Yanks also go to the system clipboard, and `p` pastes what you copied elsewhere since. ⌘
+shortcuts keep working in every mode; of the Ctrl ones, Vim takes only Ctrl-R, Ctrl-D, Ctrl-U,
+Ctrl-[ and Ctrl-C (so on Windows and Linux, build with the *Build* button or menu while in
+normal mode).
+
 ## Outline
 
 The outline (⌘1) lists the parts, chapters, sections and subsections of the whole project,

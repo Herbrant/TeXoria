@@ -268,6 +268,18 @@ impl SettingsWindow {
                 )
                 .item(
                     SettingItem::new(
+                        "Vim mode",
+                        bool_field(&t, |s| s.vim_mode, |s, v| s.vim_mode = v)
+                            .default_value(Settings::default().vim_mode),
+                    )
+                    .description(
+                        "Edit with Vim's keys: normal, insert and visual modes, operators, \
+                         motions and text objects (ie/ae for environments, i$/a$ for math), \
+                         search and :w/:q. ⌘ shortcuts keep working.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
                         "Format on save",
                         bool_field(&t, |s| s.format_on_save, |s, v| s.format_on_save = v)
                             .default_value(Settings::default().format_on_save),

@@ -60,7 +60,7 @@ use crate::{
     ForwardSearch, IncreaseFontSize, NewBranch, Open, OpenFromOverleaf, OpenSettings, Present,
     Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent,
     ToggleComment, ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline,
-    ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
+    ToggleSoftWrap, ToggleTheme, ToggleVimMode, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -89,6 +89,7 @@ struct Buffer {
     spell: BufferSpell,
     grammar: BufferGrammar,
     checks: BufferChecks,
+    block: crate::vim::Block,
     _subscription: Subscription,
 }
 
@@ -166,6 +167,8 @@ pub struct Workspace {
     spell: Spell,
     grammar: Grammar,
     _grammar_start: Task<()>,
+    /// Vim's state, when Vim mode is on.
+    vim: Option<tex_vim::Vim>,
     updater: Entity<Updater>,
     _live: Task<()>,
     _checks: Task<()>,
@@ -228,6 +231,17 @@ impl Workspace {
                 }
             }),
         ];
+        // Vim mode takes the keys typed in the active editor first.
+        let vim_window = window.window_handle();
+        let weak_vim = cx.entity().downgrade();
+        subscriptions.push(cx.intercept_keystrokes(move |ev, window, cx| {
+            if window.window_handle() != vim_window {
+                return;
+            }
+            weak_vim
+                .update(cx, |this, cx| this.on_vim_keystroke(ev, window, cx))
+                .ok();
+        }));
         // Never lose edits made since the last (debounced) save.
         subscriptions.push(cx.on_app_quit(|this, cx| {
             this.save_all(cx);
@@ -322,6 +336,7 @@ impl Workspace {
             spell,
             grammar: Grammar::default(),
             _grammar_start: Task::ready(()),
+            vim: None,
             updater,
             _live: Task::ready(()),
             _checks: Task::ready(()),
@@ -335,6 +350,7 @@ impl Workspace {
         this.configure_git(cx);
         this.start_compiler(cx);
         this.start_grammar(Duration::ZERO, cx);
+        this.vim = this.settings.vim_mode.then(tex_vim::Vim::new);
         this.schedule_update_checks(cx);
         if this.engines.is_empty() {
             this.state = CompileState::Failed(
@@ -454,6 +470,10 @@ impl Workspace {
             for ix in 0..self.buffers.len() {
                 self.grammar_check(ix, Duration::ZERO, cx);
             }
+        }
+        if self.settings.vim_mode != old.vim_mode {
+            let on = self.settings.vim_mode;
+            self.set_vim_mode(on, cx);
         }
         if self.settings.live_checks != old.live_checks {
             self.reindex(cx);
@@ -682,6 +702,11 @@ impl Workspace {
     ) -> Option<usize> {
         self.diff_active = false;
         if let Some(ix) = self.buffers.iter().position(|b| b.path == file) {
+            if ix != self.active
+                && let Some(v) = &mut self.vim
+            {
+                v.reset();
+            }
             self.active = ix;
             self.remember_session();
             cx.notify();
@@ -730,6 +755,7 @@ impl Workspace {
             fixups: self.fixups.clone(),
         });
         let checks = BufferChecks::new(&editor, cx);
+        let block = crate::vim::Block::new(&editor, cx);
         let grammar = BufferGrammar::new(&editor, cx);
         let mut navigation = LatexNavigation::new(self.project.clone());
         navigation.notes.push(checks.hover_note(&editor));
@@ -772,6 +798,7 @@ impl Workspace {
             spell,
             grammar,
             checks,
+            block,
             _subscription: subscription,
         });
         self.active = self.buffers.len() - 1;
@@ -3235,6 +3262,72 @@ impl Workspace {
         self.save_all(cx);
     }
 
+    // ── Vim ──────────────────────────────────────────────────────────────
+
+    /// A key typed anywhere in the window: Vim's if it is in the active
+    /// editor (it then goes no further).
+    fn on_vim_keystroke(
+        &mut self,
+        ev: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(vim) = self.vim.as_mut() else {
+            return;
+        };
+        if self.diff_active || self.agent_busy {
+            return;
+        }
+        let Some(b) = self.buffers.get(self.active) else {
+            return;
+        };
+        if !b.editor.focus_handle(cx).is_focused(window) {
+            return;
+        }
+        let Some(key) = crate::vim::key_of(&ev.keystroke, vim.mode()) else {
+            return;
+        };
+        // Escape with nothing to cancel closes the editor's popups.
+        if key == tex_vim::Key::Escape
+            && vim.mode() == tex_vim::Mode::Normal
+            && vim.status().is_empty()
+        {
+            return;
+        }
+        let editor = b.editor.clone();
+        let (taken, requests) = crate::vim::handle(vim, &editor, key, window, cx);
+        if taken {
+            cx.stop_propagation();
+        }
+        for r in requests {
+            match r {
+                crate::vim::Request::Save => {
+                    self.save(window, cx);
+                }
+                crate::vim::Request::CloseTab => self.close_tab(cx),
+            }
+        }
+        self.update_block(cx);
+        cx.notify();
+    }
+
+    /// Draw Vim's block cursor in the active editor.
+    fn update_block(&mut self, cx: &mut Context<Self>) {
+        let color = cx.theme().caret.opacity(0.45);
+        let vim = self.vim.as_ref();
+        if let Some(b) = self.buffers.get_mut(self.active) {
+            b.block.update(vim, &b.editor, color, cx);
+        }
+    }
+
+    fn set_vim_mode(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.vim = on.then(tex_vim::Vim::new);
+        for b in &mut self.buffers {
+            b.block.update(None, &b.editor, Hsla::default(), cx);
+        }
+        self.update_block(cx);
+    }
+
     /// Comment the selected lines out, or back in (⌘/).
     fn toggle_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(b) = self.buffers.get(self.active).filter(|_| !self.diff_active) else {
@@ -3424,6 +3517,7 @@ impl Workspace {
                 .on_click(cx.listener(|this, _, _, cx| {
                     if matches!(this.grammar.state, ServerState::Unreachable(_)) {
                         this.start_grammar(Duration::ZERO, cx);
+                        this.vim = this.settings.vim_mode.then(tex_vim::Vim::new);
                     }
                 }))
                 .into_any_element(),
@@ -4371,6 +4465,11 @@ impl Workspace {
             .unwrap_or_else(|| "No engine".into())
             .into();
         let live = self.settings.live_preview;
+        let vim_status = self
+            .vim
+            .as_ref()
+            .filter(|_| !self.diff_active)
+            .map(|v| (format!("-- {} --", v.mode().label()), v.status()));
         let words = (!self.word_counts.is_empty()).then(|| {
             let total = thousands(self.total_words().words());
             let selected = self
@@ -4448,6 +4547,24 @@ impl Workspace {
                     div()
                         .px_2()
                         .child(format!("Ln {}, Col {}", c.line + 1, c.character + 1)),
+                )
+            })
+            .when_some(vim_status, |el, (mode, typed)| {
+                el.child(
+                    h_flex()
+                        .px_2()
+                        .gap_2()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.primary)
+                                .child(mode),
+                        )
+                        .child(
+                            div()
+                                .font_family(theme.mono_font_family.clone())
+                                .child(typed),
+                        ),
                 )
             })
             .when_some(branch, |el, branch| {
@@ -4725,6 +4842,9 @@ impl Focusable for Workspace {
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_theme(cx);
+        if self.vim.is_some() {
+            self.update_block(cx);
+        }
         let theme = cx.theme().clone();
 
         let body = if self.buffers.is_empty() {
@@ -4957,6 +5077,10 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, a: &OpenExternal, window, cx| {
                 this.open_external(&a.path, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleVimMode, window, cx| {
+                let on = !this.settings.vim_mode;
+                this.update_settings(|s| s.vim_mode = on, window, cx)
             }))
             .on_action(
                 cx.listener(|this, _: &ToggleComment, window, cx| this.toggle_comment(window, cx)),

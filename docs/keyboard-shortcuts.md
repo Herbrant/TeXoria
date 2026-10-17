@@ -45,3 +45,5 @@
 In the editor, ⌘. (Ctrl+.) opens the code actions instead of stopping the run: use *Build* →
 *Stop Building*, or click outside the editor first. The editor also has the usual
 text-editing shortcuts (undo, redo, select all, …).
+
+With [Vim mode](writing.md#vim-mode) on, the editor also takes Vim's keys.

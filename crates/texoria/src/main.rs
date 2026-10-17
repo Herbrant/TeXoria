@@ -20,6 +20,7 @@ mod settings_window;
 mod spell;
 mod theme;
 mod updater;
+mod vim;
 mod workspace;
 
 use std::path::PathBuf;
@@ -70,6 +71,7 @@ actions!(
         ExportPdf,
         Present,
         AddCitation,
+        ToggleVimMode,
         Quit,
     ]
 );
@@ -165,6 +167,7 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Find in Project", FindInProject),
             MenuItem::separator(),
             MenuItem::action("Toggle Comment", ToggleComment),
+            MenuItem::action("Vim Mode", ToggleVimMode),
             MenuItem::action("Format Document", FormatDocument),
             MenuItem::separator(),
             MenuItem::action("Add Citation…", AddCitation),
