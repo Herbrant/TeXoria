@@ -242,6 +242,11 @@ fn prepend_path(dirs: &[PathBuf], path: Option<OsString>) -> OsString {
         .chain(std::env::split_paths(&current))
         .filter(|d| d.is_absolute() && std::env::join_paths([d]).is_ok())
         .collect();
+    if all.is_empty() && cfg!(unix) {
+        // An empty `PATH` is one empty entry, which `execvp` reads as the
+        // current directory.
+        return OsString::from("/usr/bin:/bin");
+    }
     std::env::join_paths(all).unwrap_or_default()
 }
 
@@ -624,8 +629,15 @@ mod tests {
         // Also from `PATH` itself (on Unix, `:` splits it first).
         let path = std::env::join_paths([std::env::temp_dir()]).unwrap();
         assert_eq!(prepend_path(&[], Some(path.clone())), path);
-        assert_eq!(prepend_path(&[], None), OsString::new());
-        assert_eq!(prepend_path(&[], Some(OsString::new())), OsString::new());
+        // Never empty on Unix: an empty `PATH` is one empty entry, which
+        // `execvp` (latexmk's `system`) reads as the current directory.
+        for empty in [None, Some(OsString::new()), Some(".".into())] {
+            let path = prepend_path(&[], empty);
+            assert_eq!(path.is_empty(), cfg!(windows), "{path:?}");
+            if !path.is_empty() {
+                assert!(std::env::split_paths(&path).all(|d| d.is_absolute()));
+            }
+        }
     }
 
     /// Not a test: what the `capture` tests run in a child process (this
@@ -1069,6 +1081,21 @@ mod tests {
                 let doc = std::env::temp_dir().join(format!("{name}.pdf"));
                 let out = format!("{name}\t1\trelative/{name}\t\t\n{name}\t2\t{}\t{rest}\n", doc.display());
                 prop_assert_eq!(parse_texdoc(&out), Some(doc));
+            }
+
+            #[test]
+            fn path_has_no_relative_entry(
+                dirs in prop::collection::vec("[a-z:;./\\\\\"]{0,12}", 0..6),
+                current in prop::collection::vec("[a-z./]{0,12}", 0..6),
+            ) {
+                let dirs: Vec<PathBuf> = dirs.into_iter().map(PathBuf::from).collect();
+                let current = std::env::join_paths(current).ok();
+                let joined = prepend_path(&dirs, current);
+                // Empty only on Windows, where it is no entry at all.
+                prop_assert!(!joined.is_empty() || cfg!(windows));
+                if !joined.is_empty() {
+                    prop_assert!(std::env::split_paths(&joined).all(|d| d.is_absolute()));
+                }
             }
 
             #[test]
