@@ -495,6 +495,7 @@ impl Workspace {
             if let Some(c) = &self.compiler {
                 c.cancel();
             }
+            self.answer_waiters(ToolResult::error("Another document was opened."));
             let job = self.job().expect("root is set");
             self.untrusted_rc = !job.allow_project_rc && job.has_project_rc();
             self.close_diff(cx);
@@ -1451,6 +1452,9 @@ impl Workspace {
         if let Some(c) = &self.compiler {
             c.cancel();
         }
+        // A request still waiting to start is dropped without a run to
+        // report it: the agent would wait for one until its timeout.
+        self.answer_waiters(ToolResult::error("Typesetting was stopped."));
     }
 
     fn on_compile_event(&mut self, event: CompileEvent, cx: &mut Context<Self>) {
@@ -1846,6 +1850,16 @@ impl Workspace {
             "problems" => reply(ToolResult::ok(self.problems_report())),
             "outline" => reply(ToolResult::ok(self.outline_report())),
             other => reply(ToolResult::error(format!("Unknown tool: {other}"))),
+        }
+    }
+
+    /// Answer every pending `typeset` call with `result`.
+    fn answer_waiters(&mut self, result: ToolResult) {
+        for w in std::mem::take(&mut self.tool_waiters) {
+            let _ = w.reply.send(ToolResult {
+                text: result.text.clone(),
+                is_error: result.is_error,
+            });
         }
     }
 
