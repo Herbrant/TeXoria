@@ -69,6 +69,7 @@ actions!(
         FormatDocument,
         ExportPdf,
         Present,
+        AddCitation,
         Quit,
     ]
 );
@@ -79,6 +80,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-shift-s", ExportPdf, None),
         KeyBinding::new("secondary-shift-enter", Present, None),
+        KeyBinding::new("secondary-shift-c", AddCitation, None),
         KeyBinding::new("secondary-r", Build, None),
         KeyBinding::new("secondary-.", CancelBuild, None),
         KeyBinding::new("secondary-j", ForwardSearch, None),
@@ -164,6 +166,8 @@ fn set_menus(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action("Toggle Comment", ToggleComment),
             MenuItem::action("Format Document", FormatDocument),
+            MenuItem::separator(),
+            MenuItem::action("Add Citation…", AddCitation),
         ]),
         Menu::new("Build").items([
             MenuItem::action("Build", Build),

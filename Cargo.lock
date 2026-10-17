@@ -6860,6 +6860,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-cite"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tex-project",
+ "ureq",
+]
+
+[[package]]
 name = "tex-compile"
 version = "0.3.0"
 dependencies = [
@@ -6994,6 +7005,7 @@ dependencies = [
  "sys-locale",
  "tempfile",
  "tex-agent",
+ "tex-cite",
  "tex-compile",
  "tex-complete",
  "tex-fmt",

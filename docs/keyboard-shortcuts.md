@@ -34,6 +34,7 @@
 | Find (and replace) in the whole project | ⇧⌘F | Ctrl+Shift+F |
 | Comment / uncomment the selected lines | ⌘/ | Ctrl+/ |
 | Format the file (tex-fmt) | ⇧⌥F | Shift+Alt+F |
+| Add a citation from a DOI, arXiv or a search | ⇧⌘C | Ctrl+Shift+C |
 | Go to the definition (label, citation, file, command) | ⌘-click or F12 | Ctrl-click or F12 |
 | Soft wrap (current tab) | ⌥Z | Alt+Z |
 | Spelling corrections (code actions, in the editor) | ⌘. or right-click | Ctrl+. or right-click |

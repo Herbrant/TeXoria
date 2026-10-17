@@ -52,6 +52,20 @@ undone with ⌘Z. A `tex-fmt.toml` in the project folder changes the rules (tab 
 extra list or verbatim environments). To format on every ⌘S, turn on
 [Settings](settings.md) → *Editor* → *Format on save*.
 
+## Adding citations
+
+*Edit* → *Add Citation…* (⇧⌘C) takes a DOI (or its doi.org link), an arXiv identifier (or its
+link), or words of a paper's title and authors:
+
+- for a DOI, the entry comes from doi.org, as its publisher registered it;
+- for an arXiv identifier, from arXiv (the published version's, if arXiv knows its DOI);
+- for words, [Crossref](https://www.crossref.org) lists the papers that match: pick one.
+
+The entry is written, one field per line, at the end of the project's `.bib` file (a new
+`references.bib` in the project folder if it has none: TeXoria then tells you to reference it)
+under a new key like `knuth1984texbook`, and `\cite{…}` is inserted at the cursor (just the key,
+if the cursor is in a `\cite` already). Only these lookups, when you ask for them, go online.
+
 ## Outline
 
 The outline (⌘1) lists the parts, chapters, sections and subsections of the whole project,

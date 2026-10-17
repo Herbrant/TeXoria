@@ -79,6 +79,7 @@ texoria ─┬─ tex-compile ── tex-log
          ├─ tex-git (system `git` CLI)
          ├─ tex-complete ── tex-project ── tex-syntax
          ├─ tex-spell ── tex-syntax
+         ├─ tex-cite (DOI, arXiv, Crossref) ── tex-project
          ├─ synctex
          ├─ pdf-view (PDFium)
          └─ tex-update (self-update)

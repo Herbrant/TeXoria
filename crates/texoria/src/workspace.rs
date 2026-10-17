@@ -55,12 +55,12 @@ use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspe
 use crate::theme::{self, ThemeExt};
 use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
-    Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit, DecreaseFontSize,
-    EditWithAgent, ExportPdf, Fetch, FindInProject, FixWithAgent, FormatDocument, ForwardSearch,
-    IncreaseFontSize, NewBranch, Open, OpenFromOverleaf, OpenSettings, Present, Pull, Push,
-    ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent, ToggleComment,
-    ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme,
-    ZoomIn, ZoomOut, ZoomToFit,
+    AddCitation, Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit,
+    DecreaseFontSize, EditWithAgent, ExportPdf, Fetch, FindInProject, FixWithAgent, FormatDocument,
+    ForwardSearch, IncreaseFontSize, NewBranch, Open, OpenFromOverleaf, OpenSettings, Present,
+    Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent,
+    ToggleComment, ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline,
+    ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -2024,6 +2024,251 @@ impl Workspace {
         self.settings.save();
         self.sync_git(cx);
         cx.notify();
+    }
+
+    // ── Citations ────────────────────────────────────────────────────────
+
+    /// Ask for a DOI, an arXiv identifier or a search, then add the entry to
+    /// the bibliography and cite it.
+    fn prompt_citation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.root.is_none() {
+            return;
+        }
+        let input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("10.1145/… · arXiv:2301.01234 · title, authors")
+        });
+        let weak = cx.entity().downgrade();
+        let focus = input.focus_handle(cx);
+        let body = input.clone();
+        git_panel::open_form(
+            window,
+            cx,
+            "Add Citation",
+            "Find",
+            Some(focus),
+            move |_, cx| {
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(
+                                "A DOI, an arXiv identifier, or words of the title and authors. \
+                                 The entry is added to the project's bibliography and cited \
+                                 where the cursor is. This asks doi.org, arXiv or Crossref.",
+                            ),
+                    )
+                    .child(Input::new(&body))
+                    .into_any_element()
+            },
+            move |window, cx| {
+                let text = input.read(cx).value().trim().to_string();
+                if text.is_empty() {
+                    return false;
+                }
+                weak.update(cx, |this, cx| this.look_up_citation(text, window, cx))
+                    .ok();
+                true
+            },
+        );
+    }
+
+    fn look_up_citation(&mut self, input: String, window: &mut Window, cx: &mut Context<Self>) {
+        let lookup = tex_cite::classify(&input);
+        window.push_notification(Notification::info("Looking it up…"), cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let found = cx
+                .background_spawn(async move {
+                    let client = tex_cite::Client::new();
+                    match lookup {
+                        tex_cite::Lookup::Doi(doi) => client.doi(&doi).map(Ok),
+                        tex_cite::Lookup::Arxiv(id) => client.arxiv(&id).map(Ok),
+                        tex_cite::Lookup::Search(q) => client.search(&q).map(Err),
+                    }
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| match found {
+                Ok(Ok(bibtex)) => this.add_citation(&bibtex, window, cx),
+                Ok(Err(candidates)) => this.choose_citation(candidates, window, cx),
+                Err(e) => window.push_notification(
+                    Notification::error(format!("{e:#}")).title("Citation not found"),
+                    cx,
+                ),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Show the papers a search found; picking one adds it.
+    fn choose_citation(
+        &mut self,
+        candidates: Vec<tex_cite::Candidate>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if candidates.is_empty() {
+            window.push_notification(Notification::info("No paper matches."), cx);
+            return;
+        }
+        let weak = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let theme = cx.theme();
+            let rows = candidates.iter().enumerate().map(|(i, c)| {
+                let mut meta: Vec<String> = Vec::new();
+                if !c.authors.is_empty() {
+                    let mut a = c
+                        .authors
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if c.authors.len() > 3 {
+                        a.push_str(" et al.");
+                    }
+                    meta.push(a);
+                }
+                meta.extend(c.year.clone());
+                meta.extend(c.venue.clone());
+                let doi = c.doi.clone();
+                let weak = weak.clone();
+                v_flex()
+                    .id(("citation", i))
+                    .px_2()
+                    .py_1p5()
+                    .rounded(theme.radius)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.accent))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(c.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(meta.join(" · ")),
+                    )
+                    .on_click(move |_, window, cx| {
+                        window.close_dialog(cx);
+                        let doi = doi.clone();
+                        weak.update(cx, |this, cx| this.look_up_citation(doi, window, cx))
+                            .ok();
+                    })
+            });
+            dialog.title("Choose the Paper").w(px(560.)).child(
+                v_flex()
+                    .id("citations")
+                    .max_h(px(420.))
+                    .overflow_y_scroll()
+                    .gap_0p5()
+                    .children(rows),
+            )
+        });
+    }
+
+    /// Add an entry to the project's bibliography under a new key, and cite
+    /// it at the cursor.
+    fn add_citation(&mut self, bibtex: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dir) = self.project_dir() else {
+            return;
+        };
+        let (taken, bib) = {
+            let project = self.project.read().unwrap();
+            let taken: std::collections::HashSet<String> =
+                project.bib_entries().map(|e| e.key.clone()).collect();
+            let mut bibs: Vec<PathBuf> = project
+                .bib_files()
+                .map(|(p, _)| p.to_path_buf())
+                .filter(|p| p.is_file())
+                .collect();
+            bibs.sort();
+            (taken, bibs.into_iter().next())
+        };
+        let key = tex_cite::make_key(bibtex, &taken);
+        let Some(entry) = tex_cite::normalize(bibtex, &key) else {
+            window.push_notification(Notification::error("The entry could not be read."), cx);
+            return;
+        };
+        let created = bib.is_none();
+        let bib = bib.unwrap_or_else(|| dir.join("references.bib"));
+        if let Some(b) = self.buffers.iter().find(|b| b.path == bib) {
+            b.editor.update(cx, |state, cx| {
+                let len = state.text().len();
+                let sep = if state.text().to_string().ends_with('\n') || len == 0 {
+                    "\n"
+                } else {
+                    "\n\n"
+                };
+                state.set_selected_range(len..len, cx);
+                state.insert(format!("{sep}{entry}\n"), window, cx);
+            });
+        } else {
+            let old = tex_project::read_regular(&bib).unwrap_or_default();
+            let sep = if old.is_empty() || old.ends_with("\n\n") {
+                ""
+            } else if old.ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
+            let new = format!("{old}{sep}{entry}\n");
+            if let Err(e) = atomic::write(&bib, new.as_bytes()) {
+                window.push_notification(
+                    Notification::error(format!("Cannot write {}: {e}", bib.display())),
+                    cx,
+                );
+                return;
+            }
+            self.project.write().unwrap().update(&bib, &new);
+        }
+        self.cite_at_cursor(&key, window, cx);
+        let name = self.relative(&bib).display().to_string();
+        let message = if created {
+            format!(
+                "Added {key} to {name}, a new file: add \\bibliography{{references}} or \
+                 \\addbibresource{{references.bib}} to the document."
+            )
+        } else {
+            format!("Added {key} to {name}.")
+        };
+        window.push_notification(Notification::success(message).title("Citation added"), cx);
+        self.files.update(cx, |f, cx| f.refresh(cx));
+        self.reindex(cx);
+    }
+
+    /// Cite `key` at the cursor of the active file: inside a `\cite{…}`, as
+    /// one more key.
+    fn cite_at_cursor(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(b) = self
+            .buffers
+            .get(self.active)
+            .filter(|b| !self.diff_active && !self.agent_busy && is_tex(&b.path))
+        else {
+            return;
+        };
+        b.editor.update(cx, |state, cx| {
+            let text = state.text().to_string();
+            let cursor = state.cursor();
+            let insert = match tex_complete::context(&text, cursor) {
+                Some(tex_complete::Context::Citation { prefix }) => {
+                    let before = text[..prefix.start].trim_end();
+                    if prefix.is_empty() && (before.ends_with('{') || before.ends_with(',')) {
+                        key.to_string()
+                    } else {
+                        // After the key being typed.
+                        state.set_selected_range(prefix.end..prefix.end, cx);
+                        format!(",{key}")
+                    }
+                }
+                _ => format!("\\cite{{{key}}}"),
+            };
+            state.insert(insert, window, cx);
+        });
     }
 
     /// Save a copy of the PDF where the user chooses (by default, where the
@@ -4474,6 +4719,9 @@ impl Render for Workspace {
                 }),
             )
             .on_action(cx.listener(|this, _: &Present, _, cx| this.present(cx)))
+            .on_action(
+                cx.listener(|this, _: &AddCitation, window, cx| this.prompt_citation(window, cx)),
+            )
             .on_action(
                 cx.listener(|this, _: &crate::pdf_pane::GoToPage, window, cx| {
                     this.pdf.update(cx, |p, cx| p.prompt_page(window, cx))
