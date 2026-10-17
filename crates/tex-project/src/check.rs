@@ -267,26 +267,30 @@ pub fn check_bib(file: &std::path::Path, entries: &[BibEntry]) -> Vec<Issue> {
     issues
 }
 
-/// `10.<registrant>/<suffix>`, possibly written as a doi.org URL.
+/// `10.<registrant>/<suffix>`, possibly written as a doi.org URL or with `doi:`.
+/// The registrant is dot-separated numbers (`10.1000.10`).
 pub fn valid_doi(value: &str) -> bool {
     let v = value.trim();
+    let lower = v.to_ascii_lowercase();
     let v = [
         "https://doi.org/",
         "http://doi.org/",
         "https://dx.doi.org/",
+        "http://dx.doi.org/",
         "doi:",
     ]
     .iter()
-    .find_map(|p| v.strip_prefix(p))
-    .unwrap_or(v);
+    .find(|p| lower.starts_with(*p))
+    .map_or(v, |p| v[p.len()..].trim_start());
     let Some((prefix, suffix)) = v.split_once('/') else {
         return false;
     };
     let Some(registrant) = prefix.strip_prefix("10.") else {
         return false;
     };
-    !registrant.is_empty()
-        && registrant.chars().all(|c| c.is_ascii_digit() || c == '.')
+    registrant
+        .split('.')
+        .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
         && !suffix.is_empty()
         && !suffix.contains(char::is_whitespace)
 }
@@ -379,5 +383,31 @@ mod tests {
         assert!(!valid_doi("10.1145"));
         assert!(!valid_doi("11.1/x"));
         assert!(!valid_doi("10.ab/x"));
+    }
+
+    #[test]
+    fn tells_dois_written_with_a_prefix() {
+        for doi in [
+            "doi: 10.1000/xyz",
+            "DOI:10.1000/xyz",
+            "http://doi.org/10.1000/xyz",
+            "http://dx.doi.org/10.1000/xyz",
+            "https://dx.doi.org/10.1000/xyz",
+            "https://doi.org/ 10.1000/xyz",
+            " 10.1000.10/xyz ",
+        ] {
+            assert!(valid_doi(doi), "{doi}");
+        }
+        for not in [
+            "10../x",
+            "10./x",
+            "10.1./x",
+            "10.1..2/x",
+            "doi:",
+            "10.1000/",
+            "10.1000/a b",
+        ] {
+            assert!(!valid_doi(not), "{not}");
+        }
     }
 }
