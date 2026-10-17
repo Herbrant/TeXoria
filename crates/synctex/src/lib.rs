@@ -235,17 +235,22 @@ impl SyncTex {
 
     fn tag_for(&self, file: &Path) -> Option<u32> {
         let wanted = normalize(Path::new("/"), &file.to_string_lossy());
-        // Prefer an exact match, then fall back to comparing file names
-        // (handles symlinks / differing absolute prefixes).
+        // The input whose path ends with the most components of the wanted
+        // one: the same path, or else at least the same file name (symlinks,
+        // differing absolute prefixes). The lowest tag on a tie.
+        let common_tail = |p: &Path| {
+            p.components()
+                .rev()
+                .zip(wanted.components().rev())
+                .take_while(|(a, b)| a == b)
+                .count()
+        };
         self.inputs
             .iter()
-            .find(|(_, p)| **p == wanted)
-            .or_else(|| {
-                self.inputs
-                    .iter()
-                    .find(|(_, p)| p.file_name() == wanted.file_name())
-            })
-            .map(|(t, _)| *t)
+            .map(|(t, p)| (common_tail(p), *t))
+            .filter(|(n, _)| *n > 0)
+            .max_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
+            .map(|(_, t)| t)
     }
 
     /// Source → PDF. Picks the exact line if present, otherwise the closest
@@ -665,6 +670,27 @@ Count:10
                 .page,
             0
         );
+    }
+
+    #[test]
+    fn file_name_fallback_prefers_the_closest_path() {
+        // Two `intro.tex`, the project seen under another prefix: the one
+        // whose folders match the most wins, every time.
+        let text = doc(
+            "Input:3:/proj/appendix/intro.tex\nInput:4:/proj/chapters/intro.tex\n\
+             Input:5:/proj/intro.tex\n",
+            "{1\n(3,1:0,655360:655360,65536,0\n}1\n{2\n(4,1:0,655360:655360,65536,0\n}2\n\
+             {3\n(5,1:0,655360:655360,65536,0\n}3\n",
+        );
+        for _ in 0..50 {
+            // A new map each time: a new iteration order.
+            let st = SyncTex::parse(&text, Path::new("/")).unwrap();
+            let page = |p: &str| st.forward(Path::new(p), 1).unwrap().page;
+            assert_eq!(page("/mnt/proj/chapters/intro.tex"), 1);
+            assert_eq!(page("/mnt/proj/appendix/intro.tex"), 0);
+            // No folder in common: the lowest tag.
+            assert_eq!(page("/x/intro.tex"), 0);
+        }
     }
 
     #[test]
