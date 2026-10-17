@@ -151,6 +151,33 @@ mod tests {
     }
 
     #[test]
+    fn reports_errors_it_cannot_repair() {
+        // No line to drop: the count line is missing.
+        let e = Speller::new(AFF, "").err().unwrap();
+        assert!(e.to_string().contains(".dic"), "{e}");
+        // A broken line per repair is fine up to the limit...
+        let broken = |n: usize| format!("SET UTF-8\n{}", "KEEPCASE\n".repeat(n));
+        assert!(Speller::new(&broken(MAX_REPAIRS), DIC).is_ok());
+        // ...past it the dictionary is given up on.
+        let e = Speller::new(&broken(MAX_REPAIRS + 1), DIC).err().unwrap();
+        assert!(e.to_string().contains("line 2"), "{e}");
+    }
+
+    #[test]
+    fn forgets_verdicts_past_the_limit() {
+        let s = speller();
+        for i in 0..CACHE_LIMIT {
+            s.check(&format!("w{i}"));
+        }
+        assert_eq!(s.cache.lock().unwrap().len(), CACHE_LIMIT);
+        assert!(s.check("hello"));
+        assert_eq!(
+            *s.cache.lock().unwrap(),
+            HashMap::from([("hello".to_string(), true)])
+        );
+    }
+
+    #[test]
     fn suggests_corrections() {
         let s = speller();
         assert!(s.suggest("helo", 5).contains(&"hello".to_string()));
