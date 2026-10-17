@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 /// Which TeX format/engine latexmk should drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -289,9 +290,14 @@ pub fn texdoc(package: &str) -> Option<PathBuf> {
     }
     let (texdoc, path) = find_tex_tool("texdoc")?;
     let mut cmd = Command::new(texdoc);
-    cmd.args(["-l", "-M", "-I", package])
-        .env("PATH", path)
-        .stdin(std::process::Stdio::null())
+    cmd.args(["-l", "-M", "-I", package]).env("PATH", path);
+    parse_texdoc(&capture(cmd, Duration::from_secs(15))?)
+}
+
+/// Run `cmd` without a console and return its standard output, unless it
+/// fails to start or runs longer than `timeout`.
+fn capture(mut cmd: Command, timeout: Duration) -> Option<String> {
+    cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
     #[cfg(windows)]
@@ -301,13 +307,19 @@ pub fn texdoc(package: &str) -> Option<PathBuf> {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     let mut child = cmd.spawn().ok()?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    // Read while it runs: once the pipe is full, the child would wait for
+    // the reader until the timeout.
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut stdout, &mut out).ok()?;
+        Some(String::from_utf8_lossy(&out).into_owned())
+    });
+    let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(50))
-            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -315,9 +327,7 @@ pub fn texdoc(package: &str) -> Option<PathBuf> {
             }
         }
     }
-    let mut out = String::new();
-    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
-    parse_texdoc(&out)
+    reader.join().ok()?
 }
 
 /// The first result of `texdoc -M`: `name \t score \t path \t lang \t description`.
@@ -591,6 +601,61 @@ mod tests {
         assert_eq!(prepend_path(&[], Some(path.clone())), path);
         assert_eq!(prepend_path(&[], None), OsString::new());
         assert_eq!(prepend_path(&[], Some(OsString::new())), OsString::new());
+    }
+
+    /// Not a test: what the `capture` tests run in a child process (this
+    /// test binary again), told what to do by `TEXORIA_TEST_CHILD`.
+    #[test]
+    #[ignore = "run by other tests"]
+    fn child_helper() {
+        match std::env::var("TEXORIA_TEST_CHILD").as_deref() {
+            Ok("print") => {
+                // Well over a pipe's buffer.
+                let line = "x".repeat(99);
+                for _ in 0..4000 {
+                    println!("{line}");
+                }
+                println!(
+                    "pkg\t1\t{}\t\t",
+                    std::env::temp_dir().join("doc.pdf").display()
+                );
+            }
+            Ok("sleep") => std::thread::sleep(Duration::from_secs(30)),
+            _ => {}
+        }
+    }
+
+    fn child(mode: &str) -> Command {
+        let mut cmd = Command::new(std::env::current_exe().unwrap());
+        cmd.args([
+            "--exact",
+            "engine::tests::child_helper",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("TEXORIA_TEST_CHILD", mode);
+        cmd
+    }
+
+    #[test]
+    fn capture_reads_long_output() {
+        let start = Instant::now();
+        let out = capture(child("print"), Duration::from_secs(10)).expect("output");
+        assert!(start.elapsed() < Duration::from_secs(8));
+        assert!(out.len() > 400_000);
+        assert_eq!(
+            parse_texdoc(&out),
+            Some(std::env::temp_dir().join("doc.pdf"))
+        );
+    }
+
+    #[test]
+    fn capture_stops_at_the_timeout() {
+        let start = Instant::now();
+        assert_eq!(capture(child("sleep"), Duration::from_millis(300)), None);
+        assert!(start.elapsed() < Duration::from_secs(10));
+        let missing = Command::new(std::env::temp_dir().join("no-such-program"));
+        assert_eq!(capture(missing, Duration::from_secs(1)), None);
     }
 
     fn latexmk(flavor: Flavor) -> Engine {
