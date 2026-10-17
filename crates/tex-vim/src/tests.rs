@@ -425,6 +425,8 @@ fn more_motions() {
     assert_eq!(run("a,b,c,|d", "F,;"), "a,b|,c,d");
     assert_eq!(run("a,b,c,|d", "F,,"), "a,b,c|,d");
     assert_eq!(run("a,b,|c,d", "T,;"), "a,|b,c,d");
+    assert_eq!(run("a,b,|c", "F,d;"), "a|,c");
+    assert_eq!(run("|a,b,c", "f,d;"), "a|c");
     // No find yet: `;` does nothing.
     assert_eq!(run("a|,b", ";"), "a|,b");
     assert_eq!(run("|ab\ncd\nef", "2$"), "ab\nc|d\nef");

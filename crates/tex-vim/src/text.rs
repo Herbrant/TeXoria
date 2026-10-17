@@ -532,6 +532,19 @@ mod tests {
     }
 
     #[test]
+    fn unbalanced_environments() {
+        // An unclosed name, an `\end` without its `\begin`, a `\begin` without its `\end`.
+        assert_eq!(environment_object("\\begin{x", 3, false), None);
+        assert_eq!(environment_object("a \\end{y} b", 0, true), None);
+        assert_eq!(environment_object("\\begin{a}x", 9, true), None);
+        let t = "\\begin{a}\\end{b}x\\end{a}";
+        assert_eq!(environment_object(t, 16, true), Some(0..t.len()));
+        // Other commands are skipped.
+        let t = "\\begin{a}\\emph{x}\\end{a}";
+        assert_eq!(&t[environment_object(t, 12, false).unwrap()], "\\emph{x}");
+    }
+
+    #[test]
     fn math_object_without_formula() {
         // No `$` pair: the `\(` lookup must not slice an empty text or a multibyte character.
         assert_eq!(math_object("", 0, false), None);
