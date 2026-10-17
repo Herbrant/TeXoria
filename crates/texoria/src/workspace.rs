@@ -47,6 +47,7 @@ use crate::latex::{
 };
 use crate::overleaf;
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
+use crate::presentation::Presentation;
 use crate::search_panel::{SearchPanel, SearchPanelEvent};
 use crate::settings::{Session, Settings, SpellLanguage, ThemeChoice};
 use crate::settings_window::SettingsWindow;
@@ -56,8 +57,8 @@ use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
     Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit, DecreaseFontSize,
     EditWithAgent, ExportPdf, Fetch, FindInProject, FixWithAgent, FormatDocument, ForwardSearch,
-    IncreaseFontSize, NewBranch, Open, OpenFromOverleaf, OpenSettings, Pull, Push, ResetFontSize,
-    Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent, ToggleComment,
+    IncreaseFontSize, NewBranch, Open, OpenFromOverleaf, OpenSettings, Present, Pull, Push,
+    ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent, ToggleComment,
     ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme,
     ZoomIn, ZoomOut, ZoomToFit,
 };
@@ -203,6 +204,7 @@ impl Workspace {
                         this.reveal(file.clone(), line.saturating_sub(1), window, cx)
                     }
                     PdfPaneEvent::Export => this.export_pdf(window, cx),
+                    PdfPaneEvent::Present => this.present(cx),
                 },
             ),
             cx.subscribe_in(&git, window, Self::on_git_event),
@@ -2093,6 +2095,35 @@ impl Workspace {
             .ok();
         })
         .detach();
+    }
+
+    /// Show the PDF full screen in a window of its own, from the page the
+    /// preview is on.
+    fn present(&mut self, cx: &mut Context<Self>) {
+        let (page, pages) = {
+            let pdf = self.pdf.read(cx);
+            (pdf.current_page(), pdf.presentation().1)
+        };
+        if pages == 0 {
+            return;
+        }
+        let pane = self.pdf.clone();
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
+            app_id: Some("texoria".into()),
+            titlebar: None,
+            ..Default::default()
+        };
+        // The new window reads the preview, which may be being updated.
+        cx.defer(move |cx| {
+            let opened = gpui_kit::open_window(options, cx, move |window, cx| {
+                window.defer(cx, |window, _| window.toggle_fullscreen());
+                cx.new(|cx| Presentation::new(pane, page, window, cx))
+            });
+            if let Err(e) = opened {
+                log::error!("opening the presentation: {e}");
+            }
+        });
     }
 
     /// Let the project's documents run programs, and build again.
@@ -4442,6 +4473,7 @@ impl Render for Workspace {
                     this.pdf.update(cx, |p, cx| p.open_find(window, cx))
                 }),
             )
+            .on_action(cx.listener(|this, _: &Present, _, cx| this.present(cx)))
             .on_action(
                 cx.listener(|this, _: &crate::pdf_pane::GoToPage, window, cx| {
                     this.pdf.update(cx, |p, cx| p.prompt_page(window, cx))

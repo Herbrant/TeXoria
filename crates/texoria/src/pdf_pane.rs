@@ -61,11 +61,22 @@ pub enum PdfPaneEvent {
     InverseSearch { file: PathBuf, line: u32 },
     /// Save a copy of the PDF somewhere.
     Export,
+    /// Show the PDF full screen, from the current page.
+    Present,
 }
 
 struct Shown {
     key: RenderKey,
     image: Arc<RenderImage>,
+}
+
+/// A page shown by the presentation window, rendered by this pane's renderer.
+struct Presenting {
+    page: usize,
+    scale_milli: u32,
+    image: Option<Arc<RenderImage>>,
+    /// The bitmap `image` is, or the one awaited.
+    key: Option<RenderKey>,
 }
 
 /// Text selected by dragging on a page, between two points (PDF points).
@@ -130,6 +141,9 @@ pub struct PdfPane {
     texts: HashMap<usize, Vec<TextChar>>,
     asked_text: HashSet<usize>,
     selection: Option<Selection>,
+    presenting: Option<Presenting>,
+    /// The bitmaps the pane itself wants (the presentation's come first).
+    pane_wanted: Vec<RenderKey>,
     /// The "go to page" field of the toolbar, while it is open.
     page_input: Option<Entity<InputState>>,
     _page_input: Option<Subscription>,
@@ -190,6 +204,8 @@ impl PdfPane {
             texts: HashMap::new(),
             asked_text: HashSet::new(),
             selection: None,
+            presenting: None,
+            pane_wanted: Vec::new(),
             page_input: None,
             _page_input: None,
             _events: events,
@@ -246,6 +262,10 @@ impl PdfPane {
                 self.texts.clear();
                 self.asked_text.clear();
                 self.selection = None;
+                // The presented page is rendered again from the new document.
+                if let Some(p) = &mut self.presenting {
+                    p.key = None;
+                }
                 // Hits move with the text.
                 self.search(Duration::ZERO, cx);
                 self.synctex = self.pending_synctex.take();
@@ -260,6 +280,10 @@ impl PdfPane {
                         self.to_drop.push(s.image);
                     }
                 }
+                if let Some(p) = &mut self.presenting {
+                    p.page = p.page.min(self.pages.len().saturating_sub(1));
+                }
+                self.send_requests();
             }
             RenderEvent::LoadFailed { generation, error } => {
                 if generation == self.generation {
@@ -274,6 +298,14 @@ impl PdfPane {
             }
             RenderEvent::Rendered { key, bitmap } => {
                 if key.page >= self.pages.len() {
+                    return;
+                }
+                // The presentation window draws (and frees) its bitmaps itself.
+                if let Some(p) = self.presenting.as_mut().filter(|p| p.key == Some(key))
+                    && !self.pane_wanted.contains(&key)
+                {
+                    p.image = to_render_image(bitmap).or(p.image.take());
+                    cx.notify();
                     return;
                 }
                 let newer = self.shown.get(&key.page).is_none_or(|s| {
@@ -818,9 +850,9 @@ impl PdfPane {
 
     /// Ask the renderer for whatever visible pages lack a sharp bitmap.
     fn request_bitmaps(&mut self, visible: &[usize], scale: f32) {
-        let Some(renderer) = &self.renderer else {
+        if self.renderer.is_none() {
             return;
-        };
+        }
         let scale_milli = quantize(scale);
         let mut wanted: Vec<RenderKey> = Vec::new();
         let around = visible.first().map(|f| {
@@ -845,10 +877,87 @@ impl PdfPane {
                 wanted.push(key);
             }
         }
+        self.pane_wanted = wanted;
+        self.send_requests();
+    }
+
+    /// Ask the renderer for the presentation's page, then the pane's.
+    fn send_requests(&mut self) {
+        let Some(renderer) = &self.renderer else {
+            return;
+        };
+        let mut wanted = Vec::new();
+        if let Some(p) = &mut self.presenting
+            && p.page < self.pages.len()
+        {
+            let key = RenderKey {
+                generation: self.doc_generation,
+                page: p.page,
+                scale_milli: p.scale_milli,
+                dark: false,
+            };
+            let have = p.key == Some(key) && p.image.is_some();
+            p.key = Some(key);
+            if !have {
+                wanted.push(key);
+            }
+        }
+        let first = wanted.first().copied();
+        wanted.extend(
+            self.pane_wanted
+                .iter()
+                .copied()
+                .filter(|k| Some(*k) != first),
+        );
         if wanted != self.last_request {
             renderer.request(wanted.clone());
             self.last_request = wanted;
         }
+    }
+
+    // ── Presentation ─────────────────────────────────────────────────────
+
+    /// Show `page` in the presentation window, at `scale_milli` pixels per
+    /// point (thousandths).
+    pub fn present(&mut self, page: usize, scale_milli: u32, cx: &mut Context<Self>) {
+        let page = page.min(self.pages.len().saturating_sub(1));
+        match &mut self.presenting {
+            Some(p) if p.page == page && p.scale_milli == scale_milli => return,
+            Some(p) => {
+                p.page = page;
+                p.scale_milli = scale_milli;
+            }
+            None => {
+                self.presenting = Some(Presenting {
+                    page,
+                    scale_milli,
+                    image: None,
+                    key: None,
+                })
+            }
+        }
+        self.send_requests();
+        cx.notify();
+    }
+
+    pub fn stop_presenting(&mut self, cx: &mut Context<Self>) {
+        if self.presenting.take().is_some() {
+            self.send_requests();
+            cx.notify();
+        }
+    }
+
+    /// The presented page's bitmap (the previous one until the new one is
+    /// ready) and the number of pages.
+    pub fn presentation(&self) -> (Option<Arc<RenderImage>>, usize) {
+        (
+            self.presenting.as_ref().and_then(|p| p.image.clone()),
+            self.pages.len(),
+        )
+    }
+
+    pub fn page_size(&self, page: usize) -> Option<PageSize> {
+        self.pages.get(page).copied()
     }
 
     /// Ask for the links of the visible pages not asked yet.
@@ -931,6 +1040,13 @@ impl PdfPane {
             .text_xs()
             .text_color(cx.theme().muted_foreground)
             .child(page)
+            .child(
+                Button::new("pdf-present")
+                    .ghost()
+                    .icon(Glyph::Presentation)
+                    .tooltip("Present (⇧⌘↵)")
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PdfPaneEvent::Present))),
+            )
             .child(
                 Button::new("pdf-export")
                     .ghost()

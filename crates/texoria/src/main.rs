@@ -13,6 +13,7 @@ mod grammar;
 mod latex;
 mod overleaf;
 mod pdf_pane;
+mod presentation;
 mod search_panel;
 mod settings;
 mod settings_window;
@@ -67,6 +68,7 @@ actions!(
         FindInProject,
         FormatDocument,
         ExportPdf,
+        Present,
         Quit,
     ]
 );
@@ -76,6 +78,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-o", Open, None),
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-shift-s", ExportPdf, None),
+        KeyBinding::new("secondary-shift-enter", Present, None),
         KeyBinding::new("secondary-r", Build, None),
         KeyBinding::new("secondary-.", CancelBuild, None),
         KeyBinding::new("secondary-j", ForwardSearch, None),
@@ -184,6 +187,7 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Fit PDF Page", pdf_pane::FitPage),
             MenuItem::action("Go to PDF Page…", pdf_pane::GoToPage),
             MenuItem::action("Find in PDF…", pdf_pane::FindInPdf),
+            MenuItem::action("Present PDF", Present),
             MenuItem::separator(),
             MenuItem::action("Light/Dark", ToggleTheme),
         ]),
@@ -232,6 +236,7 @@ fn main() {
             theme::init(None, cx);
             latex::register();
             bind_keys(cx);
+            presentation::bind_keys(cx);
             set_menus(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
 

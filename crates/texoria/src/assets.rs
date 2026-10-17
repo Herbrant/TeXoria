@@ -106,6 +106,7 @@ glyphs! {
     Regex => "regex",
     ReplaceAll => "replace-all",
     Export => "download",
+    Presentation => "presentation",
 }
 
 pub struct Assets;

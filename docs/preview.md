@@ -43,6 +43,14 @@ Once you have clicked the preview, ⌘F (Ctrl+F) opens a find bar at the top of 
 ⇧↵ (or the arrows) go to the next and previous one, the button next to them matches the case,
 and Esc closes the bar. The search runs again when the PDF is rebuilt.
 
+## Presenting
+
+*View* → *Present PDF* (⇧⌘↵), or the presentation button of the toolbar, shows the PDF full
+screen, one page at a time, from the page the preview is on: handy for a Beamer talk. →, ↓,
+Space, Page Down, ↵ or a click go to the next page; ←, ↑, Page Up or Backspace to the previous
+one; Home and End to the first and last; Esc ends the presentation. Rebuilding the document
+updates it.
+
 ## Copying text
 
 Drag across a page to select its text, then press ⌘C (Ctrl+C) to copy it; a click elsewhere or
