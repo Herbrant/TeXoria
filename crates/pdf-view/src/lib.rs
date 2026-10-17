@@ -139,10 +139,11 @@ pub fn nearest_char(chars: &[TextChar], x: f32, y: f32) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// The text of `chars[range]`, with PDFium's line breaks as `\n`.
+/// The text of `chars[range]`, with PDFium's line breaks as `\n`. The range is
+/// clamped to `chars`; a reversed one is empty.
 pub fn text_of(chars: &[TextChar], range: std::ops::Range<usize>) -> String {
-    let range = range.start.min(chars.len())..range.end.min(chars.len());
-    chars[range]
+    let end = range.end.min(chars.len());
+    chars[range.start.min(end)..end]
         .iter()
         .map(|c| c.ch)
         .filter(|&c| c != '\r')
@@ -847,6 +848,25 @@ mod tests {
                 bitmap: None
             }
         ));
+    }
+
+    #[test]
+    fn text_of_takes_any_range() {
+        let ch = |ch| TextChar {
+            ch,
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+            },
+        };
+        let chars: Vec<_> = "ab\r\ncd".chars().map(ch).collect();
+        assert_eq!(text_of(&chars, 0..6), "ab\ncd");
+        assert_eq!(text_of(&chars, 4..2), "");
+        assert_eq!(text_of(&chars, 9..1), "");
+        assert_eq!(text_of(&chars, 7..9), "");
+        assert_eq!(text_of(&[], 0..1), "");
     }
 
     /// Renders the first page of `tests/fixtures/links/links.pdf` if PDFium is available.
