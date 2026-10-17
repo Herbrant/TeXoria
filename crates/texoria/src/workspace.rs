@@ -1,4 +1,4 @@
-//! The main window: outline or files | editor | PDF, with live typesetting.
+//! The main window: outline or files | editor | PDF, with live preview.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -47,11 +47,10 @@ use crate::settings_window::SettingsWindow;
 use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspelling, Spell};
 use crate::theme::{self, ThemeExt};
 use crate::{
-    CancelTypeset, CloneRepository, CloseTab, Commit, EditWithAgent, Fetch, FixWithAgent,
+    Build, CancelBuild, CloneRepository, CloseTab, Commit, EditWithAgent, Fetch, FixWithAgent,
     ForwardSearch, NewBranch, Open, OpenFromOverleaf, OpenSettings, Pull, Push, Save,
     ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent, ToggleDiagnostics, ToggleFiles,
-    ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme, Typeset, ZoomIn, ZoomOut,
-    ZoomToFit,
+    ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -89,7 +88,7 @@ enum Sidebar {
     Agent,
 }
 
-/// An agent's `typeset` call, answered by the first run that starts after it.
+/// An agent's `build` call, answered by the first run that starts after it.
 struct ToolWaiter {
     reply: mpsc::Sender<ToolResult>,
     after: u64,
@@ -120,7 +119,7 @@ pub struct Workspace {
     /// Serves TeXoria's tools to the agents.
     _mcp: Option<mcp::Server>,
     tool_waiters: Vec<ToolWaiter>,
-    /// The id of the last typesetting run started.
+    /// The id of the last build started.
     last_run: u64,
     /// The diff tab, shown instead of the editor while `diff_active`.
     diff: Option<Entity<DiffView>>,
@@ -370,7 +369,7 @@ impl Workspace {
             && job.allow_project_rc != old.allows_rc(job.work_dir())
         {
             self.untrusted_rc = !job.allow_project_rc && job.has_project_rc();
-            self.typeset(cx);
+            self.build(cx);
         }
         let s = &self.settings;
         if (&s.agent, &s.custom_agents) != (&old.agent, &old.custom_agents) {
@@ -515,7 +514,7 @@ impl Workspace {
                 self.pdf
                     .update(cx, |pdf, cx| pdf.load(job.artifact("pdf"), synctex, cx));
             }
-            self.typeset(cx);
+            self.build(cx);
         }
     }
 
@@ -700,7 +699,7 @@ impl Workspace {
             this.update(cx, |this, cx| {
                 this.reindex(cx);
                 if live {
-                    this.typeset(cx);
+                    this.build(cx);
                 }
             })
             .ok();
@@ -796,7 +795,7 @@ impl Workspace {
             self.active = self.active.min(self.buffers.len().saturating_sub(1));
             self.reindex(cx);
             self.apply_diagnostics(cx);
-            self.typeset(cx);
+            self.build(cx);
         }
     }
 
@@ -1445,10 +1444,10 @@ impl Workspace {
         self.settings.allow_rc(job.work_dir().to_path_buf());
         self.settings.save();
         self.untrusted_rc = false;
-        self.typeset(cx);
+        self.build(cx);
     }
 
-    fn typeset(&mut self, cx: &mut Context<Self>) {
+    fn build(&mut self, cx: &mut Context<Self>) {
         let Some(mut job) = self.job() else {
             return;
         };
@@ -1463,13 +1462,13 @@ impl Workspace {
         }
     }
 
-    fn cancel_typeset(&mut self) {
+    fn cancel_build(&mut self) {
         if let Some(c) = &self.compiler {
             c.cancel();
         }
         // A request still waiting to start is dropped without a run to
         // report it: the agent would wait for one until its timeout.
-        self.answer_waiters(ToolResult::error("Typesetting was stopped."));
+        self.answer_waiters(ToolResult::error("The build was stopped."));
     }
 
     fn on_compile_event(&mut self, event: CompileEvent, cx: &mut Context<Self>) {
@@ -1479,17 +1478,17 @@ impl Workspace {
                 self.last_run = id;
             }
             CompileEvent::SpawnFailed { id, error } => {
-                self.answer_typeset(id, ToolResult::error(format!("The engine failed: {error}")));
+                self.answer_build(id, ToolResult::error(format!("The engine failed: {error}")));
                 self.state = CompileState::Failed(error.into());
             }
             CompileEvent::Finished(out) => {
                 // A run for a project that is no longer open.
                 if self.root.as_ref() != Some(&out.job.root_file) {
-                    self.answer_typeset(out.id, ToolResult::error("Another document was opened."));
+                    self.answer_build(out.id, ToolResult::error("Another document was opened."));
                     return;
                 }
                 if out.status == Status::Cancelled {
-                    self.answer_typeset(out.id, ToolResult::error("Typesetting was stopped."));
+                    self.answer_build(out.id, ToolResult::error("The build was stopped."));
                     self.state = CompileState::Idle;
                     cx.notify();
                     return;
@@ -1519,8 +1518,8 @@ impl Workspace {
                     })
                     .collect();
                 self.apply_diagnostics(cx);
-                let report = self.typeset_report(out.status, out.elapsed);
-                self.answer_typeset(out.id, ToolResult::ok(report));
+                let report = self.build_report(out.status, out.elapsed);
+                self.answer_build(out.id, ToolResult::ok(report));
                 self.agent.update(cx, |a, cx| a.set_errors(errors, cx));
                 self.show_old_pdf |= out.pdf_written;
                 if let Some(pdf) = out.pdf.filter(|_| self.show_old_pdf) {
@@ -1821,7 +1820,7 @@ impl Workspace {
             .filter(|d| d.severity == Severity::Error)
             .count();
         let display = if errors > 0 {
-            format!("Fix the {errors} typesetting error{}", plural(errors))
+            format!("Fix the {errors} build error{}", plural(errors))
         } else {
             format!(
                 "Fix the {} warning{}",
@@ -1845,13 +1844,13 @@ impl Workspace {
             let _ = call.reply.send(r);
         };
         match call.name.as_str() {
-            "typeset" => {
+            "build" => {
                 if self.root.is_none() {
                     return reply(ToolResult::error("No document is open."));
                 }
                 if self.compiler.is_none() {
                     return reply(ToolResult::error(
-                        "No TeX engine is installed, so the document cannot be typeset.",
+                        "No TeX engine is installed, so the document cannot be built.",
                     ));
                 }
                 if !self.save_all(cx) {
@@ -1861,7 +1860,7 @@ impl Workspace {
                     reply: call.reply.clone(),
                     after: self.last_run,
                 });
-                self.typeset(cx);
+                self.build(cx);
             }
             "problems" => reply(ToolResult::ok(self.problems_report())),
             "outline" => reply(ToolResult::ok(self.outline_report())),
@@ -1869,7 +1868,7 @@ impl Workspace {
         }
     }
 
-    /// Answer every pending `typeset` call with `result`.
+    /// Answer every pending `build` call with `result`.
     fn answer_waiters(&mut self, result: ToolResult) {
         for w in std::mem::take(&mut self.tool_waiters) {
             let _ = w.reply.send(ToolResult {
@@ -1879,8 +1878,8 @@ impl Workspace {
         }
     }
 
-    /// Answer the `typeset` calls made before run `id` started.
-    fn answer_typeset(&mut self, id: u64, result: ToolResult) {
+    /// Answer the `build` calls made before run `id` started.
+    fn answer_build(&mut self, id: u64, result: ToolResult) {
         let (done, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.tool_waiters)
             .into_iter()
             .partition(|w| id > w.after);
@@ -1893,20 +1892,20 @@ impl Workspace {
         }
     }
 
-    fn typeset_report(&self, status: Status, elapsed: Duration) -> String {
+    fn build_report(&self, status: Status, elapsed: Duration) -> String {
         let head = match status {
-            Status::Success => format!("Typeset in {:.1} s.", elapsed.as_secs_f32()),
-            Status::Failed => "Typesetting failed.".to_string(),
-            Status::Cancelled => "Typesetting was stopped.".to_string(),
+            Status::Success => format!("Built in {:.1} s.", elapsed.as_secs_f32()),
+            Status::Failed => "The build failed.".to_string(),
+            Status::Cancelled => "The build was stopped.".to_string(),
         };
         format!("{head}\n{}", self.problems_text())
     }
 
     fn problems_report(&self) -> String {
         let head = match &self.state {
-            CompileState::Idle => "The document has not been typeset yet.".to_string(),
+            CompileState::Idle => "The document has not been built yet.".to_string(),
             CompileState::Running => {
-                "Typesetting is running; the problems of the previous run:".to_string()
+                "A build is running; the problems of the previous run:".to_string()
             }
             CompileState::Done { status, .. } => match status {
                 Status::Success => "The last run succeeded.".to_string(),
@@ -2149,7 +2148,7 @@ impl Workspace {
         if let Some(c) = &self.compiler {
             c.set_engine(engine);
         }
-        self.typeset(cx);
+        self.build(cx);
         cx.notify();
     }
 
@@ -2267,13 +2266,13 @@ impl Workspace {
                 )
                 .child(self.render_status_pill(cx))
                 .child(
-                    Button::new("typeset")
+                    Button::new("build")
                         .primary()
                         .small()
                         .icon(Glyph::Play)
-                        .label("Typeset")
-                        .tooltip("Typeset now (⌘R)")
-                        .on_click(cx.listener(|this, _, _, cx| this.typeset(cx))),
+                        .label("Build")
+                        .tooltip("Build now (⌘R)")
+                        .on_click(cx.listener(|this, _, _, cx| this.build(cx))),
                 )
                 .child(
                     Button::new("theme")
@@ -2305,7 +2304,7 @@ impl Workspace {
         let theme = cx.theme();
         let (icon, color, label): (Glyph, Hsla, SharedString) = match &self.state {
             CompileState::Idle => (Glyph::Info, theme.muted_foreground, "Ready".into()),
-            CompileState::Running => (Glyph::Spinner, theme.primary, "Typesetting…".into()),
+            CompileState::Running => (Glyph::Spinner, theme.primary, "Building…".into()),
             CompileState::Done {
                 status: Status::Success,
                 elapsed,
@@ -2322,7 +2321,7 @@ impl Workspace {
                     )
                     .into()
                 } else {
-                    format!("Typeset in {:.1}s", elapsed.as_secs_f32()).into()
+                    format!("Built in {:.1}s", elapsed.as_secs_f32()).into()
                 },
             ),
             CompileState::Done {
@@ -3260,8 +3259,8 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Save, _, cx| {
                 this.save_all(cx);
             }))
-            .on_action(cx.listener(|this, _: &Typeset, _, cx| this.typeset(cx)))
-            .on_action(cx.listener(|this, _: &CancelTypeset, _, _| this.cancel_typeset()))
+            .on_action(cx.listener(|this, _: &Build, _, cx| this.build(cx)))
+            .on_action(cx.listener(|this, _: &CancelBuild, _, _| this.cancel_build()))
             .on_action(cx.listener(|this, _: &ForwardSearch, _, cx| this.forward_search(cx)))
             .on_action(
                 cx.listener(|this, _: &ToggleTheme, window, cx| this.toggle_theme(window, cx)),

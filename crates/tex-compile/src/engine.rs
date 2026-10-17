@@ -40,7 +40,7 @@ pub struct Job {
     /// Let latexmk read the project's own `latexmkrc` / `.latexmkrc`. These
     /// are Perl scripts, so they are only honored for trusted projects.
     pub allow_project_rc: bool,
-    /// Typeset even if the outputs look up to date (latexmk `-g`): they may
+    /// Build even if the outputs look up to date (latexmk `-g`): they may
     /// not be the engine's.
     pub force: bool,
 }

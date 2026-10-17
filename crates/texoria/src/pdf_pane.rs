@@ -490,7 +490,7 @@ impl Render for PdfPane {
             let msg = self
                 .error
                 .clone()
-                .unwrap_or_else(|| "The preview appears after the first typeset.".into());
+                .unwrap_or_else(|| "The preview appears after the first build.".into());
             return div()
                 .id("pdf-pane")
                 .size_full()

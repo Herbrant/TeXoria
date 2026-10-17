@@ -11,7 +11,7 @@ license=('MIT')
 depends=('glibc' 'gcc-libs' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'fontconfig' 'freetype2'
   'wayland' 'vulkan-icd-loader' 'hicolor-icon-theme')
 optdepends=('git: source control'
-  'texlive-binextra: latexmk, to typeset with TeX Live instead of the bundled Tectonic'
+  'texlive-binextra: latexmk, to build with TeX Live instead of the bundled Tectonic'
   'texlive-latexextra: more LaTeX packages'
   'vulkan-driver: GPU rendering')
 provides=('texoria')

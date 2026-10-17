@@ -4,7 +4,7 @@
 
 # TeXoria
 
-**Write LaTeX. See it typeset as you type.**
+**Write LaTeX. See the PDF as you type.**
 
 A fast, native LaTeX editor for macOS, Windows and Linux, written in Rust on
 [GPUI](https://www.gpui.rs), the GPU-accelerated UI framework behind Zed.

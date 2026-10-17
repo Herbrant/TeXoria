@@ -5,8 +5,8 @@
 | Open a file or folder | ⌘O | Ctrl+O |
 | Save | ⌘S | Ctrl+S |
 | Close tab | ⌘W | Ctrl+W |
-| Typeset | ⌘R | Ctrl+R |
-| Stop typesetting (outside the editor) | ⌘. | Ctrl+. |
+| Build | ⌘R | Ctrl+R |
+| Stop the build (outside the editor) | ⌘. | Ctrl+. |
 | Toggle live preview | ⌘⇧P | Ctrl+Shift+P |
 | Show the cursor's position in the PDF | ⌘J | Ctrl+J |
 | Jump from the PDF to the source | ⌘-click or double-click | Ctrl-click or double-click |
@@ -26,6 +26,6 @@
 | Settings | ⌘, | Ctrl+, |
 | Quit | ⌘Q | Ctrl+Q |
 
-In the editor, ⌘. (Ctrl+.) opens the code actions instead of stopping the run: use *Typeset* →
-*Stop Typesetting*, or click outside the editor first. The editor also has the usual
+In the editor, ⌘. (Ctrl+.) opens the code actions instead of stopping the run: use *Build* →
+*Stop Building*, or click outside the editor first. The editor also has the usual
 text-editing shortcuts (undo, redo, select all, …).

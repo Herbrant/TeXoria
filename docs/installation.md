@@ -3,7 +3,7 @@
 TeXoria runs on macOS 10.15+ (Apple silicon and Intel), Windows (x64) and Linux with
 glibc 2.35+ (x86_64 and aarch64; Ubuntu 22.04, Debian 12, Fedora 36 or newer).
 
-Every package bundles [Tectonic](https://tectonic-typesetting.github.io), so you can typeset
+Every package bundles [Tectonic](https://tectonic-typesetting.github.io), so you can build
 right away without a TeX distribution. Optionally install:
 
 - **TeX Live, MacTeX or MiKTeX**, to compile with latexmk (pdfLaTeX, XeLaTeX, LuaLaTeX) and your

@@ -1,4 +1,4 @@
-//! TeXoria's own tools for the agent (typesetting, the problems, the
+//! TeXoria's own tools for the agent (the build, the problems, the
 //! outline), served over MCP.
 //!
 //! Agents start MCP servers as programs speaking on stdin/stdout, so the app
@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 pub const BRIDGE_FLAG: &str = "--mcp-bridge";
 const ADDR_VAR: &str = "TEXORIA_MCP_ADDR";
 const TOKEN_VAR: &str = "TEXORIA_MCP_TOKEN";
-/// The server's name: agents show tools as `texoria/typeset` or similar.
+/// The server's name: agents show tools as `texoria/build` or similar.
 pub const SERVER_NAME: &str = "texoria";
 const PROTOCOL_VERSION: &str = "2025-06-18";
 /// Any local program can connect: before it shows the token, it gets little
@@ -178,7 +178,7 @@ fn handle(msg: &Value, tools: &dyn Tools) -> Option<Value> {
             "capabilities": { "tools": { "listChanged": false } },
             "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
             "instructions": "Tools of TeXoria, the LaTeX editor the user is working in. \
-                Typeset with the `typeset` tool, not by running latexmk or another \
+                Build with the `build` tool, not by running latexmk or another \
                 engine yourself.",
         })),
         "ping" => Ok(json!({})),

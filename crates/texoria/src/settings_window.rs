@@ -275,7 +275,7 @@ impl SettingsWindow {
         ])
     }
 
-    fn typesetting_page(&self, cx: &App) -> SettingPage {
+    fn build_page(&self, cx: &App) -> SettingPage {
         let t = self.target.clone();
         let defaults = Settings::default();
         let engines: Vec<(SharedString, SharedString)> = t.read(cx, |w| {
@@ -323,7 +323,7 @@ impl SettingsWindow {
             .description("latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, or Tectonic.")
         };
         let live = t.get(cx, |s| s.live_preview);
-        SettingPage::new("Typesetting").groups([
+        SettingPage::new("Build").groups([
             SettingGroup::new().title("Engine").item(engine).item(
                 SettingItem::new(
                     "Timeout",
@@ -339,7 +339,7 @@ impl SettingsWindow {
                     )
                     .default_value(defaults.compile_timeout_secs as f64),
                 )
-                .description("Stop a typesetting run after this many seconds (0: never)."),
+                .description("Stop a build after this many seconds (0: never)."),
             ),
             SettingGroup::new()
                 .title("Live preview")
@@ -349,7 +349,7 @@ impl SettingsWindow {
                         bool_field(&t, |s| s.live_preview, |s, v| s.live_preview = v)
                             .default_value(defaults.live_preview),
                     )
-                    .description("Save and typeset automatically after edits."),
+                    .description("Save and build automatically after edits."),
                 )
                 .item(
                     SettingItem::new(
@@ -722,7 +722,7 @@ impl Render for SettingsWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let pages = [
             self.editor_page(cx),
-            self.typesetting_page(cx),
+            self.build_page(cx),
             self.git_page(cx),
             self.agents_page(cx),
             self.trust_page(cx),

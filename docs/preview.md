@@ -1,17 +1,17 @@
-# Typesetting and preview
+# Build and preview
 
 ## Live preview
 
 With live preview on (the *● Live* switch in the status bar, or ⌘⇧P), TeXoria saves and
-typesets the document a moment after you stop typing (700 ms by default, see
+builds the document a moment after you stop typing (700 ms by default, see
 [Settings](settings.md)). The editor never waits for the engine: if you keep typing during a run,
-the changes are typeset in a single follow-up run once it ends. The new PDF replaces the old one
+the changes are built in a single follow-up run once it ends. The new PDF replaces the old one
 only once its pages are rendered, so the preview never flashes.
 
-With live preview off, typeset by hand with ⌘R. ⌘. stops a run (outside the editor) and a run
+With live preview off, build by hand with ⌘R. ⌘. stops a run (outside the editor) and a run
 is stopped anyway after a timeout (5 minutes by default).
 
-A project opened before shows its last PDF right away. The first time, TeXoria typesets the
+A project opened before shows its last PDF right away. The first time, TeXoria builds the
 document from scratch and only shows the PDF it made: build files that came with the project
 (in a clone or an archive) are never shown, since they could be crafted to attack the PDF
 renderer.
@@ -39,7 +39,7 @@ TeXoria looks for the following engines and uses the first one found, unless you
    a document uses the first time it needs them (an internet connection is required then).
 
 Switch engine by clicking its name in the status bar, or in [Settings](settings.md) →
-*Typesetting*. The choice is remembered.
+*Build*. The choice is remembered.
 
 ## latexmkrc
 

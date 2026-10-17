@@ -27,8 +27,8 @@ actions!(
     [
         Open,
         Save,
-        Typeset,
-        CancelTypeset,
+        Build,
+        CancelBuild,
         ForwardSearch,
         ToggleTheme,
         ZoomIn,
@@ -62,8 +62,8 @@ fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("secondary-o", Open, None),
         KeyBinding::new("secondary-s", Save, None),
-        KeyBinding::new("secondary-r", Typeset, None),
-        KeyBinding::new("secondary-.", CancelTypeset, None),
+        KeyBinding::new("secondary-r", Build, None),
+        KeyBinding::new("secondary-.", CancelBuild, None),
         KeyBinding::new("secondary-j", ForwardSearch, None),
         KeyBinding::new("secondary-shift-l", ToggleTheme, None),
         KeyBinding::new("secondary-=", ZoomIn, None),
@@ -99,9 +99,9 @@ fn set_menus(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action("Close Tab", CloseTab),
         ]),
-        Menu::new("Typeset").items([
-            MenuItem::action("Typeset", Typeset),
-            MenuItem::action("Stop Typesetting", CancelTypeset),
+        Menu::new("Build").items([
+            MenuItem::action("Build", Build),
+            MenuItem::action("Stop Building", CancelBuild),
             MenuItem::action("Show in PDF", ForwardSearch),
             MenuItem::action("Live Preview", ToggleLivePreview),
         ]),
@@ -121,7 +121,7 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Agent", ToggleAgent),
             MenuItem::separator(),
             MenuItem::action("Edit Selection with Instructions…", EditWithAgent),
-            MenuItem::action("Fix Typesetting Problems", FixWithAgent),
+            MenuItem::action("Fix Build Problems", FixWithAgent),
             MenuItem::action("Stop", StopAgent),
         ]),
         Menu::new("Git").items([

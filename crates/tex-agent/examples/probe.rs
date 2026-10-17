@@ -5,7 +5,7 @@
 //! ```
 //!
 //! Without arguments it lists the installed agents. The agent gets a dummy
-//! `typeset` tool over MCP (this program is its bridge too). Permissions are
+//! `build` tool over MCP (this program is its bridge too). Permissions are
 //! granted once, files are read from disk and writes are refused.
 
 use std::sync::Arc;
@@ -20,15 +20,15 @@ struct Dummy;
 impl Tools for Dummy {
     fn list(&self) -> Vec<Tool> {
         vec![Tool {
-            name: "typeset",
-            description: "Typeset the document; returns its errors and warnings.",
+            name: "build",
+            description: "Build the document; returns its errors and warnings.",
             input_schema: json!({ "type": "object", "properties": {} }),
         }]
     }
 
     fn call(&self, name: &str, _: Value) -> ToolResult {
         println!("tool called: {name}");
-        ToolResult::ok("Typeset in 1.2 s. No errors or warnings.")
+        ToolResult::ok("Built in 1.2 s. No errors or warnings.")
     }
 }
 

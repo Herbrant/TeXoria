@@ -34,14 +34,14 @@ Shortcuts are written for macOS: elsewhere, use Ctrl instead of ⌘ (see
   [files](writing.md#files) or [source control](git.md). Toggle it with ⌘1 (outline),
   ⌘⇧E (files) or ⌘⇧G (source control).
 - **Editor**: one tab per open file.
-- **PDF preview**: updated as you type (see [Typesetting and preview](preview.md)).
+- **PDF preview**: updated as you type (see [Build and preview](preview.md)).
 - **Status bar**: the Git branch, the [spell checking](writing.md#spell-checking) language,
   the live preview switch and the engine (click it to switch to the next one).
 - **Problems** (⌘⇧M): the errors and warnings of the last run.
 
 ## Multi-file projects
 
-TeXoria always typesets the project's **root file**, whichever file you are editing. It finds
+TeXoria always builds the project's **root file**, whichever file you are editing. It finds
 it, in order, from:
 
 1. a `% !TeX root = ../main.tex` comment in the first 20 lines of the file;

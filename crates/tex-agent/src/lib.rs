@@ -5,7 +5,7 @@
 //! - [`catalog`]: which agents are installed and how to start them.
 //! - [`client`]: a running agent: sessions, prompts, and its requests
 //!   (permissions, reading and writing files).
-//! - [`mcp`]: TeXoria's tools for the agent (typesetting, problems, outline).
+//! - [`mcp`]: TeXoria's tools for the agent (build, problems, outline).
 //! - [`checkpoint`]: the project before a turn, to review and undo it.
 //! - [`prompt`]: what TeXoria asks the agent.
 

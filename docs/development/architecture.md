@@ -28,7 +28,7 @@ texoria ─┬─ tex-compile ── tex-log
 | [`synctex`](../../crates/synctex) | `.synctex(.gz)` reader, forward and inverse search |
 | [`pdf-view`](../../crates/pdf-view) | PDF rasterization with PDFium on a dedicated thread |
 
-## Typesetting
+## Build
 
 `tex_compile::engine::detect()` returns the engines best first: the system latexmk (pdfLaTeX,
 XeLaTeX and LuaLaTeX flavors), also looked up in the well-known TeX Live, MacTeX, MiKTeX and
@@ -42,7 +42,7 @@ explicit cancel, an engine change or the timeout, never by new edits. Artifacts 
 
 Debouncing lives in the UI: each edit restarts a timer, and when it fires the workspace
 re-indexes the open buffers (so the outline and completions follow unsaved text), saves and
-typesets. Compiler events reach the UI over a channel.
+builds. Compiler events reach the UI over a channel.
 
 ## Preview
 
@@ -77,9 +77,9 @@ Agents write files on their own, whatever the client offers, so the review does 
 compares it afterwards, which drives the review (a patch for the diff tab) and the undo. The
 editors are read-only during a turn, so no buffer is dirty when the agent writes.
 
-TeXoria's own tools (`typeset`, `problems`, `outline`) are an MCP server on a loopback port
+TeXoria's own tools (`build`, `problems`, `outline`) are an MCP server on a loopback port
 (`mcp.rs`): agents start `texoria --mcp-bridge`, which relays its stdio to it after a random
-token. The calls are answered by the workspace on the UI thread; `typeset` waits for the first
+token. The calls are answered by the workspace on the UI thread; `build` waits for the first
 run that starts after it.
 
 ## Security model

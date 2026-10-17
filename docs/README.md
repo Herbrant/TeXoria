@@ -5,7 +5,7 @@
 - [Installation](installation.md): every platform, updating and uninstalling
 - [Getting started](getting-started.md): open a project, the window, where the PDF goes
 - [Writing](writing.md): completion, outline, files, diagnostics, spell checking
-- [Typesetting and preview](preview.md): live preview, SyncTeX, engines
+- [Build and preview](preview.md): live preview, SyncTeX, engines
 - [Git](git.md): source control built into the editor
 - [Overleaf](overleaf.md): work on Overleaf projects offline
 - [Coding agents](agents.md): Claude Code, Codex, Gemini CLI and others in the editor

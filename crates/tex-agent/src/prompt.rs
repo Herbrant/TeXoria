@@ -65,7 +65,7 @@ pub fn preamble(root: &Path, dir: &Path) -> String {
         "You are working in TeXoria, a LaTeX editor, on the project in `{dir}`, whose root \
          file is `{root}`. The user writes the document; help them with it.\n\
          - Edit the source files in place; the user reviews your changes and can undo them.\n\
-         - To typeset the document and get its errors and warnings, use the `typeset` tool \
+         - To build the document and get its errors and warnings, use the `build` tool \
          of the `{SERVER_NAME}` MCP server, not latexmk or another engine: TeXoria shows \
          the result in its preview.\n\
          - Build files are in `.texoria/`: never edit them.\n\
@@ -75,7 +75,7 @@ pub fn preamble(root: &Path, dir: &Path) -> String {
     )
 }
 
-/// Ask to fix the errors of the last typesetting run.
+/// Ask to fix the errors of the last build.
 pub fn fix_errors(dir: &Path, diagnostics: &[Diagnostic]) -> String {
     let errors: Vec<&Diagnostic> = diagnostics
         .iter()
@@ -90,14 +90,14 @@ pub fn fix_errors(dir: &Path, diagnostics: &[Diagnostic]) -> String {
         errors
     };
     let what = if listed.iter().any(|d| d.severity == Severity::Error) {
-        "fails to typeset"
+        "fails to build"
     } else {
-        "typesets with warnings"
+        "builds with warnings"
     };
     format!(
         "The document {what}. Fix the problems below with the smallest changes to the \
-         sources, without changing the document's content or style. Then typeset it again \
-         with the `typeset` tool to check that they are gone.\n\n{}",
+         sources, without changing the document's content or style. Then build it again \
+         with the `build` tool to check that they are gone.\n\n{}",
         format_diagnostics(dir, &listed.into_iter().cloned().collect::<Vec<_>>())
     )
 }
@@ -211,7 +211,7 @@ mod tests {
             ),
         ];
         let p = fix_errors(dir, &ds);
-        assert!(p.starts_with("The document fails to typeset."));
+        assert!(p.starts_with("The document fails to build."));
         let a = Path::new("ch").join("a.tex");
         assert!(p.contains(&format!(
             "{}:12: error: Undefined control sequence",
@@ -223,7 +223,7 @@ mod tests {
         );
 
         let p = fix_errors(dir, &ds[..1]);
-        assert!(p.starts_with("The document typesets with warnings."));
+        assert!(p.starts_with("The document builds with warnings."));
         assert!(p.contains("main.tex:3: warning:"));
     }
 
@@ -246,6 +246,6 @@ mod tests {
     fn preamble_names_the_root_file() {
         let p = preamble(Path::new("/p/thesis.tex"), Path::new("/p"));
         assert!(p.contains("root file is `thesis.tex`"));
-        assert!(p.contains("`typeset` tool"));
+        assert!(p.contains("`build` tool"));
     }
 }

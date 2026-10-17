@@ -128,7 +128,7 @@ texoria ─┬─ tex-compile ── tex-log
   deletes an added file when the walk was complete and the file is newer than the checkpoint.
   It also watches `.git/config` and the hooks (`git_changes`), which the review does not show.
   Through `fs/*` an agent reaches only the project, outside `.git`, and cannot write
-  `latexmkrc` (`agent_panel::writable`). `mcp.rs` serves TeXoria's tools (`typeset`,
+  `latexmkrc` (`agent_panel::writable`). `mcp.rs` serves TeXoria's tools (`build`,
   `problems`, `outline`) on a loopback port; agents start `texoria --mcp-bridge` (handled in
   `main.rs` before the UI), which relays stdio there after a random token (`getrandom`; before
   it, a connection gets little time, memory and company).
@@ -176,12 +176,12 @@ texoria ─┬─ tex-compile ── tex-log
     gutter-marker API, so there are no change markers in the editor itself.
   - Live preview: each buffer change schedules a timer (`settings.live_delay_ms`); on fire it
     re-indexes open buffers (outline/completions follow unsaved text) and, if live preview is on,
-    saves and typesets. Debouncing lives in the UI, so the `Compiler` is created with
+    saves and builds. Debouncing lives in the UI, so the `Compiler` is created with
     `Duration::ZERO`.
   - Compiler events come from the scheduler's thread via a `smol` channel and are applied in a
     `cx.spawn` loop (`on_compile_event`).
   - A PDF in the build folder is shown only for projects opened before (`recent`) or once a
-    run wrote it (`Output::pdf_written`); until then typesetting is forced (latexmk `-g`), so
+    run wrote it (`Output::pdf_written`); until then a full build is forced (latexmk `-g`), so
     build files shipped with a project are never handed to PDFium.
   - `pdf_pane.rs` keeps old bitmaps on screen until the new PDF's pages are rasterized (no flash)
     and only materializes pages near the viewport. SyncTeX forward/inverse search goes through the
@@ -194,7 +194,7 @@ texoria ─┬─ tex-compile ── tex-log
     through `AgentPanelEvent::Request` so the buffers are saved first; the workspace adds the
     open file and the selection to chat messages. The review is a `DiffSource::Agent` diff tab
     (no repository) with per-file undo. `agent_tools.rs` forwards the MCP calls to
-    `Workspace::on_tool_call`; a `typeset` call is answered by the first run that starts after
+    `Workspace::on_tool_call`; a `build` call is answered by the first run that starts after
     it (`ToolWaiter`, compile ids).
   - `spell.rs`: each `Buffer` has a `BufferSpell` (a `TextDecorationCollection` of wavy
     underlines, which follow edits, unlike editor diagnostics that are cleared on every edit).

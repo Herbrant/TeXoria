@@ -196,7 +196,7 @@ pub struct AgentPanel {
     queued: Option<Prompt>,
     /// The agents were asked for (they are looked for on first use).
     wanted: bool,
-    /// Errors of the last typesetting run, to offer fixing them.
+    /// Errors of the last build, to offer fixing them.
     errors: usize,
     scroll: ScrollHandle,
     /// Bumped when the agent or the project changes: late results are dropped.
@@ -1764,7 +1764,7 @@ impl AgentPanel {
                             .outline()
                             .icon(Glyph::Error)
                             .label(format!(
-                                "Fix {errors} Typesetting Error{}",
+                                "Fix {errors} Build Error{}",
                                 if errors == 1 { "" } else { "s" }
                             ))
                             .disabled(!self.can_send())
@@ -1840,7 +1840,7 @@ impl Render for AgentPanel {
     }
 }
 
-/// Files that run programs when typesetting (latexmk's Perl rc files): an
+/// Files that run programs when building (latexmk's Perl rc files): an
 /// agent's edits are often approved as edits, not as commands, so these are
 /// left to the user.
 const RUNS_PROGRAMS: [&str; 2] = ["latexmkrc", ".latexmkrc"];
@@ -1857,7 +1857,7 @@ fn writable(dir: &Path, path: &Path) -> Result<(), String> {
     let name = path.file_name().unwrap_or_default();
     if RUNS_PROGRAMS.iter().any(|n| name.eq_ignore_ascii_case(n)) {
         return Err(format!(
-            "TeXoria does not let agents write {}, which runs programs when typesetting: \
+            "TeXoria does not let agents write {}, which runs programs when building: \
              ask the user to change it",
             name.to_string_lossy()
         ));

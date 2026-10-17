@@ -99,7 +99,7 @@ impl Compiler {
         });
     }
 
-    /// Schedule a compile right away (explicit "Typeset" command).
+    /// Schedule a compile right away (explicit "Build" command).
     pub fn request_now(&self, job: Job) {
         let _ = self.tx.send(Cmd::Request {
             job,
@@ -337,7 +337,7 @@ impl Worker {
                     file: None,
                     line: None,
                     message: format!(
-                        "Typesetting stopped after {}s (infinite loop?)",
+                        "The build stopped after {}s (infinite loop?)",
                         limit.as_secs()
                     ),
                 },

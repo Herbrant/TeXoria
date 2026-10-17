@@ -11,13 +11,13 @@ Open the Settings window with ⌘, (Ctrl+,). Every change applies right away.
 | Check spelling | On | See [Spell checking](writing.md#spell-checking). |
 | Dictionary | | The words you added to your dictionary; remove them from here. |
 
-## Typesetting
+## Build
 
 | Setting | Default | |
 |---|---|---|
 | Engine | First found | latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, or Tectonic (see [Engines](preview.md#engines)). |
 | Timeout | 300 s | Stop a run after this many seconds (0: never). |
-| Live preview | On | Save and typeset automatically after edits. |
+| Live preview | On | Save and build automatically after edits. |
 | Delay | 700 ms | Pause after the last keystroke before a live run. |
 
 ## Git

@@ -1,7 +1,7 @@
 # Coding agents
 
 TeXoria works with the coding agents you already have on your computer: it can ask them to
-write a section, rewrite a passage or fix what stops your document from typesetting. The agent
+write a section, rewrite a passage or fix what stops your document from building. The agent
 uses your own account, so there is nothing to set up in TeXoria and no API key to give it.
 
 ## Supported agents
@@ -63,11 +63,11 @@ Select a passage, right-click and pick **Agent**:
 
 The agent edits the file in place and keeps the LaTeX commands, labels, citations and math.
 
-## Fixing typesetting problems
+## Fixing build problems
 
-When typesetting fails, **Fix with Agent** in the Problems panel (⌘⇧M), the button in an empty
-chat or **Agent → Fix Typesetting Problems** sends the errors (or, without errors, the
-warnings) to the agent. It typesets again with TeXoria's engine to check its fix: you see the
+When the build fails, **Fix with Agent** in the Problems panel (⌘⇧M), the button in an empty
+chat or **Agent → Fix Build Problems** sends the errors (or, without errors, the
+warnings) to the agent. It builds again with TeXoria's engine to check its fix: you see the
 PDF update as it works.
 
 ## Reviewing what the agent changed
@@ -85,7 +85,7 @@ Git's configuration or hooks, which can run programs, the chat says so: check th
 Git in the project.
 
 When an agent reads or writes files through TeXoria, it can only reach the project folder, not
-its `.git`, and it cannot write `latexmkrc` (a program that runs when typesetting): change that
+its `.git`, and it cannot write `latexmkrc` (a program that runs when building): change that
 file yourself. Agents can still run commands of their own, with your permission.
 
 ## TeXoria's tools
@@ -94,7 +94,7 @@ TeXoria gives each agent three tools, over MCP, under the name `texoria`:
 
 | Tool | |
 |---|---|
-| `typeset` | Save and typeset with the engine chosen in TeXoria, and get the errors and warnings. |
+| `build` | Save and build with the engine chosen in TeXoria, and get the errors and warnings. |
 | `problems` | The errors and warnings of the last run. |
 | `outline` | The document's parts, sections, figures and tables, with their file and line. |
 

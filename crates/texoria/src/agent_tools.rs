@@ -8,7 +8,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tex_agent::mcp::{Tool, ToolResult, Tools};
 
-/// Longer than any typesetting run (they have their own timeout).
+/// Longer than any build (they have their own timeout).
 const TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 pub struct ToolCall {
@@ -32,16 +32,16 @@ impl Tools for AppTools {
         let none = json!({ "type": "object", "properties": {} });
         vec![
             Tool {
-                name: "typeset",
-                description: "Save the open files and typeset the document with TeXoria's \
+                name: "build",
+                description: "Save the open files and build the document with TeXoria's \
                     engine (the user sees the PDF). Returns whether it succeeded, with its \
                     errors and warnings as `file:line: severity: message`.",
                 input_schema: none.clone(),
             },
             Tool {
                 name: "problems",
-                description: "The errors and warnings of the last typesetting run, without \
-                    typesetting again.",
+                description: "The errors and warnings of the last build, without building \
+                    again.",
                 input_schema: none.clone(),
             },
             Tool {

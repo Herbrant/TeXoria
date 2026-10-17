@@ -20,7 +20,7 @@ latexmk is in an unusual folder, make sure that folder is on the `PATH` TeXoria 
 
 ## Tectonic fails on first use
 
-Tectonic downloads the LaTeX packages a document needs the first time it typesets it, so the
+Tectonic downloads the LaTeX packages a document needs the first time it builds it, so the
 first run needs an internet connection and takes longer.
 
 ## A project's `latexmkrc` is ignored
