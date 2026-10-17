@@ -5,7 +5,7 @@
 //! previous bitmaps stay on screen until the new ones are rasterized, so the
 //! preview never flashes blank while you type.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +16,9 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use pdf_view::{Bitmap, Event as RenderEvent, PageSize, RenderKey, Renderer};
+use pdf_view::{
+    Bitmap, Event as RenderEvent, Link, LinkTarget, PageSize, Query, RenderKey, Renderer,
+};
 use synctex::{Rect, SyncTex};
 
 use crate::assets::Glyph;
@@ -93,6 +95,9 @@ pub struct PdfPane {
     /// Taken on a click, so that ⌘= and ⌘- zoom the PDF instead of resizing
     /// the editor's text.
     focus: FocusHandle,
+    /// The links of the pages asked for so far (they are asked once).
+    links: HashMap<usize, Vec<Link>>,
+    asked_links: HashSet<usize>,
     /// The "go to page" field of the toolbar, while it is open.
     page_input: Option<Entity<InputState>>,
     _page_input: Option<Subscription>,
@@ -146,6 +151,8 @@ impl PdfPane {
             last_request: Vec::new(),
             pending_scroll: None,
             focus: cx.focus_handle(),
+            links: HashMap::new(),
+            asked_links: HashSet::new(),
             page_input: None,
             _page_input: None,
             _events: events,
@@ -197,6 +204,8 @@ impl PdfPane {
                     self.pending_scroll = Some(self.scroll.offset());
                 }
                 self.doc_generation = generation;
+                self.links.clear();
+                self.asked_links.clear();
                 self.synctex = self.pending_synctex.take();
                 self.pages = pages;
                 self.error = None;
@@ -238,8 +247,16 @@ impl PdfPane {
                     self.to_drop.push(old.image);
                 }
             }
+            RenderEvent::Links {
+                generation,
+                page,
+                links,
+            } => {
+                if generation == self.doc_generation {
+                    self.links.insert(page, links);
+                }
+            }
             RenderEvent::PageText { .. }
-            | RenderEvent::Links { .. }
             | RenderEvent::Found { .. }
             | RenderEvent::Snapshot { .. }
             | RenderEvent::Text { .. } => {}
@@ -516,6 +533,40 @@ impl PdfPane {
         }
     }
 
+    /// Ask for the links of the visible pages not asked yet.
+    fn request_links(&mut self, visible: &[usize]) {
+        let Some(renderer) = &self.renderer else {
+            return;
+        };
+        for &page in visible {
+            if self.asked_links.insert(page) {
+                renderer.query(Query::Links { page });
+            }
+        }
+    }
+
+    /// Follow a link: to a place of the document, or a web page or email
+    /// address (never a file or a program).
+    fn follow(&mut self, target: &LinkTarget, cx: &mut Context<Self>) {
+        match target {
+            LinkTarget::Page { page, y } => {
+                // A little above the target, which is usually a heading's baseline.
+                self.go_to(*page, y.map(|y| (y - 24.0).max(0.0)), cx)
+            }
+            LinkTarget::Uri(uri) => {
+                let lower = uri.to_ascii_lowercase();
+                if ["http://", "https://", "mailto:"]
+                    .iter()
+                    .any(|p| lower.starts_with(p))
+                {
+                    cx.open_url(uri);
+                } else {
+                    log::info!("not following the link {uri}");
+                }
+            }
+        }
+    }
+
     fn evict_far_pages(&mut self, visible: &[usize]) {
         let (Some(&first), Some(&last)) = (visible.first(), visible.last()) else {
             return;
@@ -674,6 +725,7 @@ impl Render for PdfPane {
             .map(|(i, _)| i)
             .collect();
         self.request_bitmaps(&visible, zoom * window.scale_factor());
+        self.request_links(&visible);
         self.evict_far_pages(&visible);
 
         let theme = cx.theme();
@@ -707,6 +759,29 @@ impl Render for PdfPane {
                     img(shown.image.clone())
                         .size_full()
                         .object_fit(ObjectFit::Fill),
+                );
+            }
+            for (k, link) in self.links.get(&i).into_iter().flatten().enumerate() {
+                let target = link.target.clone();
+                let r = link.rect;
+                page = page.child(
+                    div()
+                        .id(ElementId::NamedInteger(
+                            "pdf-link".into(),
+                            (i * 10_000 + k) as u64,
+                        ))
+                        .absolute()
+                        .left(px(r.x * zoom))
+                        .top(px(r.y * zoom))
+                        .w(px(r.width * zoom))
+                        .h(px(r.height * zoom))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                            // ⌘-click and double click stay inverse search.
+                            if !ev.modifiers().secondary() && ev.click_count() < 2 {
+                                this.follow(&target, cx);
+                            }
+                        })),
                 );
             }
             if let Some(h) = self.highlight.as_ref().filter(|h| h.page == i) {

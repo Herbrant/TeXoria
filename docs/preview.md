@@ -36,6 +36,13 @@ The toolbar shows the page in the middle of the pane and how many there are: cli
 ⌘G, to type the page to go to. Once you have clicked the preview, ←/→ and Page Up/Page Down go to
 the previous or next page, Home and End to the first or last one.
 
+## Links
+
+Links in the PDF work as in a PDF reader: those made by `hyperref` (`\ref`, `\cite`, the table
+of contents) scroll to their target, and web and email links (`\url`, `\href`) open in your
+browser or mail app. Links to files or programs are never followed. ⌘-click and double click
+still jump to the source.
+
 ## Engines
 
 TeXoria looks for the following engines and uses the first one found, unless you pick another:
