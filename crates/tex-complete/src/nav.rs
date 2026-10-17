@@ -438,7 +438,7 @@ mod tests {
     fn sample() -> Project {
         let root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample/main.tex");
-        Project::open(std::fs::canonicalize(root).unwrap())
+        Project::open(root)
     }
 
     #[test]

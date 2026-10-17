@@ -305,7 +305,7 @@ mod tests {
     fn the_sample_project_has_no_issues() {
         let root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample/main.tex");
-        let p = Project::open(std::fs::canonicalize(root).unwrap());
+        let p = Project::open(root);
         assert_eq!(run(&p), Vec::new());
     }
 

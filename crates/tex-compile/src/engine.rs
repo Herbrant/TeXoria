@@ -428,11 +428,14 @@ mod tests {
 
     #[test]
     fn parses_texdoc_output() {
-        let out = "amsmath\t10\t/tl/doc/latex/amsmath/amsldoc.pdf\t\tUser's guide\namsmath\t1\t/tl/doc/amsmath.tex\t\t\n";
-        assert_eq!(
-            parse_texdoc(out),
-            Some(PathBuf::from("/tl/doc/latex/amsmath/amsldoc.pdf"))
+        // Absolute on every platform.
+        let doc = std::env::temp_dir().join("amsldoc.pdf");
+        let out = format!(
+            "amsmath\t10\t{}\t\tUser's guide\namsmath\t1\trelative/amsmath.tex\t\t\n",
+            doc.display()
         );
+        assert_eq!(parse_texdoc(&out), Some(doc));
+        assert_eq!(parse_texdoc("amsmath\t1\trelative.pdf\t\t\n"), None);
         assert_eq!(parse_texdoc(""), None);
     }
 
