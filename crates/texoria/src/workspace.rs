@@ -118,6 +118,12 @@ pub struct Workspace {
     diagnostics: Vec<Diagnostic>,
     /// The live checks' findings, for the whole project.
     issues: Vec<tex_project::check::Issue>,
+    /// The words of the project's files, in document order.
+    word_counts: Vec<(PathBuf, tex_spell::extract::Counts)>,
+    /// Counts of files by the hash of the text they were counted in.
+    count_cache: Arc<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, (u64, tex_spell::extract::Counts)>>,
+    >,
     outline: Vec<ProjectOutlineItem>,
     show_sidebar: bool,
     sidebar: Sidebar,
@@ -156,6 +162,7 @@ pub struct Workspace {
     updater: Entity<Updater>,
     _live: Task<()>,
     _checks: Task<()>,
+    _count: Task<()>,
     _update_checks: Task<()>,
     _compile_events: Task<()>,
     _tool_calls: Task<()>,
@@ -276,6 +283,8 @@ impl Workspace {
             state: CompileState::Idle,
             diagnostics: Vec::new(),
             issues: Vec::new(),
+            word_counts: Vec::new(),
+            count_cache: Arc::default(),
             outline: Vec::new(),
             show_sidebar: true,
             sidebar: Sidebar::Outline,
@@ -303,6 +312,7 @@ impl Workspace {
             updater,
             _live: Task::ready(()),
             _checks: Task::ready(()),
+            _count: Task::ready(()),
             _update_checks: Task::ready(()),
             _compile_events: Task::ready(()),
             _tool_calls: tool_task,
@@ -597,6 +607,8 @@ impl Workspace {
             *self.project.write().unwrap() = Project::open(&root);
             self.refresh_outline(cx);
             self.issues.clear();
+            self.word_counts.clear();
+            self.count_words(&[], cx);
             self.run_checks(Vec::new(), cx);
             self.show_old_pdf = self.settings.recent.contains(&root);
             self.settings.push_recent(root.clone());
@@ -904,7 +916,122 @@ impl Workspace {
             }
         }
         self.refresh_outline(cx);
+        self.count_words(&texts, cx);
         self.run_checks(texts, cx);
+    }
+
+    /// Count the words of every file of the project in the background,
+    /// reading open files from `texts`.
+    fn count_words(&mut self, texts: &[(Entity<EditorState>, String)], cx: &mut Context<Self>) {
+        let files = self.project.read().unwrap().files();
+        let open: std::collections::HashMap<PathBuf, String> = texts
+            .iter()
+            .filter_map(|(editor, text)| {
+                let b = self.buffers.iter().find(|b| &b.editor == editor)?;
+                Some((b.path.clone(), text.clone()))
+            })
+            .collect();
+        let cache = self.count_cache.clone();
+        self._count = cx.spawn(async move |this, cx| {
+            let counts = cx
+                .background_spawn(async move {
+                    use std::hash::{Hash, Hasher};
+                    let mut cache = cache.lock().unwrap();
+                    let mut out = Vec::new();
+                    for file in files {
+                        let Some(text) = open
+                            .get(&file)
+                            .cloned()
+                            .or_else(|| tex_project::read_regular(&file))
+                        else {
+                            continue;
+                        };
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        text.hash(&mut h);
+                        let hash = h.finish();
+                        let counts = match cache.get(&file) {
+                            Some((cached, counts)) if *cached == hash => *counts,
+                            _ => {
+                                let counts = tex_syntax::parse(&text, None)
+                                    .map(|t| tex_spell::extract::count(&t, &text))
+                                    .unwrap_or_default();
+                                cache.insert(file.clone(), (hash, counts));
+                                counts
+                            }
+                        };
+                        out.push((file, counts));
+                    }
+                    out
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.word_counts = counts;
+                cx.notify();
+            })
+            .ok();
+        });
+    }
+
+    /// The words of the whole project.
+    fn total_words(&self) -> tex_spell::extract::Counts {
+        let mut total = tex_spell::extract::Counts::default();
+        for (_, c) in &self.word_counts {
+            total.add(c);
+        }
+        total
+    }
+
+    /// The project's words, by kind and by file.
+    fn show_word_count(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let total = self.total_words();
+        let files: Vec<(String, usize)> = self
+            .word_counts
+            .iter()
+            .map(|(f, c)| (self.relative(f).display().to_string(), c.words()))
+            .collect();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let theme = cx.theme();
+            let row = |label: String, value: String| {
+                h_flex()
+                    .justify_between()
+                    .gap_4()
+                    .text_sm()
+                    .child(div().text_color(theme.muted_foreground).child(label))
+                    .child(div().child(value))
+            };
+            let mut body = v_flex()
+                .gap_1()
+                .child(row("Words in the text".into(), thousands(total.text)))
+                .child(row("Words in headings".into(), thousands(total.headers)))
+                .child(row("Words in captions".into(), thousands(total.captions)))
+                .child(row("Inline formulas".into(), thousands(total.inline_math)))
+                .child(row(
+                    "Displayed formulas".into(),
+                    thousands(total.display_math),
+                ));
+            if files.len() > 1 {
+                body = body.child(div().h_2()).child(
+                    div()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.muted_foreground)
+                        .child("WORDS BY FILE"),
+                );
+                for (name, words) in &files {
+                    body = body.child(row(name.clone(), thousands(*words)));
+                }
+            }
+            dialog
+                .title(format!("{} words", thousands(total.words())))
+                .w(px(420.))
+                .child(
+                    div()
+                        .id("word-count")
+                        .max_h(px(420.))
+                        .overflow_y_scroll()
+                        .child(body),
+                )
+        });
     }
 
     /// Check the project (as indexed from `texts`, the buffers' text) in the
@@ -3515,6 +3642,18 @@ impl Workspace {
             .unwrap_or_else(|| "No engine".into())
             .into();
         let live = self.settings.live_preview;
+        let words = (!self.word_counts.is_empty()).then(|| {
+            let total = thousands(self.total_words().words());
+            let selected = self
+                .buffers
+                .get(self.active)
+                .and_then(|b| selection(&b.editor, cx))
+                .map(|(_, _, text)| selected_words(&text));
+            match selected {
+                Some(n) => format!("{} of {total} words", thousands(n)),
+                None => format!("{total} words"),
+            }
+        });
         let git = self.git.read(cx);
         let branch: Option<SharedString> = git.repo().map(|_| {
             let st = git.status();
@@ -3593,6 +3732,13 @@ impl Workspace {
                 )
             })
             .child(div().flex_1())
+            .when_some(words, |el, words| {
+                el.child(
+                    item("words").child(words).on_click(
+                        cx.listener(|this, _, window, cx| this.show_word_count(window, cx)),
+                    ),
+                )
+            })
             .children(update)
             .children(language)
             .child(
@@ -4096,6 +4242,27 @@ fn apply_format(editor: &Entity<EditorState>, new: String, window: &mut Window, 
         state.replace(new, window, cx);
         state.set_cursor_position(cursor, window, cx);
     });
+}
+
+/// `12,345`.
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The words of a selection, roughly: what has a letter or digit between
+/// spaces, LaTeX commands left out.
+fn selected_words(text: &str) -> usize {
+    text.split_whitespace()
+        .filter(|w| !w.starts_with('\\') && w.chars().any(char::is_alphanumeric))
+        .count()
 }
 
 fn plural(n: usize) -> &'static str {

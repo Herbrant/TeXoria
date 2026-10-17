@@ -132,12 +132,103 @@ const LETTER_COMMANDS: &[&str] = &[
 
 /// Byte ranges of the words to check, in document order.
 pub fn words(tree: &Tree, text: &str) -> Vec<Range<usize>> {
+    collect(tree, text, worth_checking)
+}
+
+/// Words and formulas of a document, as texcount reports them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    /// Words of the text (not headings nor captions).
+    pub text: usize,
+    /// Words of part, chapter and section titles.
+    pub headers: usize,
+    /// Words of figure and table captions.
+    pub captions: usize,
+    pub inline_math: usize,
+    pub display_math: usize,
+}
+
+impl Counts {
+    /// Every word, headings and captions included.
+    pub fn words(&self) -> usize {
+        self.text + self.headers + self.captions
+    }
+
+    pub fn add(&mut self, other: &Counts) {
+        self.text += other.text;
+        self.headers += other.headers;
+        self.captions += other.captions;
+        self.inline_math += other.inline_math;
+        self.display_math += other.display_math;
+    }
+}
+
+/// Count the words and formulas of the document's prose (the preamble only
+/// counts for its `\title`).
+pub fn count(tree: &Tree, text: &str) -> Counts {
+    let mut counts = Counts::default();
+    let root = tree.root_node();
+    for r in collect(tree, text, |_| true) {
+        let mut node = root.descendant_for_byte_range(r.start, r.end);
+        let mut place = None;
+        while let Some(n) = node {
+            match n.kind() {
+                "part" | "chapter" | "section" | "subsection" | "subsubsection" | "paragraph"
+                | "subparagraph" | "title_declaration" => {
+                    // Words after a heading's title belong to its body.
+                    let title = n.child_by_field_name("text");
+                    if title.is_none_or(|t| t.byte_range().contains(&r.start)) {
+                        place = Some(&mut counts.headers);
+                        break;
+                    }
+                }
+                "caption" => {
+                    place = Some(&mut counts.captions);
+                    break;
+                }
+                _ => {}
+            }
+            node = n.parent();
+        }
+        *place.unwrap_or(&mut counts.text) += 1;
+    }
+    let body = document_start(root, text);
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if n.end_byte() <= body {
+            continue;
+        }
+        match n.kind() {
+            "inline_formula" => counts.inline_math += 1,
+            "displayed_equation" | "math_environment" => counts.display_math += 1,
+            "comment" | "line_comment" | "block_comment" => {}
+            _ => {
+                let mut cursor = n.walk();
+                stack.extend(n.children(&mut cursor));
+            }
+        }
+    }
+    counts
+}
+
+/// Where the body starts: `\begin{document}`, else the beginning.
+fn document_start(root: Node, text: &str) -> usize {
+    let mut cursor = root.walk();
+    root.children(&mut cursor)
+        .find(|c| {
+            c.kind() == "generic_environment" && environment_name(*c, text) == Some("document")
+        })
+        .map_or(0, |d| d.start_byte())
+}
+
+/// Byte ranges of the words of the prose that `keep` accepts.
+fn collect(tree: &Tree, text: &str, keep: fn(&str) -> bool) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     // Iterative: the tree is as deep as the document's nesting.
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         if node.kind() == "text" {
-            text_words(node, text, &mut out, &mut stack);
+            text_words(node, text, keep, &mut out, &mut stack);
             continue;
         }
         let env = node.kind() == "generic_environment";
@@ -224,6 +315,7 @@ fn environment_name<'a>(node: Node, text: &'a str) -> Option<&'a str> {
 fn text_words<'t>(
     node: Node<'t>,
     text: &str,
+    keep: fn(&str) -> bool,
     out: &mut Vec<Range<usize>>,
     stack: &mut Vec<Node<'t>>,
 ) {
@@ -259,7 +351,7 @@ fn text_words<'t>(
         let range = child.byte_range();
         let glued_start = glued(prev, range.start);
         let glued_end = glued(next, range.end);
-        tokens(text, range, glued_start, glued_end, out);
+        tokens(text, range, glued_start, glued_end, keep, out);
     }
 }
 
@@ -269,6 +361,7 @@ fn tokens(
     range: Range<usize>,
     glued_start: bool,
     glued_end: bool,
+    keep: fn(&str) -> bool,
     out: &mut Vec<Range<usize>>,
 ) {
     let s = &text[range.clone()];
@@ -294,7 +387,7 @@ fn tokens(
         {
             continue;
         }
-        if worth_checking(&s[r.clone()]) {
+        if keep(&s[r.clone()]) {
             out.push(range.start + r.start..range.start + r.end);
         }
     }
@@ -333,6 +426,28 @@ fn worth_checking(word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_words_and_formulas() {
+        let doc = "\\documentclass{article}\n\\usepackage{amsmath}\n\\title{A Title}\n\
+                   \\begin{document}\n\\section{Two words}\nOne 2 three, $x$ and\n\
+                   \\begin{equation}y\\end{equation}\n\\[z\\]\n\
+                   \\begin{figure}\\caption{A caption here}\\end{figure}\n\
+                   % not counted\n\\end{document}\n";
+        let tree = tex_syntax::parse(doc, None).unwrap();
+        let c = count(&tree, doc);
+        assert_eq!(
+            c,
+            Counts {
+                text: 4,
+                headers: 4,
+                captions: 3,
+                inline_math: 1,
+                display_math: 2,
+            }
+        );
+        assert_eq!(c.words(), 11);
+    }
 
     fn check(doc: &str) -> Vec<&str> {
         let tree = tex_syntax::parse(doc, None).unwrap();

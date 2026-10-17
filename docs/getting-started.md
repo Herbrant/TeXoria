@@ -38,7 +38,8 @@ Shortcuts are written for macOS: elsewhere, use Ctrl instead of ⌘ (see
   ⌘⇧E (files) or ⌘⇧G (source control).
 - **Editor**: one tab per open file.
 - **PDF preview**: updated as you type (see [Build and preview](preview.md)).
-- **Status bar**: the Git branch, the [spell checking](writing.md#spell-checking) language,
+- **Status bar**: the Git branch, the [word count](writing.md#word-count), the
+  [spell checking](writing.md#spell-checking) language,
   the live preview switch and the engine (click it to switch to the next one).
 - **Problems** (⌘⇧M): the errors and warnings of the last run.
 

@@ -79,6 +79,14 @@ The arrow on the left shows the replace field. *Replace All* changes every match
 through the editor, so ⌘Z undoes it, and directly on disk for the others. With a regular
 expression, `$1`, `$2`… in the replacement stand for its groups.
 
+## Word count
+
+The status bar shows how many words the whole project has (all the files it includes, as they
+are on screen), or how many are selected out of them. Click it for the details, counted like
+texcount does: words in the text, in headings and in captions, inline and displayed formulas,
+and the words of each file. Commands, math, comments and the preamble (except `\title`) are
+not words.
+
 ## Diagnostics
 
 After each run, the errors and warnings of the TeX log are underlined in the source and listed
