@@ -235,8 +235,8 @@ impl<'a> Walk<'a> {
     fn group_item(&self, node: Node) -> (String, Range<usize>) {
         let raw = self.src(node);
         let inner = raw.strip_prefix(['{', '[']).unwrap_or(raw);
+        let offset = node.start_byte() + (raw.len() - inner.len());
         let inner = inner.strip_suffix(['}', ']']).unwrap_or(inner);
-        let offset = node.start_byte() + (raw.len() - raw.trim_start_matches(['{', '[']).len());
         let t = inner.trim();
         let start = offset + (inner.len() - inner.trim_start().len());
         (t.to_string(), start..start + t.len())
@@ -1110,6 +1110,13 @@ See \ref{eq:e} and \cite{knuth, lamport}.
         assert_eq!(inc, [("ch", "ch"), ("refs", "refs")]);
         let idx = Index::from_text("\\bibitem{\n  k}\\cite{\n%c\n a}");
         assert_eq!((idx.bibitems[0].line, idx.citations[0].line), (1, 3));
+    }
+
+    #[test]
+    fn group_ranges_strip_a_single_bracket() {
+        let src = "\\newenvironment{[e}{a}{b}";
+        let env = &Index::from_text(src).environments[0];
+        assert_eq!((env.name.as_str(), &src[env.range.clone()]), ("[e", "[e"));
     }
 
     #[test]
