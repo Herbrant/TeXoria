@@ -6,6 +6,7 @@ crate is plain logic with its own unit tests, usable without a window.
 
 ```
 texoria ─┬─ tex-compile ── tex-log
+         ├─ tex-agent (ACP, MCP) ── tex-project, tex-log
          ├─ tex-git (system `git` CLI)
          ├─ tex-complete ── tex-project ── tex-syntax
          ├─ tex-spell ── tex-syntax
@@ -19,6 +20,7 @@ texoria ─┬─ tex-compile ── tex-log
 | [`tex-compile`](../../crates/tex-compile) | Engine discovery and the background compile scheduler |
 | [`tex-log`](../../crates/tex-log) | TeX log parser, producing diagnostics |
 | [`tex-git`](../../crates/tex-git) | Git through the system `git` CLI, Overleaf URLs |
+| [`tex-agent`](../../crates/tex-agent) | Coding agents: discovery, ACP client, MCP tools, checkpoints |
 | [`tex-syntax`](../../crates/tex-syntax) | Tree-sitter LaTeX grammar, highlighting, semantic index |
 | [`tex-project`](../../crates/tex-project) | Root file detection, include graph, `.bib` files, file scan |
 | [`tex-complete`](../../crates/tex-complete) | Context-aware completion with fuzzy ranking |
@@ -61,6 +63,25 @@ classified by their text. Network commands have a timeout and can be cancelled. 
 runs one operation at a time on the background executor; operations that rewrite files reload
 the clean buffers whose file changed.
 
+## Coding agents
+
+`tex-agent` drives the agents installed on the system through the Agent Client Protocol: JSON-RPC
+over the agent's stdin/stdout, with the wire types of `agent-client-protocol-schema` and a
+transport of its own (`rpc.rs`, threads like `tex-git` and `tex-compile`). `catalog::detect`
+finds the known agents (the commands of the ACP registry) and the user's own on the login
+shell's `PATH` plus the usual install folders, which is also the `PATH` agents run with (Node
+scripts need it). Claude Code and Codex go through their npm adapters, pinned, with `npx`.
+
+Agents write files on their own, whatever the client offers, so the review does not rely on
+`fs/write_text_file`: `Checkpoint` records the project before each turn and `changes()`
+compares it afterwards, which drives the review (a patch for the diff tab) and the undo. The
+editors are read-only during a turn, so no buffer is dirty when the agent writes.
+
+TeXoria's own tools (`typeset`, `problems`, `outline`) are an MCP server on a loopback port
+(`mcp.rs`): agents start `texoria --mcp-bridge`, which relays its stdio to it after a random
+token. The calls are answered by the workspace on the UI thread; `typeset` waits for the first
+run that starts after it.
+
 ## Security model
 
 Opening a project must not run code from it. Two things in a project can:
@@ -70,15 +91,21 @@ Opening a project must not run code from it. Two things in a project can:
 - the repository's Git configuration (`core.fsmonitor`, filters, …), which can run on a plain
   `git status`: Git only runs in projects the user trusted.
 
-Both permissions are stored in the settings for exact directories, never their subdirectories.
+Coding agents read and change a project and follow their own settings in it (which can run
+hooks), so they only start in projects the user allowed, a third permission; the files they
+write through TeXoria must be inside the project.
+
+The permissions are stored in the settings for exact directories, never their subdirectories.
 Credentials are passed to Git through the environment, never on the command line, in a URL or
 in `.git/config`; Overleaf tokens are only sent over HTTPS and live in the system keychain.
 
 ## The app
 
-- `workspace.rs` is the main window: sidebar (outline, files or source control), editor tabs,
-  PDF pane and status bar.
+- `workspace.rs` is the main window: sidebar (outline, files, source control or agent), editor
+  tabs, PDF pane and status bar.
 - `git_panel.rs`, `diff_view.rs` and `overleaf.rs` implement source control.
+- `agent_panel.rs` is the Agent sidebar (chat, permissions, review), `agent_tools.rs` the MCP
+  tools answered by the workspace.
 - `file_tree.rs` is the Files view, `spell.rs` the spell-checking glue, `latex.rs` registers the
   LaTeX language and completions with the editor.
 - `settings.rs` and `settings_window.rs` hold the settings (TOML in the OS config folder) and

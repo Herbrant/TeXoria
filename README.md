@@ -38,6 +38,8 @@ A fast, native LaTeX editor for macOS, Windows and Linux, written in Rust on
 - **Spell checking in ~90 languages**, detected automatically for each file.
 - **Git built in**: diffs, commits, history, branches and merge conflicts, using your own `git`.
 - **Overleaf, offline**: clone a project, work without a connection, *Sync* when you are back.
+- **Coding agents**: Claude Code, Codex, Gemini CLI, Copilot and others write, rewrite and fix
+  your document, and you review what they changed.
 - **Safe by default**: a project's `latexmkrc` and Git configuration never run until you trust it.
 
 ## Installation

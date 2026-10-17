@@ -38,6 +38,7 @@ tex-syntax = { path = "crates/tex-syntax" }
 tex-project = { path = "crates/tex-project" }
 tex-complete = { path = "crates/tex-complete" }
 tex-spell = { path = "crates/tex-spell" }
+tex-agent = { path = "crates/tex-agent" }
 pdf-view = { path = "crates/pdf-view" }
 
 [profile.release]

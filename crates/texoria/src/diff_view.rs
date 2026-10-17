@@ -1,5 +1,5 @@
-//! The diff tab: a working-tree change, a conflicted file or a commit, shown
-//! with gpui-kit's read-only diff viewer.
+//! The diff tab: a working-tree change, a conflicted file, a commit or what a
+//! coding agent changed, shown with gpui-kit's read-only diff viewer.
 
 use std::path::PathBuf;
 
@@ -32,6 +32,11 @@ pub enum DiffSource {
         path: String,
     },
     Commit(Commit),
+    /// A coding agent's changes to the project in `dir`, as a patch.
+    Agent {
+        dir: PathBuf,
+        patch: String,
+    },
 }
 
 impl DiffSource {
@@ -39,7 +44,7 @@ impl DiffSource {
     pub fn path(&self) -> Option<&str> {
         match self {
             DiffSource::Working { path, .. } | DiffSource::Conflict { path } => Some(path),
-            DiffSource::Commit(_) => None,
+            DiffSource::Commit(_) | DiffSource::Agent { .. } => None,
         }
     }
 }
@@ -57,13 +62,17 @@ pub enum DiffViewEvent {
     },
     Open(PathBuf),
     SplitChanged(bool),
+    /// Undo the agent's changes to one file (relative path), or all of them.
+    UndoAgent(Option<PathBuf>),
+    KeepAgent,
     Close,
 }
 
 impl EventEmitter<DiffViewEvent> for DiffView {}
 
 pub struct DiffView {
-    repo: Repo,
+    /// `None` for an agent's changes.
+    repo: Option<Repo>,
     source: DiffSource,
     state: Entity<DiffState>,
     split: bool,
@@ -75,7 +84,12 @@ pub struct DiffView {
 }
 
 impl DiffView {
-    pub fn new(repo: Repo, source: DiffSource, split: bool, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        repo: Option<Repo>,
+        source: DiffSource,
+        split: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let state = cx.new(|cx| {
             DiffState::new(Vec::new(), cx)
                 .with_mode(mode(split))
@@ -101,8 +115,9 @@ impl DiffView {
         this
     }
 
-    pub fn show(&mut self, repo: Repo, source: DiffSource, cx: &mut Context<Self>) {
-        if self.source == source && self.repo.root() == repo.root() {
+    pub fn show(&mut self, repo: Option<Repo>, source: DiffSource, cx: &mut Context<Self>) {
+        let root = |r: &Option<Repo>| r.as_ref().map(|r| r.root().to_path_buf());
+        if self.source == source && root(&self.repo) == root(&repo) {
             return self.reload(cx);
         }
         self.repo = repo;
@@ -113,9 +128,18 @@ impl DiffView {
         self.load(cx);
     }
 
-    /// Re-read a working-tree diff (commits never change).
+    /// Whether it shows an agent's changes.
+    pub fn is_agent(&self) -> bool {
+        matches!(self.source, DiffSource::Agent { .. })
+    }
+
+    /// Re-read a working-tree diff (commits never change, and an agent's
+    /// changes come with their patch).
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.source, DiffSource::Commit(_)) {
+        if !matches!(
+            self.source,
+            DiffSource::Commit(_) | DiffSource::Agent { .. }
+        ) {
             self.load(cx);
         }
     }
@@ -135,6 +159,7 @@ impl DiffView {
                 format!("{} (conflict)", path.rsplit('/').next().unwrap_or(path))
             }
             DiffSource::Commit(c) => format!("Commit {}", c.short),
+            DiffSource::Agent { .. } => "Agent changes".into(),
         }
     }
 
@@ -145,7 +170,7 @@ impl DiffView {
         let source = self.source.clone();
         cx.spawn(async move |this, cx| {
             let text = cx
-                .background_spawn(async move { load_text(&repo, &source) })
+                .background_spawn(async move { load_text(repo.as_ref(), &source) })
                 .await;
             this.update(cx, |this, cx| {
                 if this.generation != generation {
@@ -202,8 +227,20 @@ impl DiffView {
                 c.subject.clone().into(),
                 Some(format!("{} · {} <{}>", c.short, c.author, c.email).into()),
             ),
+            DiffSource::Agent { .. } => {
+                let n = self.state.read(cx).files().len();
+                (
+                    "Changes by the agent".into(),
+                    Some(format!("{n} file{}", if n == 1 { "" } else { "s" }).into()),
+                )
+            }
         };
-        let file = self.source.path().map(|p| self.repo.abs_path(p));
+        let file = self
+            .source
+            .path()
+            .zip(self.repo.as_ref())
+            .map(|(p, repo)| repo.abs_path(p));
+        let agent = self.is_agent();
         let resolved = match &self.source {
             DiffSource::Conflict { path } => self
                 .state
@@ -260,6 +297,27 @@ impl DiffView {
                         )
                     }),
             )
+            .when(agent, |d| {
+                d.child(
+                    Button::new("diff-agent-undo")
+                        .outline()
+                        .xsmall()
+                        .icon(Glyph::Discard)
+                        .label("Undo All")
+                        .tooltip("Put the files back as they were before the agent's turn")
+                        .on_click(
+                            cx.listener(|_, _, _, cx| cx.emit(DiffViewEvent::UndoAgent(None))),
+                        ),
+                )
+                .child(
+                    Button::new("diff-agent-keep")
+                        .primary()
+                        .xsmall()
+                        .icon(Glyph::Check)
+                        .label("Keep All")
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DiffViewEvent::KeepAgent))),
+                )
+            })
             .when(is_conflict, |d| {
                 let ready = resolved.is_some();
                 d.child(
@@ -368,6 +426,49 @@ impl Render for DiffView {
                     })
             });
         }
+        if let DiffSource::Agent { dir, .. } = &self.source {
+            let dir = dir.clone();
+            let weak = cx.entity().downgrade();
+            diff = diff.render_header_suffix(move |file: &DiffFile, _, _| {
+                let path = PathBuf::from(file.path().as_str());
+                let (weak_open, weak_undo) = (weak.clone(), weak.clone());
+                let (open, undo) = (dir.join(&path), path.clone());
+                let exists = file.status() != DiffFileStatus::Deleted;
+                h_flex()
+                    .gap_1()
+                    .when(exists, |d| {
+                        d.child(
+                            Button::new(SharedString::from(format!("open-{}", path.display())))
+                                .ghost()
+                                .xsmall()
+                                .icon(Glyph::File)
+                                .tooltip("Open the file")
+                                .on_click(move |_, _, cx| {
+                                    let open = open.clone();
+                                    weak_open
+                                        .update(cx, |_, cx| cx.emit(DiffViewEvent::Open(open)))
+                                        .ok();
+                                }),
+                        )
+                    })
+                    .child(
+                        Button::new(SharedString::from(format!("undo-{}", path.display())))
+                            .ghost()
+                            .xsmall()
+                            .icon(Glyph::Discard)
+                            .label("Undo")
+                            .tooltip("Put this file back as it was")
+                            .on_click(move |_, _, cx| {
+                                let path = undo.clone();
+                                weak_undo
+                                    .update(cx, |_, cx| {
+                                        cx.emit(DiffViewEvent::UndoAgent(Some(path)))
+                                    })
+                                    .ok();
+                            }),
+                    )
+            });
+        }
         v_flex()
             .size_full()
             .bg(theme.background)
@@ -392,7 +493,8 @@ fn mode(split: bool) -> DiffMode {
     }
 }
 
-fn load_text(repo: &Repo, source: &DiffSource) -> tex_git::Result<String> {
+fn load_text(repo: Option<&Repo>, source: &DiffSource) -> tex_git::Result<String> {
+    let repo = || repo.ok_or_else(|| Error::Invalid("No repository".into()));
     match source {
         DiffSource::Working {
             path,
@@ -400,15 +502,16 @@ fn load_text(repo: &Repo, source: &DiffSource) -> tex_git::Result<String> {
             untracked,
         } => {
             if *untracked {
-                repo.untracked_diff(path)
+                repo()?.untracked_diff(path)
             } else {
-                repo.diff(path, *staged)
+                repo()?.diff(path, *staged)
             }
         }
-        DiffSource::Conflict { path } => std::fs::read(repo.abs_path(path))
+        DiffSource::Conflict { path } => std::fs::read(repo()?.abs_path(path))
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .map_err(Error::Spawn),
-        DiffSource::Commit(c) => repo.show(&c.sha),
+        DiffSource::Commit(c) => repo()?.show(&c.sha),
+        DiffSource::Agent { patch, .. } => Ok(patch.clone()),
     }
 }
 

@@ -16,6 +16,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 
+use tex_agent::CustomAgent;
+
 use crate::assets::Glyph;
 use crate::settings::{Settings, ThemeChoice};
 use crate::workspace::Workspace;
@@ -52,6 +54,8 @@ pub struct SettingsWindow {
     target: Target,
     /// One input per Overleaf Server Pro instance.
     servers: Vec<Entity<InputState>>,
+    /// Name, command and arguments of each agent added by hand.
+    agents: Vec<[Entity<InputState>; 3]>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -74,10 +78,14 @@ impl SettingsWindow {
         let mut this = SettingsWindow {
             target,
             servers: Vec::new(),
+            agents: Vec::new(),
             _subscriptions: subscriptions,
         };
         for url in this.target.get(cx, |s| s.overleaf_servers.clone()) {
             this.push_server(url, window, cx);
+        }
+        for agent in this.target.get(cx, |s| s.custom_agents.clone()) {
+            this.push_agent(agent, window, cx);
         }
         this
     }
@@ -128,6 +136,72 @@ impl SettingsWindow {
             .filter(|s| !s.is_empty())
             .collect();
         self.target.set(cx, |s| s.overleaf_servers = servers);
+    }
+
+    fn push_agent(
+        &mut self,
+        agent: CustomAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
+        let fields = [
+            ("Name", agent.name),
+            ("Command", agent.command),
+            ("Arguments", agent.args.join(" ")),
+        ]
+        .map(|(placeholder, value)| {
+            let input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder(placeholder)
+                    .default_value(value)
+            });
+            self._subscriptions.push(cx.subscribe_in(
+                &input,
+                window,
+                |this, _, ev: &InputEvent, _, cx| {
+                    if let InputEvent::Change = ev {
+                        this.save_agents(cx);
+                    }
+                },
+            ));
+            input
+        });
+        let first = fields[0].clone();
+        self.agents.push(fields);
+        first
+    }
+
+    fn add_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = self.push_agent(CustomAgent::default(), window, cx);
+        input.update(cx, |i, cx| i.focus(window, cx));
+        cx.notify();
+    }
+
+    fn remove_agent(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if ix < self.agents.len() {
+            self.agents.remove(ix);
+            self.save_agents(cx);
+            cx.notify();
+        }
+    }
+
+    fn save_agents(&self, cx: &mut Context<Self>) {
+        let agents: Vec<CustomAgent> = self
+            .agents
+            .iter()
+            .map(|[name, command, args]| CustomAgent {
+                name: name.read(cx).value().trim().to_string(),
+                command: command.read(cx).value().trim().to_string(),
+                args: args
+                    .read(cx)
+                    .value()
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect(),
+            })
+            .filter(|a| !a.command.is_empty())
+            .collect();
+        self.target.set(cx, |s| s.custom_agents = agents);
     }
 
     // ── Pages ────────────────────────────────────────────────────────────
@@ -392,15 +466,144 @@ impl SettingsWindow {
             .child(h_flex().child(add))
     }
 
+    fn agents_page(&self, cx: &mut Context<Self>) -> SettingPage {
+        let t = self.target.clone();
+        let found: Option<Vec<(SharedString, SharedString)>> =
+            t.workspace.upgrade().and_then(|w| {
+                w.read(cx).agent_panel().read(cx).agents().map(|a| {
+                    a.iter()
+                        .map(|a| (a.id.clone().into(), a.name.clone().into()))
+                        .collect()
+                })
+            });
+        let agent = match found {
+            None => SettingItem::new(
+                "Agent",
+                SettingField::render(|_, _, cx| {
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Looking for agents…")
+                }),
+            ),
+            Some(list) if list.is_empty() => SettingItem::new(
+                "Agent",
+                SettingField::render(|_, _, cx| {
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("None found")
+                }),
+            )
+            .description(
+                "Install Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor, OpenCode or \
+                 another agent that supports the Agent Client Protocol, or add one below.",
+            ),
+            Some(list) => {
+                let first = list[0].0.clone();
+                SettingItem::new(
+                    "Agent",
+                    SettingField::dropdown(
+                        list,
+                        {
+                            let t = t.clone();
+                            move |cx| {
+                                t.read(cx, |w| {
+                                    w.agent_panel()
+                                        .read(cx)
+                                        .current()
+                                        .map(|a| SharedString::from(a.id.clone()))
+                                })
+                                .unwrap_or_else(|| first.clone())
+                            }
+                        },
+                        {
+                            let t = t.clone();
+                            move |id: SharedString, cx| {
+                                t.set(cx, |s| s.agent = Some(id.to_string()))
+                            }
+                        },
+                    ),
+                )
+                .description(
+                    "The coding agent of the Agent panel and of the editor's quick edits. It \
+                     uses your own account, signed in from its command line.",
+                )
+            }
+        };
+        let view = cx.entity().downgrade();
+        SettingPage::new("Agents").groups([
+            SettingGroup::new().title("Agent").item(agent),
+            SettingGroup::new().title("Other agents").item(
+                SettingItem::new(
+                    "Your agents",
+                    SettingField::render(move |_, _, cx| {
+                        view.upgrade()
+                            .map(|v| v.read(cx).render_agents(&v).into_any_element())
+                            .unwrap_or_else(|| div().into_any_element())
+                    }),
+                )
+                .description(
+                    "Programs speaking the Agent Client Protocol on their standard input and \
+                     output that TeXoria does not know, with the arguments that start them in \
+                     that mode (e.g. `--acp`).",
+                )
+                .layout(Axis::Vertical),
+            ),
+        ])
+    }
+
+    fn render_agents(&self, view: &Entity<Self>) -> Div {
+        let rows = self
+            .agents
+            .iter()
+            .enumerate()
+            .map(|(ix, [name, command, args])| {
+                let view = view.downgrade();
+                h_flex()
+                    .gap_2()
+                    .child(div().w(px(140.)).child(Input::new(name).small()))
+                    .child(div().flex_1().child(Input::new(command).small()))
+                    .child(div().w(px(120.)).child(Input::new(args).small()))
+                    .child(
+                        Button::new(("remove-agent", ix))
+                            .ghost()
+                            .small()
+                            .icon(Glyph::Close)
+                            .tooltip("Remove")
+                            .on_click(move |_, _, cx| {
+                                let _ = view.update(cx, |this, cx| this.remove_agent(ix, cx));
+                            }),
+                    )
+            });
+        let add = {
+            let view = view.downgrade();
+            Button::new("add-agent")
+                .small()
+                .icon(Glyph::Plus)
+                .label("Add Agent")
+                .on_click(move |_, window, cx| {
+                    let _ = view.update(cx, |this, cx| this.add_agent(window, cx));
+                })
+        };
+        v_flex()
+            .w_full()
+            .gap_2()
+            .children(rows)
+            .child(h_flex().child(add))
+    }
+
     fn trust_page(&self, cx: &App) -> SettingPage {
         let t = self.target.clone();
         let git = t.get(cx, |s| s.trusted_projects.clone());
         let rc = t.get(cx, |s| s.rc_allowed.clone().unwrap_or_default());
+        let agents = t.get(cx, |s| s.agent_projects.clone());
         SettingPage::new("Trusted Projects")
             .resettable(false)
             .description(
-                "A project's Git configuration and latexmkrc can run programs, so TeXoria asks \
-                 before letting them. Removing a folder makes TeXoria ask again.",
+                "A project's Git configuration and latexmkrc can run programs, and coding \
+                 agents read and change its files, so TeXoria asks before letting them. \
+                 Removing a folder makes TeXoria ask again.",
             )
             .groups([
                 SettingGroup::new().title("Git").item(path_list(
@@ -416,13 +619,22 @@ impl SettingsWindow {
                     "rc",
                     rc,
                     "No project lets its latexmkrc run yet.",
-                    move |dir, cx| {
-                        t.set(cx, |s| {
-                            if let Some(dirs) = &mut s.rc_allowed {
-                                dirs.retain(|p| *p != dir);
-                            }
-                        })
+                    {
+                        let t = t.clone();
+                        move |dir, cx| {
+                            t.set(cx, |s| {
+                                if let Some(dirs) = &mut s.rc_allowed {
+                                    dirs.retain(|p| *p != dir);
+                                }
+                            })
+                        }
                     },
+                )),
+                SettingGroup::new().title("Coding agents").item(path_list(
+                    "agents",
+                    agents,
+                    "No project lets coding agents work in it yet.",
+                    move |dir, cx| t.set(cx, |s| s.agent_projects.retain(|p| *p != dir)),
                 )),
             ])
     }
@@ -512,6 +724,7 @@ impl Render for SettingsWindow {
             self.editor_page(cx),
             self.typesetting_page(cx),
             self.git_page(cx),
+            self.agents_page(cx),
             self.trust_page(cx),
         ];
         let theme = cx.theme();

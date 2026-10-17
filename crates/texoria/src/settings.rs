@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tex_agent::CustomAgent;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -39,6 +40,12 @@ pub struct Settings {
     pub spell_words: Vec<String>,
     /// Languages chosen by hand, per file.
     pub spell_languages: Vec<SpellLanguage>,
+    /// Id of the coding agent to use (see `tex_agent::AgentSpec::id`).
+    pub agent: Option<String>,
+    /// Agents added by hand, for those TeXoria does not know.
+    pub custom_agents: Vec<CustomAgent>,
+    /// Project directories coding agents may work in.
+    pub agent_projects: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +113,9 @@ impl Default for Settings {
             spell_check: true,
             spell_words: Vec::new(),
             spell_languages: Vec::new(),
+            agent: None,
+            custom_agents: Vec::new(),
+            agent_projects: Vec::new(),
         }
     }
 }
@@ -178,6 +188,17 @@ impl Settings {
         }
     }
 
+    /// Whether coding agents may work in `dir` (exact path, like trust).
+    pub fn allows_agents(&self, dir: &Path) -> bool {
+        self.agent_projects.iter().any(|p| p == dir)
+    }
+
+    pub fn allow_agents(&mut self, dir: PathBuf) {
+        if !self.allows_agents(&dir) {
+            self.agent_projects.push(dir);
+        }
+    }
+
     /// The language chosen for `file`, if any (exact path, like trust).
     pub fn spell_language(&self, file: &Path) -> Option<&str> {
         self.spell_languages
@@ -246,6 +267,19 @@ mod tests {
         assert!(s.allows_rc(Path::new("/p/paper")));
         assert!(!s.allows_rc(Path::new("/p/paper/sub")));
         assert!(!s.is_trusted(Path::new("/p/paper")));
+    }
+
+    #[test]
+    fn agent_permission_is_per_directory() {
+        let mut s = Settings::default();
+        s.allow_agents(PathBuf::from("/p/paper"));
+        s.allow_agents(PathBuf::from("/p/paper"));
+        assert_eq!(s.agent_projects.len(), 1);
+        assert!(s.allows_agents(Path::new("/p/paper")));
+        assert!(!s.allows_agents(Path::new("/p/paper/sub")));
+        assert!(!s.is_trusted(Path::new("/p/paper")));
+        let back = Settings::parse(&toml::to_string_pretty(&s).unwrap());
+        assert!(back.allows_agents(Path::new("/p/paper")));
     }
 
     #[test]

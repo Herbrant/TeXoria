@@ -88,6 +88,19 @@ glyphs! {
     NewFolder => "folder-plus",
     Settings => "settings",
     Languages => "languages",
+    Sparkles => "sparkles",
+    Stop => "square",
+    Send => "send-horizontal",
+    NewChat => "message-square-plus",
+    Edit => "pencil",
+    Read => "eye",
+    Search => "search",
+    Terminal => "terminal",
+    Thought => "brain",
+    Plan => "list-checks",
+    Tool => "wrench",
+    Web => "globe",
+    Changes => "file-diff",
 }
 
 pub struct Assets;

@@ -1,5 +1,7 @@
 //! TeXoria — an elegant, fast LaTeX editor.
 
+mod agent_panel;
+mod agent_tools;
 mod assets;
 mod atomic;
 mod diff_view;
@@ -48,6 +50,10 @@ actions!(
         OpenFromOverleaf,
         SyncOverleaf,
         OpenSettings,
+        ToggleAgent,
+        EditWithAgent,
+        FixWithAgent,
+        StopAgent,
         Quit,
     ]
 );
@@ -72,6 +78,8 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-w", CloseTab, None),
         KeyBinding::new("secondary-shift-g", ShowSourceControl, None),
         KeyBinding::new("secondary-,", OpenSettings, None),
+        KeyBinding::new("secondary-shift-k", ToggleAgent, None),
+        KeyBinding::new("secondary-k", EditWithAgent, None),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
 }
@@ -109,6 +117,13 @@ fn set_menus(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action("Light/Dark", ToggleTheme),
         ]),
+        Menu::new("Agent").items([
+            MenuItem::action("Agent", ToggleAgent),
+            MenuItem::separator(),
+            MenuItem::action("Edit Selection with Instructions…", EditWithAgent),
+            MenuItem::action("Fix Typesetting Problems", FixWithAgent),
+            MenuItem::action("Stop", StopAgent),
+        ]),
         Menu::new("Git").items([
             MenuItem::action("Source Control", ShowSourceControl),
             MenuItem::separator(),
@@ -126,6 +141,14 @@ fn set_menus(cx: &mut App) {
 }
 
 fn main() {
+    // Started by a coding agent: relay its MCP connection to the app's tools.
+    if std::env::args_os().nth(1).as_deref() == Some(tex_agent::mcp::BRIDGE_FLAG.as_ref()) {
+        if let Err(e) = tex_agent::mcp::bridge() {
+            eprintln!("texoria {}: {e}", tex_agent::mcp::BRIDGE_FLAG);
+            std::process::exit(1);
+        }
+        return;
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let path = std::env::args_os().nth(1).map(PathBuf::from);
 

@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, mpsc};
 use std::time::Duration;
 
 use gpui_kit::component::highlighter::{Diagnostic as EditorDiagnostic, DiagnosticSeverity};
@@ -11,6 +11,7 @@ use gpui_kit::component::input::{
     Editor, EditorState, Input, InputEvent, InputState, Position, RopeExt, TabSize,
 };
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 use gpui_kit::component::{
@@ -20,6 +21,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use tex_agent::mcp::{self, ToolResult};
+use tex_agent::{acp, prompt::Rewrite};
 use tex_compile::{Compiler, Engine, Event as CompileEvent, Job, Severity, Status};
 use tex_git::{Cancel, Credential, Git};
 use tex_log::Diagnostic;
@@ -27,6 +30,10 @@ use tex_project::{Project, ProjectOutlineItem, files};
 use tex_spell::{Source, Speller, catalog};
 use tex_syntax::OutlineKind;
 
+use crate::agent_panel::{
+    AgentOp, AgentPanel, AgentPanelEvent, Prompt, RewriteSelection, text_block,
+};
+use crate::agent_tools::{AppTools, ToolCall};
 use crate::assets::Glyph;
 use crate::atomic;
 use crate::diff_view::{DiffSource, DiffView, DiffViewEvent};
@@ -40,10 +47,11 @@ use crate::settings_window::SettingsWindow;
 use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspelling, Spell};
 use crate::theme::{self, ThemeExt};
 use crate::{
-    CancelTypeset, CloneRepository, CloseTab, Commit, Fetch, ForwardSearch, NewBranch, Open,
-    OpenFromOverleaf, OpenSettings, Pull, Push, Save, ShowSourceControl, SyncOverleaf,
-    ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme,
-    Typeset, ZoomIn, ZoomOut, ZoomToFit,
+    CancelTypeset, CloneRepository, CloseTab, Commit, EditWithAgent, Fetch, FixWithAgent,
+    ForwardSearch, NewBranch, Open, OpenFromOverleaf, OpenSettings, Pull, Push, Save,
+    ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent, ToggleDiagnostics, ToggleFiles,
+    ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme, Typeset, ZoomIn, ZoomOut,
+    ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -78,6 +86,13 @@ enum Sidebar {
     Outline,
     Files,
     SourceControl,
+    Agent,
+}
+
+/// An agent's `typeset` call, answered by the first run that starts after it.
+struct ToolWaiter {
+    reply: mpsc::Sender<ToolResult>,
+    after: u64,
 }
 
 pub struct Workspace {
@@ -99,6 +114,14 @@ pub struct Workspace {
     navigator: Sidebar,
     files: Entity<FileTree>,
     git: Entity<GitPanel>,
+    agent: Entity<AgentPanel>,
+    /// An agent is working: the editors are read-only meanwhile.
+    agent_busy: bool,
+    /// Serves TeXoria's tools to the agents.
+    _mcp: Option<mcp::Server>,
+    tool_waiters: Vec<ToolWaiter>,
+    /// The id of the last typesetting run started.
+    last_run: u64,
     /// The diff tab, shown instead of the editor while `diff_active`.
     diff: Option<Entity<DiffView>>,
     diff_active: bool,
@@ -116,6 +139,7 @@ pub struct Workspace {
     spell: Spell,
     _live: Task<()>,
     _compile_events: Task<()>,
+    _tool_calls: Task<()>,
     _diff_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
@@ -126,6 +150,7 @@ impl Workspace {
         let pdf = cx.new(|cx| PdfPane::new(pdfium_dirs(), cx));
         let files = cx.new(FileTree::new);
         let git = cx.new(|cx| GitPanel::new(window, cx));
+        let agent = cx.new(|cx| AgentPanel::new(window, cx));
         theme::apply(settings.theme, Some(window), cx);
         let mut subscriptions = vec![
             cx.subscribe_in(
@@ -139,6 +164,7 @@ impl Workspace {
             ),
             cx.subscribe_in(&git, window, Self::on_git_event),
             cx.subscribe_in(&files, window, Self::on_file_tree_event),
+            cx.subscribe_in(&agent, window, Self::on_agent_event),
             // Coming back to the window: pick up what changed meanwhile
             // (a `git pull` in a terminal, another editor).
             cx.observe_window_activation(window, |this, window, cx| {
@@ -178,6 +204,33 @@ impl Workspace {
             .and_then(|label| engines.iter().position(|e| &e.label() == label))
             .unwrap_or(0);
 
+        // The agents reach TeXoria's tools through `texoria --mcp-bridge`.
+        let (tools, tool_calls) = AppTools::new();
+        let server = mcp::Server::start(Arc::new(tools))
+            .inspect_err(|e| log::warn!("starting the tool server for agents: {e}"))
+            .ok();
+        let bridge = std::env::current_exe().ok();
+        let configs = server
+            .iter()
+            .zip(bridge)
+            .map(|(s, exe)| s.stdio_config(&exe))
+            .collect();
+        let (preferred, custom) = (settings.agent.clone(), settings.custom_agents.clone());
+        agent.update(cx, |a, cx| {
+            a.set_mcp(configs);
+            a.configure(preferred, custom, cx);
+        });
+        let tool_task = cx.spawn(async move |this, cx| {
+            while let Ok(call) = tool_calls.recv().await {
+                if this
+                    .update(cx, |this, cx| this.on_tool_call(call, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
         let spell = Spell::new(&settings.spell_words);
         let mut this = Workspace {
             settings,
@@ -197,6 +250,11 @@ impl Workspace {
             navigator: Sidebar::Outline,
             files,
             git,
+            agent,
+            agent_busy: false,
+            _mcp: server,
+            tool_waiters: Vec::new(),
+            last_run: 0,
             diff: None,
             diff_active: false,
             cloning: None,
@@ -210,6 +268,7 @@ impl Workspace {
             spell,
             _live: Task::ready(()),
             _compile_events: Task::ready(()),
+            _tool_calls: tool_task,
             _diff_subscription: None,
             _subscriptions: subscriptions,
         };
@@ -226,6 +285,10 @@ impl Workspace {
         let dark = this.was_dark;
         this.pdf.update(cx, |pdf, cx| pdf.set_dark(dark, cx));
         this
+    }
+
+    pub(crate) fn agent_panel(&self) -> &Entity<AgentPanel> {
+        &self.agent
     }
 
     fn configure_git(&mut self, cx: &mut Context<Self>) {
@@ -296,6 +359,15 @@ impl Workspace {
             self.untrusted_rc = !job.allow_project_rc && job.has_project_rc();
             self.typeset(cx);
         }
+        let s = &self.settings;
+        if (&s.agent, &s.custom_agents) != (&old.agent, &old.custom_agents) {
+            let (preferred, custom) = (s.agent.clone(), s.custom_agents.clone());
+            self.agent
+                .update(cx, |a, cx| a.configure(preferred, custom, cx));
+        }
+        if self.settings.agent_projects != old.agent_projects {
+            self.sync_agent(cx);
+        }
         if self.settings.theme != old.theme {
             theme::apply(self.settings.theme, Some(window), cx);
             self.sync_theme(cx);
@@ -319,6 +391,8 @@ impl Workspace {
 
     /// Open the Settings window, or bring it to the front.
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Its Agents page lists them.
+        self.agent.update(cx, |a, cx| a.activate(cx));
         if let Some(handle) = self.settings_window
             && handle
                 .update(cx, |_, window, _| window.activate_window())
@@ -417,6 +491,7 @@ impl Workspace {
             self.untrusted_rc = !job.allow_project_rc && job.has_project_rc();
             self.close_diff(cx);
             self.sync_git(cx);
+            self.sync_agent(cx);
             self.files
                 .update(cx, |f, cx| f.set_project(Some(root.clone()), cx));
             // Show a previous build right away, if any.
@@ -478,7 +553,9 @@ impl Workspace {
             project: self.project.clone(),
             fixups: self.fixups.clone(),
         });
+        let busy = self.agent_busy;
         editor.update(cx, |state, cx| {
+            state.set_readonly(busy, cx);
             state.lsp_mut().completion_provider = Some(provider);
             state.set_editor_paddings(Edges {
                 top: px(18.),
@@ -838,6 +915,16 @@ impl Workspace {
         let Some(repo) = self.git.read(cx).repo().cloned() else {
             return;
         };
+        self.show_diff(Some(repo), source, window, cx);
+    }
+
+    fn show_diff(
+        &mut self,
+        repo: Option<tex_git::Repo>,
+        source: DiffSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match &self.diff {
             Some(d) => d.update(cx, |d, cx| d.show(repo, source, cx)),
             None => {
@@ -880,6 +967,11 @@ impl Workspace {
                 let split = *split;
                 self.update_settings(|s| s.diff_split = split, window, cx);
             }
+            DiffViewEvent::UndoAgent(path) => {
+                let paths = path.clone().map(|p| vec![p]);
+                self.run_agent_op(AgentOp::Undo(paths), window, cx)
+            }
+            DiffViewEvent::KeepAgent => self.agent.update(cx, |a, cx| a.keep(cx)),
             DiffViewEvent::Close => self.close_diff(cx),
         }
     }
@@ -1268,6 +1360,7 @@ impl Workspace {
                 self.files.update(cx, |f, cx| f.refresh(cx));
             }
             Sidebar::SourceControl => {}
+            Sidebar::Agent => self.agent.update(cx, |a, cx| a.activate(cx)),
         }
         cx.notify();
     }
@@ -1330,18 +1423,22 @@ impl Workspace {
 
     fn on_compile_event(&mut self, event: CompileEvent, cx: &mut Context<Self>) {
         match event {
-            CompileEvent::Started { .. } => {
+            CompileEvent::Started { id, .. } => {
                 self.state = CompileState::Running;
+                self.last_run = id;
             }
-            CompileEvent::SpawnFailed { error, .. } => {
+            CompileEvent::SpawnFailed { id, error } => {
+                self.answer_typeset(id, ToolResult::error(format!("The engine failed: {error}")));
                 self.state = CompileState::Failed(error.into());
             }
             CompileEvent::Finished(out) => {
                 // A run for a project that is no longer open.
                 if self.root.as_ref() != Some(&out.job.root_file) {
+                    self.answer_typeset(out.id, ToolResult::error("Another document was opened."));
                     return;
                 }
                 if out.status == Status::Cancelled {
+                    self.answer_typeset(out.id, ToolResult::error("Typesetting was stopped."));
                     self.state = CompileState::Idle;
                     cx.notify();
                     return;
@@ -1371,6 +1468,9 @@ impl Workspace {
                     })
                     .collect();
                 self.apply_diagnostics(cx);
+                let report = self.typeset_report(out.status, out.elapsed);
+                self.answer_typeset(out.id, ToolResult::ok(report));
+                self.agent.update(cx, |a, cx| a.set_errors(errors, cx));
                 if let Some(pdf) = out.pdf {
                     self.pdf.update(cx, |p, cx| p.load(pdf, out.synctex, cx));
                 }
@@ -1426,6 +1526,364 @@ impl Workspace {
                 cx.notify();
             });
         }
+    }
+
+    // ── Coding agents ────────────────────────────────────────────────────
+
+    fn project_dir(&self) -> Option<PathBuf> {
+        self.root
+            .as_ref()
+            .and_then(|r| r.parent())
+            .map(Path::to_path_buf)
+    }
+
+    /// Point the Agent panel at the current project.
+    fn sync_agent(&mut self, cx: &mut Context<Self>) {
+        let dir = self.project_dir();
+        let allowed = dir.as_ref().is_some_and(|d| self.settings.allows_agents(d));
+        let root = self.root.clone();
+        self.agent
+            .update(cx, |a, cx| a.set_project(dir, root, allowed, cx));
+    }
+
+    fn on_agent_event(
+        &mut self,
+        _: &Entity<AgentPanel>,
+        ev: &AgentPanelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match ev {
+            AgentPanelEvent::Request(op) => self.run_agent_op(op.clone(), window, cx),
+            AgentPanelEvent::Busy(busy) => self.set_agent_busy(*busy, window, cx),
+            AgentPanelEvent::FilesChanged => {
+                self.reload_from_disk(window, cx);
+                self.files.update(cx, |f, cx| f.refresh(cx));
+                self.git.update(cx, |g, cx| g.refresh(cx));
+            }
+            AgentPanelEvent::Review { patch, open } => {
+                self.show_agent_review(patch.clone(), *open, window, cx)
+            }
+            AgentPanelEvent::Choose(id) => {
+                let id = id.clone();
+                self.update_settings(|s| s.agent = Some(id), window, cx);
+            }
+            AgentPanelEvent::Allow => {
+                if let Some(dir) = self.project_dir() {
+                    self.update_settings(|s| s.allow_agents(dir), window, cx);
+                }
+            }
+            AgentPanelEvent::FixErrors => self.fix_with_agent(window, cx),
+            AgentPanelEvent::Open { path, line } => self.reveal(
+                path.clone(),
+                line.unwrap_or(1).saturating_sub(1),
+                window,
+                cx,
+            ),
+        }
+    }
+
+    /// The agent works on files: they must be saved first.
+    fn run_agent_op(&mut self, op: AgentOp, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.save_all(cx) {
+            return;
+        }
+        match op {
+            AgentOp::Chat(text) => {
+                let prompt = self.chat_prompt(text, cx);
+                self.agent.update(cx, |a, cx| a.send(prompt, cx));
+            }
+            AgentOp::Send(prompt) => self.agent.update(cx, |a, cx| a.send(prompt, cx)),
+            AgentOp::Undo(paths) => {
+                self.agent.update(cx, |a, cx| a.undo(paths, cx));
+                self.reload_from_disk(window, cx);
+            }
+        }
+    }
+
+    /// A chat message, with the open file and its selection.
+    fn chat_prompt(&self, text: String, cx: &App) -> Prompt {
+        let mut prompt = Prompt::new(text.clone(), text);
+        if self.diff_active {
+            return prompt;
+        }
+        let Some(b) = self.buffers.get(self.active) else {
+            return prompt;
+        };
+        let rel = self.relative(&b.path);
+        prompt
+            .blocks
+            .push(acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                rel.display().to_string(),
+                file_uri(&b.path),
+            )));
+        if let Some((first, last, selected)) = selection(&b.editor, cx) {
+            prompt.blocks.push(text_block(tex_agent::prompt::selection(
+                &rel, first, last, &selected,
+            )));
+            prompt.caption =
+                Some(format!("With the selection in {}", lines_label(&rel, first, last)).into());
+        }
+        prompt
+    }
+
+    fn relative(&self, path: &Path) -> PathBuf {
+        self.project_dir()
+            .and_then(|d| path.strip_prefix(d).ok().map(Path::to_path_buf))
+            .unwrap_or_else(|| path.to_path_buf())
+    }
+
+    fn set_agent_busy(&mut self, busy: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if busy {
+            // The agent reads the files from disk.
+            self.save_all(cx);
+        }
+        self.agent_busy = busy;
+        for b in &self.buffers {
+            b.editor
+                .update(cx, |state, cx| state.set_readonly(busy, cx));
+        }
+        if !busy {
+            self.reload_from_disk(window, cx);
+            self.files.update(cx, |f, cx| f.refresh(cx));
+            self.git.update(cx, |g, cx| g.refresh(cx));
+        }
+        cx.notify();
+    }
+
+    fn show_agent_review(
+        &mut self,
+        patch: String,
+        open: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let showing = self.diff.as_ref().is_some_and(|d| d.read(cx).is_agent());
+        if patch.is_empty() {
+            if showing {
+                self.close_diff(cx);
+            }
+            return;
+        }
+        let Some(dir) = self.project_dir() else {
+            return;
+        };
+        if open || showing {
+            let active = self.diff_active;
+            self.show_diff(None, DiffSource::Agent { dir, patch }, window, cx);
+            // A refresh does not bring the tab to the front.
+            self.diff_active = open || active;
+        }
+    }
+
+    /// Ask the agent to rewrite the selection.
+    fn rewrite_selection(&mut self, how: Rewrite, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(b) = self.buffers.get(self.active).filter(|_| !self.diff_active) else {
+            return;
+        };
+        let Some((first, last, text)) = selection(&b.editor, cx) else {
+            window.push_notification(Notification::info("Select the passage to edit first."), cx);
+            return;
+        };
+        let rel = self.relative(&b.path);
+        let place = lines_label(&rel, first, last);
+        let (display, caption) = match &how {
+            Rewrite::Custom(text) => (text.clone(), Some(place)),
+            preset => (format!("{} — {place}", preset.label()), None),
+        };
+        let prompt = Prompt {
+            display: display.into(),
+            caption: caption.map(Into::into),
+            blocks: vec![text_block(tex_agent::prompt::rewrite(
+                &rel, first, last, &text, &how,
+            ))],
+        };
+        self.show_agent(window, cx);
+        self.run_agent_op(AgentOp::Send(prompt), window, cx);
+    }
+
+    /// Ask for the instruction, then rewrite the selection with it.
+    fn prompt_edit_with_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_selection = self
+            .buffers
+            .get(self.active)
+            .is_some_and(|b| selection(&b.editor, cx).is_some());
+        if self.diff_active || !has_selection {
+            window.push_notification(Notification::info("Select the passage to edit first."), cx);
+            return;
+        }
+        let input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Translate into English, add an example…")
+        });
+        let weak = cx.entity().downgrade();
+        let focus = input.focus_handle(cx);
+        let body = input.clone();
+        git_panel::open_form(
+            window,
+            cx,
+            "Edit with the Agent",
+            "Edit",
+            Some(focus),
+            move |_, cx| {
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("What should the agent do with the selected passage?"),
+                    )
+                    .child(Input::new(&body))
+                    .into_any_element()
+            },
+            move |window, cx| {
+                let text = input.read(cx).value().trim().to_string();
+                if text.is_empty() {
+                    return false;
+                }
+                weak.update(cx, |this, cx| {
+                    this.rewrite_selection(Rewrite::Custom(text), window, cx)
+                })
+                .ok();
+                true
+            },
+        );
+    }
+
+    /// Ask the agent to fix the last run's errors (or warnings).
+    fn fix_with_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dir) = self.project_dir() else {
+            return;
+        };
+        let problems: Vec<Diagnostic> = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity != Severity::Info)
+            .cloned()
+            .collect();
+        if problems.is_empty() {
+            return;
+        }
+        let errors = problems
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .count();
+        let display = if errors > 0 {
+            format!("Fix the {errors} typesetting error{}", plural(errors))
+        } else {
+            format!(
+                "Fix the {} warning{}",
+                problems.len(),
+                plural(problems.len())
+            )
+        };
+        let prompt = Prompt::new(display, tex_agent::prompt::fix_errors(&dir, &problems));
+        self.show_agent(window, cx);
+        self.run_agent_op(AgentOp::Send(prompt), window, cx);
+    }
+
+    fn show_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_sidebar(Sidebar::Agent, cx);
+        self.agent.update(cx, |a, cx| a.focus_composer(window, cx));
+    }
+
+    /// One of TeXoria's tools, called by an agent.
+    fn on_tool_call(&mut self, call: ToolCall, cx: &mut Context<Self>) {
+        let reply = |r: ToolResult| {
+            let _ = call.reply.send(r);
+        };
+        match call.name.as_str() {
+            "typeset" => {
+                if self.root.is_none() {
+                    return reply(ToolResult::error("No document is open."));
+                }
+                if self.compiler.is_none() {
+                    return reply(ToolResult::error(
+                        "No TeX engine is installed, so the document cannot be typeset.",
+                    ));
+                }
+                if !self.save_all(cx) {
+                    return reply(ToolResult::error("TeXoria could not save the files."));
+                }
+                self.tool_waiters.push(ToolWaiter {
+                    reply: call.reply.clone(),
+                    after: self.last_run,
+                });
+                self.typeset(cx);
+            }
+            "problems" => reply(ToolResult::ok(self.problems_report())),
+            "outline" => reply(ToolResult::ok(self.outline_report())),
+            other => reply(ToolResult::error(format!("Unknown tool: {other}"))),
+        }
+    }
+
+    /// Answer the `typeset` calls made before run `id` started.
+    fn answer_typeset(&mut self, id: u64, result: ToolResult) {
+        let (done, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.tool_waiters)
+            .into_iter()
+            .partition(|w| id > w.after);
+        self.tool_waiters = waiting;
+        for w in done {
+            let _ = w.reply.send(ToolResult {
+                text: result.text.clone(),
+                is_error: result.is_error,
+            });
+        }
+    }
+
+    fn typeset_report(&self, status: Status, elapsed: Duration) -> String {
+        let head = match status {
+            Status::Success => format!("Typeset in {:.1} s.", elapsed.as_secs_f32()),
+            Status::Failed => "Typesetting failed.".to_string(),
+            Status::Cancelled => "Typesetting was stopped.".to_string(),
+        };
+        format!("{head}\n{}", self.problems_text())
+    }
+
+    fn problems_report(&self) -> String {
+        let head = match &self.state {
+            CompileState::Idle => "The document has not been typeset yet.".to_string(),
+            CompileState::Running => {
+                "Typesetting is running; the problems of the previous run:".to_string()
+            }
+            CompileState::Done { status, .. } => match status {
+                Status::Success => "The last run succeeded.".to_string(),
+                _ => "The last run failed.".to_string(),
+            },
+            CompileState::Failed(msg) => msg.to_string(),
+        };
+        format!("{head}\n{}", self.problems_text())
+    }
+
+    fn problems_text(&self) -> String {
+        let dir = self.project_dir().unwrap_or_default();
+        let problems: Vec<Diagnostic> = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity != Severity::Info)
+            .cloned()
+            .collect();
+        tex_agent::prompt::format_diagnostics(&dir, &problems)
+    }
+
+    fn outline_report(&self) -> String {
+        if self.outline.is_empty() {
+            return "The document has no sections, figures or tables yet.".to_string();
+        }
+        self.outline
+            .iter()
+            .map(|o| {
+                let indent = "  ".repeat(o.item.kind.depth().min(6) as usize);
+                format!(
+                    "{indent}{:?}: {} ({}:{})",
+                    o.item.kind,
+                    o.item.title,
+                    self.relative(&o.file).display(),
+                    o.item.line + 1
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     // ── Spell checking ───────────────────────────────────────────────────
@@ -1706,6 +2164,22 @@ impl Workspace {
                             .tooltip("Source control (⇧⌘G)")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.toggle_sidebar(Sidebar::SourceControl, cx)
+                            })),
+                    )
+                })
+                .when(has_project, |d| {
+                    d.child(
+                        Button::new("toggle-agent")
+                            .ghost()
+                            .small()
+                            .icon(Glyph::Sparkles)
+                            .tooltip("Agent (⇧⌘K)")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if this.show_sidebar && this.sidebar == Sidebar::Agent {
+                                    this.toggle_sidebar(Sidebar::Agent, cx);
+                                } else {
+                                    this.show_agent(window, cx);
+                                }
                             })),
                     )
                 })
@@ -2128,6 +2602,42 @@ impl Workspace {
             )
     }
 
+    /// Editing is paused while the agent works.
+    fn render_agent_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let name = self
+            .agent
+            .read(cx)
+            .agent_name()
+            .unwrap_or_else(|| "The agent".into());
+        h_flex()
+            .gap_3()
+            .px_3()
+            .py_1p5()
+            .text_sm()
+            .bg(theme.primary.opacity(0.10))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                Icon::new(Glyph::Sparkles)
+                    .xsmall()
+                    .text_color(theme.primary),
+            )
+            .child(div().flex_1().text_color(theme.foreground).child(format!(
+                "{name} is working: editing is paused until it is done."
+            )))
+            .child(
+                Button::new("agent-banner-stop")
+                    .xsmall()
+                    .outline()
+                    .icon(Glyph::Stop)
+                    .label("Stop")
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.agent.update(cx, |a, cx| a.cancel(cx))),
+                    ),
+            )
+    }
+
     fn render_diagnostics(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let root_dir = self
@@ -2191,6 +2701,7 @@ impl Workspace {
             })
             .collect::<Vec<_>>();
         let empty = rows.is_empty();
+        let fixable = !empty && self.project_dir().is_some() && !self.agent_busy;
 
         v_flex()
             .h(px(170.))
@@ -2205,6 +2716,19 @@ impl Workspace {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.muted_foreground)
                     .child(div().flex_1().child("PROBLEMS"))
+                    .when(fixable, |d| {
+                        d.child(
+                            Button::new("fix-with-agent")
+                                .ghost()
+                                .xsmall()
+                                .icon(Glyph::Sparkles)
+                                .label("Fix with Agent")
+                                .tooltip("Ask the coding agent to fix these problems")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.fix_with_agent(window, cx)
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("close-diag")
                             .ghost()
@@ -2602,11 +3126,17 @@ impl Render for Workspace {
                 None => Editor::new(&self.buffers[self.active].editor)
                     .context_menu({
                         let b = &self.buffers[self.active];
-                        spell::context_menu(
+                        let spelling = spell::context_menu(
                             b.editor.clone(),
                             b.spell.underlines.clone(),
                             b.spell.speller.clone(),
-                        )
+                        );
+                        let editor = b.editor.clone();
+                        move |menu, window, cx| {
+                            let selected = !editor.read(cx).selected_range().is_empty();
+                            let menu = if selected { agent_menu(menu) } else { menu };
+                            spelling(menu, window, cx)
+                        }
                     })
                     .bordered(false)
                     .h(relative(1.))
@@ -2619,6 +3149,7 @@ impl Render for Workspace {
                 .size_full()
                 .bg(theme.background)
                 .when(self.untrusted_rc, |d| d.child(self.render_trust_banner(cx)))
+                .when(self.agent_busy, |d| d.child(self.render_agent_banner(cx)))
                 .when(self.buffers.len() > 1 || self.diff.is_some(), |d| {
                     d.child(self.render_tabs(cx))
                 })
@@ -2631,13 +3162,14 @@ impl Render for Workspace {
             let sidebar = match self.sidebar {
                 Sidebar::Outline | Sidebar::Files => self.render_navigator(cx).into_any_element(),
                 Sidebar::SourceControl => self.git.clone().into_any_element(),
+                Sidebar::Agent => self.agent.clone().into_any_element(),
             };
 
             h_resizable("main")
                 .child(
                     resizable_panel()
                         .size(px(260.))
-                        .size_range(px(160.)..px(460.))
+                        .size_range(px(160.)..px(640.))
                         .visible(self.show_sidebar)
                         .child(sidebar),
                 )
@@ -2731,6 +3263,27 @@ impl Render for Workspace {
                 }
             }))
             .on_action(cx.listener(|this, _: &CloseTab, _, cx| this.close_tab(cx)))
+            .on_action(cx.listener(|this, _: &ToggleAgent, window, cx| {
+                if this.show_sidebar && this.sidebar == Sidebar::Agent {
+                    this.toggle_sidebar(Sidebar::Agent, cx);
+                } else {
+                    this.show_agent(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &EditWithAgent, window, cx| {
+                this.prompt_edit_with_agent(window, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &FixWithAgent, window, cx| this.fix_with_agent(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &StopAgent, _, cx| {
+                    this.agent.update(cx, |a, cx| a.cancel(cx))
+                }),
+            )
+            .on_action(cx.listener(|this, a: &RewriteSelection, window, cx| {
+                this.rewrite_selection(a.how.clone(), window, cx)
+            }))
             .on_action(cx.listener(|this, a: &ReplaceMisspelling, window, cx| {
                 this.replace_misspelling(a, window, cx)
             }))
@@ -2747,6 +3300,66 @@ impl Render for Workspace {
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+/// The editor's right-click menu gets the agent's edits when text is selected.
+fn agent_menu(menu: NativeMenu) -> NativeMenu {
+    let mut edits = NativeMenu::new();
+    for how in Rewrite::PRESETS {
+        let label = how.label().to_string();
+        edits = edits.menu(label, Box::new(RewriteSelection { how }));
+    }
+    let edits = edits
+        .separator()
+        .menu("Edit with Instructions…", Box::new(EditWithAgent));
+    menu.submenu("Agent", edits).separator()
+}
+
+/// The selection of `editor`: its first and last lines (1-based) and text.
+fn selection(editor: &Entity<EditorState>, cx: &App) -> Option<(u32, u32, String)> {
+    let state = editor.read(cx);
+    let range = state.selected_range();
+    if range.is_empty() {
+        return None;
+    }
+    let text = state.text();
+    let first = text.offset_to_position(range.start).line + 1;
+    let end = text.offset_to_position(range.end);
+    // A selection of whole lines ends at the start of the next one.
+    let last = if end.character == 0 && end.line + 1 > first {
+        end.line
+    } else {
+        end.line + 1
+    };
+    Some((first, last, text.slice(range).to_string()))
+}
+
+/// `main.tex, lines 4–9`.
+fn lines_label(file: &Path, first: u32, last: u32) -> String {
+    if first == last {
+        format!("{}, line {first}", file.display())
+    } else {
+        format!("{}, lines {first}–{last}", file.display())
+    }
+}
+
+/// A `file://` URI, with what must be escaped in a path escaped.
+fn file_uri(path: &Path) -> String {
+    let p = path.to_string_lossy().replace('\\', "/");
+    let mut out = String::from(if p.starts_with('/') {
+        "file://"
+    } else {
+        "file:///"
+    });
+    for b in p.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// An empty file, failing if `path` exists (and creating its directories).

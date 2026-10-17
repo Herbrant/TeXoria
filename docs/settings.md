@@ -29,12 +29,20 @@ Open the Settings window with ⌘, (Ctrl+,). Every change applies right away.
 | Network timeout | 120 s | Stop a fetch, pull or push after this many seconds (0: never). |
 | Overleaf Server Pro | | Your own Overleaf instances, which must use HTTPS. |
 
+## Agents
+
+| Setting | Default | |
+|---|---|---|
+| Agent | First found | The coding agent of the Agent panel and of the quick edits (see [Coding agents](agents.md)). |
+| Other agents | | Agents TeXoria does not know: a name, the command and the arguments that start it in ACP mode. |
+
 ## Trusted projects
 
-A project's Git configuration and its `latexmkrc` can run programs, so TeXoria asks before
-letting them (see [Git](git.md#trusting-a-project) and [latexmkrc](preview.md#latexmkrc)). This
-page lists the folders you allowed, separately for Git and for `latexmkrc`. Remove a folder and
-TeXoria will ask again.
+A project's Git configuration and its `latexmkrc` can run programs, and coding agents read and
+change its files, so TeXoria asks before letting them (see [Git](git.md#trusting-a-project),
+[latexmkrc](preview.md#latexmkrc) and [Coding agents](agents.md#the-agent-panel)). This page
+lists the folders you allowed, separately for Git, for `latexmkrc` and for agents. Remove a
+folder and TeXoria will ask again.
 
 ## Where files are stored
 

@@ -8,6 +8,7 @@
 - [Typesetting and preview](preview.md): live preview, SyncTeX, engines
 - [Git](git.md): source control built into the editor
 - [Overleaf](overleaf.md): work on Overleaf projects offline
+- [Coding agents](agents.md): Claude Code, Codex, Gemini CLI and others in the editor
 - [Settings](settings.md): every option, trusted projects, where files are stored
 - [Keyboard shortcuts](keyboard-shortcuts.md)
 - [Troubleshooting](troubleshooting.md)

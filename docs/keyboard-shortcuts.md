@@ -16,6 +16,9 @@
 | Files | ⌘⇧E | Ctrl+Shift+E |
 | Source control | ⌘⇧G | Ctrl+Shift+G |
 | Problems panel | ⌘⇧M | Ctrl+Shift+M |
+| Agent panel | ⌘⇧K | Ctrl+Shift+K |
+| Edit the selection with the agent | ⌘K | Ctrl+K |
+| Send a message to the agent (⇧↵: new line) | ↵ | Enter |
 | Commit (in the commit message box) | ⌘↵ | Ctrl+Enter |
 | Soft wrap (current tab) | ⌥Z | Alt+Z |
 | Spelling corrections (code actions, in the editor) | ⌘. or right-click | Ctrl+. or right-click |

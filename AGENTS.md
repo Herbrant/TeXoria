@@ -68,6 +68,7 @@ window-free logic with its own unit tests. Dependency flow:
 
 ```
 texoria ─┬─ tex-compile ── tex-log
+         ├─ tex-agent (ACP client, MCP server) ── tex-project, tex-log
          ├─ tex-git (system `git` CLI)
          ├─ tex-complete ── tex-project ── tex-syntax
          ├─ tex-spell ── tex-syntax
@@ -105,6 +106,18 @@ texoria ─┬─ tex-compile ── tex-log
   Command Line Tools, whose stub would pop up an installer). Integration tests in
   `tests/repo.rs` use temp repos with `GIT_CONFIG_GLOBAL` pointing to a temp file and skip if git
   is missing.
+- **tex-agent**: coding agents installed on the system (Claude Code, Codex, Gemini CLI, …)
+  through the Agent Client Protocol. Only the wire types come from
+  `agent-client-protocol-schema`; the JSON-RPC transport (`rpc.rs`) is ours, on threads.
+  `catalog::KNOWN` follows the ACP registry's commands (Claude Code and Codex through their npm
+  adapters, pinned, with `npx` when their CLI is installed); `process::search_path` is the login
+  shell's `PATH` plus the usual install folders, used both to find agents and to run them (Node
+  scripts need it). Agents write files on their own whatever the client offers, so changes are
+  found by comparing the project with a `Checkpoint` taken before each turn (not `.git` nor
+  `.texoria`), which drives the review patch and the undo. `mcp.rs` serves TeXoria's tools
+  (`typeset`, `problems`, `outline`) on a loopback port; agents start `texoria --mcp-bridge`
+  (handled in `main.rs` before the UI), which relays stdio there after a random token.
+  `cargo run -p tex-agent --example probe -- <id> <prompt>` talks to an installed agent.
 - **tex-spell**: spell checking. `extract::words` walks the tree-sitter tree and keeps only prose
   (allow-list of node kinds, deny-lists of commands/environments, no preamble but `\title`);
   `lang::detect` picks the language: `% !TeX spellcheck` (file, then root), babel/polyglossia
@@ -153,6 +166,16 @@ texoria ─┬─ tex-compile ── tex-log
   - `pdf_pane.rs` keeps old bitmaps on screen until the new PDF's pages are rasterized (no flash)
     and only materializes pages near the viewport. SyncTeX forward/inverse search goes through the
     `synctex` crate, whose coordinates are PDF points with a top-left origin, y downwards.
+  - `agent_panel.rs` is the Agent sidebar (alternates with the outline). Agents only start in
+    projects allowed in `Settings::agent_projects` (exact directories, like trust), and the
+    agents are looked for on first use. A turn emits `AgentPanelEvent::Busy`: the workspace
+    saves and makes every editor read-only until it ends, reloading from disk as tool calls
+    complete. Messages and the context-menu edits (`RewriteSelection`, `EditWithAgent`) go
+    through `AgentPanelEvent::Request` so the buffers are saved first; the workspace adds the
+    open file and the selection to chat messages. The review is a `DiffSource::Agent` diff tab
+    (no repository) with per-file undo. `agent_tools.rs` forwards the MCP calls to
+    `Workspace::on_tool_call`; a `typeset` call is answered by the first run that starts after
+    it (`ToolWaiter`, compile ids).
   - `spell.rs`: each `Buffer` has a `BufferSpell` (a `TextDecorationCollection` of wavy
     underlines, which follow edits, unlike editor diagnostics that are cleared on every edit).
     `Workspace::spellcheck` runs `spell::analyze` and `Speller::misspelled` on the background
