@@ -494,8 +494,11 @@ impl Vim {
                     && char_at(t, cur).is_some_and(|c| !c.is_whitespace())
                 {
                     let big = matches!(m, Motion::Word(true));
+                    // On a word's last character, that is the first word's end.
+                    let at_end =
+                        word_object(t, cur, big, false).is_some_and(|w| w.end == next_char(t, cur));
                     let mut e = cur;
-                    for _ in 0..count {
+                    for _ in usize::from(at_end)..count {
                         e = word_end(t, e, big);
                     }
                     (e, Kind::Inclusive)

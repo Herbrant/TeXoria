@@ -703,3 +703,14 @@ fn more_text_objects() {
     assert_eq!(run("a \"b|c\" d", "da\""), "a | d");
     assert_eq!(run("a |b", "di\""), "a |b");
 }
+
+#[test]
+fn change_word_stops_at_the_end_of_the_word() {
+    // On a word's last character `cw` changes only that character, like Vim.
+    assert_eq!(run("|a b", "cwx<esc>"), "|x b");
+    assert_eq!(run("fo|o bar", "cwx<esc>"), "fo|x bar");
+    assert_eq!(run("|a b c", "c2wx<esc>"), "|x c");
+    assert_eq!(run("|ab cd ef", "c2wx<esc>"), "|x ef");
+    assert_eq!(run("a|.b", "cWx<esc>"), "a|x");
+    assert_eq!(run("|é b", "cwx<esc>"), "|x b");
+}
