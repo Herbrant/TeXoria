@@ -12,7 +12,7 @@ SHA256=6d23f01257663d8cc49a0d64c22ced630b79e0e2a0ac08a0da86e9a38bbc481c
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 echo "Downloading $URL"
-curl -fsSL "$URL" -o "$tmp/plex.zip"
+curl -fsSL --retry 3 --retry-all-errors "$URL" -o "$tmp/plex.zip"
 verify_sha256 "$tmp/plex.zip" "$SHA256"
 unzip -q "$tmp/plex.zip" -d "$tmp/x"
 

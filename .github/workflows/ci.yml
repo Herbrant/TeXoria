@@ -63,6 +63,8 @@ jobs:
         uses: r-lib/actions/setup-tinytex@v2
       - name: Install TeX packages (macOS, Windows)
         if: runner.os != 'Linux'
+        # tlmgr is a .bat on Windows, which bash cannot run.
+        shell: pwsh
         run: tlmgr install latexmk cm-super amsfonts
 
       - name: Fetch PDFium

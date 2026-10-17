@@ -39,7 +39,7 @@ url="https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F$
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 echo "Downloading $url"
-curl -fsSL "$url" -o "$tmp/$asset"
+curl -fsSL --retry 3 --retry-all-errors "$url" -o "$tmp/$asset"
 verify_sha256 "$tmp/$asset" "$sha"
 mkdir -p "$tmp/x"
 tar -xzf "$tmp/$asset" -C "$tmp/x"

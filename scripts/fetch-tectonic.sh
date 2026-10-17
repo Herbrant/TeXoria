@@ -36,7 +36,7 @@ url="https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 echo "Downloading $url"
-curl -fsSL "$url" -o "$tmp/$asset"
+curl -fsSL --retry 3 --retry-all-errors "$url" -o "$tmp/$asset"
 verify_sha256 "$tmp/$asset" "$sha"
 mkdir -p "$DEST"
 if [ "$ext" = zip ]; then unzip -q -o "$tmp/$asset" -d "$DEST"; else tar -xzf "$tmp/$asset" -C "$DEST"; fi
@@ -45,7 +45,7 @@ if [ "$ext" = zip ]; then unzip -q -o "$tmp/$asset" -d "$DEST"; else tar -xzf "$
 # The MIT license must ship with the binary in release packages.
 license_sha=""
 [ "$VERSION" = "$PINNED" ] && license_sha=814a258f76e420b25cb3c07172eb2b3956f34cefbf0a650413b78e65c425f306
-curl -fsSL "https://raw.githubusercontent.com/tectonic-typesetting/tectonic/tectonic%40$VERSION/LICENSE" \
+curl -fsSL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/tectonic-typesetting/tectonic/tectonic%40$VERSION/LICENSE" \
   -o "$tmp/LICENSE"
 verify_sha256 "$tmp/LICENSE" "$license_sha"
 cp "$tmp/LICENSE" "$DEST/LICENSE"
