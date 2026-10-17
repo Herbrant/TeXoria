@@ -182,3 +182,54 @@ fn replace_all_goes_through_every_file_when_the_search_stopped(cx: &mut TestAppC
         }
     });
 }
+
+#[test]
+fn file_operations() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    create_file(&d.join("ch/new.tex")).unwrap();
+    assert!(d.join("ch/new.tex").is_file());
+    assert_eq!(
+        create_file(&d.join("ch/new.tex")).unwrap_err().kind(),
+        std::io::ErrorKind::AlreadyExists
+    );
+    std::fs::write(d.join("other.tex"), "keep").unwrap();
+    assert_eq!(
+        rename(&d.join("ch/new.tex"), &d.join("other.tex"))
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::AlreadyExists
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.join("other.tex")).unwrap(),
+        "keep"
+    );
+    rename(&d.join("ch/new.tex"), &d.join("ch/renamed.tex")).unwrap();
+    // Only the case changes: the same file on case-insensitive disks.
+    rename(&d.join("ch/renamed.tex"), &d.join("ch/Renamed.tex")).unwrap();
+    assert!(d.join("ch/Renamed.tex").exists());
+    remove(&d.join("ch")).unwrap();
+    assert!(!d.join("ch").exists());
+    remove(&d.join("other.tex")).unwrap();
+    assert!(remove(&d.join("missing")).is_err());
+}
+
+/// Deleting a link to a folder deletes the link, never the folder's files.
+#[test]
+fn removing_a_folder_link_keeps_its_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    std::fs::write(target.path().join("theirs.tex"), "").unwrap();
+    let link = dir.path().join("link");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target.path(), &link).unwrap();
+    // Creating links needs the developer mode or administrator rights on Windows.
+    #[cfg(windows)]
+    if let Err(e) = std::os::windows::fs::symlink_dir(target.path(), &link) {
+        eprintln!("cannot create a folder link ({e}); skipping");
+        return;
+    }
+    remove(&link).unwrap();
+    assert!(link.symlink_metadata().is_err());
+    assert!(target.path().join("theirs.tex").exists());
+}

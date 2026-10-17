@@ -5297,15 +5297,20 @@ fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Delete a file, or a directory with its contents (a link, not its target).
 fn remove(path: &Path) -> std::io::Result<()> {
-    if path.symlink_metadata()?.is_dir() {
+    let meta = path.symlink_metadata()?;
+    // A link to a folder (or a junction) is removed as a folder on Windows, and never what
+    // it leads to.
+    #[cfg(windows)]
+    if std::os::windows::fs::FileTypeExt::is_symlink_dir(&meta.file_type()) {
+        return std::fs::remove_dir(path);
+    }
+    if meta.is_dir() {
         std::fs::remove_dir_all(path)
     } else {
         std::fs::remove_file(path)
     }
 }
 
-/// In a directory, the `.tex` file that has `\documentclass` (preferring
-/// `main.tex`).
 /// How the last build went, for an agent's `problems` call.
 fn run_summary(state: &CompileState) -> String {
     match state {
@@ -5322,6 +5327,8 @@ fn run_summary(state: &CompileState) -> String {
     }
 }
 
+/// In a directory, the `.tex` file that has `\documentclass` (preferring
+/// `main.tex`).
 fn find_main_file(dir: &Path) -> Option<PathBuf> {
     let main = dir.join("main.tex");
     if main.is_file() {
