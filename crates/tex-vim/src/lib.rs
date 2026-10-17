@@ -1233,29 +1233,28 @@ fn find(t: &str, query: &str, from: usize, backward: bool) -> Option<usize> {
         return None;
     }
     let fold = !needle.chars().any(char::is_uppercase);
-    let hay: String;
-    let pat: String;
-    let (h, n) = if fold {
-        hay = t.to_lowercase();
-        pat = needle.to_lowercase();
-        // Lower-casing may change lengths: search the original then.
-        if hay.len() != t.len() {
-            (t, needle)
-        } else {
-            (hay.as_str(), pat.as_str())
-        }
-    } else {
-        (t, needle)
-    };
     let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-    let ok = |p: usize| {
-        !whole || (!word(t[..p].chars().next_back()) && !word(t[p + n.len()..].chars().next()))
+    let ok = |r: &Range<usize>| {
+        !whole || (!word(t[..r.start].chars().next_back()) && !word(t[r.end..].chars().next()))
     };
-    let matches: Vec<usize> = h
-        .match_indices(n)
-        .map(|(p, _)| p)
-        .filter(|&p| ok(p))
-        .collect();
+    let matches: Vec<usize> = if fold {
+        let (hay, map) = folded(t);
+        let pat = needle.to_lowercase();
+        hay.match_indices(&pat)
+            .map(|(p, _)| {
+                map.as_ref()
+                    .map_or(p..p + pat.len(), |m| m[p]..m[p + pat.len()])
+            })
+            .filter(|r| ok(r))
+            .map(|r| r.start)
+            .collect()
+    } else {
+        t.match_indices(needle)
+            .map(|(p, _)| p..p + needle.len())
+            .filter(|r| ok(r))
+            .map(|r| r.start)
+            .collect()
+    };
     if backward {
         matches
             .iter()
@@ -1270,6 +1269,25 @@ fn find(t: &str, query: &str, from: usize, backward: bool) -> Option<usize> {
             .or(matches.first())
             .copied()
     }
+}
+
+/// `t` lower-cased and, if that changed the byte length of a character, a
+/// map from its offsets to those of `t`: each byte maps to the start of the
+/// character it comes from, and the end to `t.len()`.
+fn folded(t: &str) -> (String, Option<Vec<usize>>) {
+    let lower = t.to_lowercase();
+    if t.chars()
+        .all(|c| c.to_lowercase().map(char::len_utf8).sum::<usize>() == c.len_utf8())
+    {
+        return (lower, None);
+    }
+    let mut map = Vec::with_capacity(lower.len() + 1);
+    for (i, c) in t.char_indices() {
+        let n = c.to_lowercase().map(char::len_utf8).sum::<usize>();
+        map.extend(std::iter::repeat_n(i, n));
+    }
+    map.push(t.len());
+    (lower, Some(map))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

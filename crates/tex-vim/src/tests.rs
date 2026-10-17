@@ -300,3 +300,18 @@ fn visual_mode_survives_a_text_that_changed() {
     );
     assert_eq!(vim.mode(), Mode::Normal);
 }
+
+#[test]
+fn searches_ignoring_the_case_of_any_letter() {
+    assert_eq!(run("|a Éte", "/éte<cr>"), "a |Éte");
+    // The Kelvin sign lower-cases to `k`, one byte instead of three.
+    assert_eq!(run("x |a \u{212A}", "/k<cr>"), "x a |\u{212A}");
+    assert_eq!(run("|\u{212A}x ab", "/ab<cr>"), "\u{212A}x |ab");
+    // `İ` grows by one byte: with two of them the lengths add up again.
+    assert_eq!(run("|\u{212A}abİİ", "/ab<cr>"), "\u{212A}|abİİ");
+    assert_eq!(run("|\u{212A}abİİ ab", "/ab<cr>n"), "\u{212A}abİİ |ab");
+    assert_eq!(run("|İİ\u{212A}x", "/x<cr>"), "İİ\u{212A}|x");
+    // Whole words are checked in the original text.
+    assert_eq!(run("xİ |ab ab", "*"), "xİ ab |ab");
+    assert_eq!(run("|ab İab ab", "*"), "ab İab |ab");
+}
