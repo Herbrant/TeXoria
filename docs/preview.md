@@ -60,6 +60,12 @@ it, TeXoria shows a banner: choose *Allow Shell Escape* to build that project wi
 projects you trust (a coding agent that edits the document could then run commands through the
 build too). You can revoke the permission in [Settings](settings.md#trusted-projects).
 
+## Exporting the PDF
+
+*File* → *Export PDF…* (⇧⌘S), or the download button of the preview's toolbar, saves a copy of
+the PDF wherever you like: the build folder is TeXoria's. The next export of the project starts
+from the same place and name.
+
 ## Build files
 
 Everything the engine produces goes to `.texoria/build` next to the root file, which TeXoria

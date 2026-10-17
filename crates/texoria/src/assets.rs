@@ -105,6 +105,7 @@ glyphs! {
     WholeWord => "whole-word",
     Regex => "regex",
     ReplaceAll => "replace-all",
+    Export => "download",
 }
 
 pub struct Assets;

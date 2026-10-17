@@ -37,6 +37,8 @@ enum Zoom {
 pub enum PdfPaneEvent {
     /// The user cmd/ctrl-clicked a point that maps back to the source.
     InverseSearch { file: PathBuf, line: u32 },
+    /// Save a copy of the PDF somewhere.
+    Export,
 }
 
 struct Shown {
@@ -439,6 +441,13 @@ impl PdfPane {
             .shadow_md()
             .text_xs()
             .text_color(cx.theme().muted_foreground)
+            .child(
+                Button::new("pdf-export")
+                    .ghost()
+                    .icon(Glyph::Export)
+                    .tooltip("Export PDF… (⇧⌘S)")
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PdfPaneEvent::Export))),
+            )
             .child(
                 Button::new("zoom-out")
                     .ghost()

@@ -55,7 +55,7 @@ use crate::theme::{self, ThemeExt};
 use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
     Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit, DecreaseFontSize,
-    EditWithAgent, Fetch, FindInProject, FixWithAgent, FormatDocument, ForwardSearch,
+    EditWithAgent, ExportPdf, Fetch, FindInProject, FixWithAgent, FormatDocument, ForwardSearch,
     IncreaseFontSize, NewBranch, Open, OpenFromOverleaf, OpenSettings, Pull, Push, ResetFontSize,
     Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent, ToggleComment,
     ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme,
@@ -202,6 +202,7 @@ impl Workspace {
                     PdfPaneEvent::InverseSearch { file, line } => {
                         this.reveal(file.clone(), line.saturating_sub(1), window, cx)
                     }
+                    PdfPaneEvent::Export => this.export_pdf(window, cx),
                 },
             ),
             cx.subscribe_in(&git, window, Self::on_git_event),
@@ -2021,6 +2022,77 @@ impl Workspace {
         self.settings.save();
         self.sync_git(cx);
         cx.notify();
+    }
+
+    /// Save a copy of the PDF where the user chooses (by default, where the
+    /// last one went).
+    fn export_pdf(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(job) = self.job() else {
+            return;
+        };
+        let pdf = job.artifact("pdf");
+        if !self.show_old_pdf || !pdf.is_file() {
+            window.push_notification(Notification::info("Build the document first."), cx);
+            return;
+        }
+        let root = job.root_file.clone();
+        let last = self.settings.session(&root).and_then(|s| s.export.clone());
+        let dir = last
+            .as_deref()
+            .and_then(Path::parent)
+            .filter(|d| d.is_dir())
+            .unwrap_or(job.work_dir())
+            .to_path_buf();
+        let name = last
+            .as_deref()
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("{}.pdf", job.stem()));
+        let path = cx.prompt_for_new_path(&dir, Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(dest) = path.await.ok().and_then(|r| r.ok()).flatten() else {
+                return;
+            };
+            let copy = (pdf.clone(), dest.clone());
+            let copied = cx
+                .background_spawn(async move { std::fs::copy(&copy.0, &copy.1) })
+                .await;
+            this.update_in(cx, |this, window, cx| match copied {
+                Ok(_) => {
+                    let mut session = this.settings.session(&root).cloned().unwrap_or(Session {
+                        root: root.clone(),
+                        ..Default::default()
+                    });
+                    session.export = Some(dest.clone());
+                    if this.settings.set_session(session) {
+                        this.settings.save();
+                    }
+                    let name = dest
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    window.push_notification(
+                        Notification::success(format!("Saved {name}"))
+                            .title("PDF exported")
+                            .action(move |_, _, _| {
+                                let dest = dest.clone();
+                                Button::new("reveal-export")
+                                    .outline()
+                                    .label("Show in Folder")
+                                    .on_click(move |_, _, cx| cx.reveal_path(&dest))
+                            }),
+                        cx,
+                    );
+                }
+                Err(e) => window.push_notification(
+                    Notification::error(format!("Cannot save {}: {e}", dest.display()))
+                        .title("Export failed"),
+                    cx,
+                ),
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Let the project's documents run programs, and build again.
@@ -4445,6 +4517,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, a: &OpenLocation, window, cx| {
                 this.reveal_range(a.file.clone(), a.range.clone(), window, cx)
             }))
+            .on_action(cx.listener(|this, _: &ExportPdf, window, cx| this.export_pdf(window, cx)))
             .on_action(
                 cx.listener(|this, _: &FindInProject, window, cx| this.find_in_project(window, cx)),
             )

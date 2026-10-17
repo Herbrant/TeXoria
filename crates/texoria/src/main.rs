@@ -66,6 +66,7 @@ actions!(
         ToggleComment,
         FindInProject,
         FormatDocument,
+        ExportPdf,
         Quit,
     ]
 );
@@ -74,6 +75,7 @@ fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("secondary-o", Open, None),
         KeyBinding::new("secondary-s", Save, None),
+        KeyBinding::new("secondary-shift-s", ExportPdf, None),
         KeyBinding::new("secondary-r", Build, None),
         KeyBinding::new("secondary-.", CancelBuild, None),
         KeyBinding::new("secondary-j", ForwardSearch, None),
@@ -127,6 +129,7 @@ fn set_menus(cx: &mut App) {
         Menu::new("File").items([
             MenuItem::action("Open…", Open),
             MenuItem::action("Save", Save),
+            MenuItem::action("Export PDF…", ExportPdf),
             MenuItem::action("Clone Repository…", CloneRepository),
             MenuItem::action("Open from Overleaf…", OpenFromOverleaf),
             MenuItem::separator(),

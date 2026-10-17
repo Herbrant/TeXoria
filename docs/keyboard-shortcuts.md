@@ -4,6 +4,7 @@
 |---|---|---|
 | Open a file or folder | ⌘O | Ctrl+O |
 | Save | ⌘S | Ctrl+S |
+| Export the PDF | ⇧⌘S | Ctrl+Shift+S |
 | Close tab | ⌘W | Ctrl+W |
 | Build | ⌘R | Ctrl+R |
 | Stop the build (outside the editor) | ⌘. | Ctrl+. |
