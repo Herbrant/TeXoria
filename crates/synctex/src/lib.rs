@@ -384,9 +384,15 @@ fn normalize(base: &Path, path: &str) -> PathBuf {
     for c in joined.components() {
         match c {
             Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                // `/..` is `/`.
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                // Above a relative base: keep climbing.
+                _ => out.push(".."),
+            },
             other => out.push(other),
         }
     }
@@ -801,6 +807,20 @@ Count:10
         assert_eq!(
             normalize(Path::new("/"), "../../x.tex"),
             PathBuf::from("/x.tex")
+        );
+        // A relative base (a synctex file opened by a relative path) keeps
+        // the `..` that climb above it.
+        assert_eq!(
+            normalize(Path::new("build"), "../../x.tex"),
+            PathBuf::from("../x.tex")
+        );
+        assert_eq!(
+            normalize(Path::new(""), "../a/../../x.tex"),
+            PathBuf::from("../../x.tex")
+        );
+        assert_eq!(
+            normalize(Path::new("a/b"), "../c.tex"),
+            PathBuf::from("a/c.tex")
         );
     }
 
