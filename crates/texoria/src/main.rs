@@ -11,6 +11,7 @@ mod git_panel;
 mod latex;
 mod overleaf;
 mod pdf_pane;
+mod search_panel;
 mod settings;
 mod settings_window;
 mod spell;
@@ -61,6 +62,7 @@ actions!(
         FixWithAgent,
         StopAgent,
         ToggleComment,
+        FindInProject,
         Quit,
     ]
 );
@@ -94,6 +96,14 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-k", EditWithAgent, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-/", ToggleComment, Some("Input")),
+        // Find in the project, like other editors; the editor's Replace moves.
+        KeyBinding::new("secondary-shift-f", FindInProject, None),
+        KeyBinding::new("secondary-shift-f", FindInProject, Some("Input")),
+        KeyBinding::new(
+            "secondary-alt-f",
+            gpui_kit::component::input::Replace,
+            Some("Input"),
+        ),
         KeyBinding::new(
             "f12",
             gpui_kit::component::input::GoToDefinition,
@@ -126,6 +136,10 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Copy", gpui_kit::component::input::Copy),
             MenuItem::action("Paste", gpui_kit::component::input::Paste),
             MenuItem::action("Select All", gpui_kit::component::input::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Find", gpui_kit::component::input::Search),
+            MenuItem::action("Replace", gpui_kit::component::input::Replace),
+            MenuItem::action("Find in Project", FindInProject),
             MenuItem::separator(),
             MenuItem::action("Toggle Comment", ToggleComment),
         ]),

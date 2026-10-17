@@ -1,0 +1,290 @@
+//! Find (and replace) text in every text file of a project folder.
+
+use std::collections::HashMap;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use regex::{NoExpand, Regex, RegexBuilder};
+
+use crate::files::{self, FileNode};
+
+/// Matches past this many are not reported (the search is too broad).
+pub const MAX_MATCHES: usize = 5000;
+/// Characters of context kept around a match in its preview.
+const PREVIEW_CONTEXT: usize = 60;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Query {
+    pub text: String,
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+    /// `text` is a regular expression (and the replacement may use `$1`).
+    pub regex: bool,
+}
+
+impl Query {
+    /// The query as a regular expression.
+    pub fn compile(&self) -> Result<Regex, String> {
+        let pattern = if self.regex {
+            self.text.clone()
+        } else {
+            regex::escape(&self.text)
+        };
+        let pattern = if self.whole_word {
+            format!(r"\b(?:{pattern})\b")
+        } else {
+            pattern
+        };
+        RegexBuilder::new(&pattern)
+            .case_insensitive(!self.case_sensitive)
+            .multi_line(true)
+            .size_limit(1 << 20)
+            .build()
+            .map_err(|e| e.to_string())
+    }
+
+    /// `text` with every match replaced by `replacement`, and how many there were.
+    pub fn replace_all(&self, regex: &Regex, text: &str, replacement: &str) -> (String, usize) {
+        let count = regex.find_iter(text).filter(|m| !m.is_empty()).count();
+        if count == 0 {
+            return (text.to_string(), 0);
+        }
+        let out = if self.regex {
+            regex.replace_all(text, replacement)
+        } else {
+            regex.replace_all(text, NoExpand(replacement))
+        };
+        (out.into_owned(), count)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Match {
+    /// Bytes of the file.
+    pub range: Range<usize>,
+    /// 0-based.
+    pub line: u32,
+    /// The text around the match, on one line.
+    pub preview: String,
+    /// The match's bytes in `preview`.
+    pub highlight: Range<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileMatches {
+    pub path: PathBuf,
+    pub matches: Vec<Match>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Results {
+    pub files: Vec<FileMatches>,
+    /// More matches were found than reported.
+    pub truncated: bool,
+}
+
+impl Results {
+    pub fn count(&self) -> usize {
+        self.files.iter().map(|f| f.matches.len()).sum()
+    }
+}
+
+/// The text files of `dir` (as the Files view lists them), in tree order.
+pub fn text_files(dir: &Path) -> Vec<PathBuf> {
+    fn walk(nodes: Vec<FileNode>, out: &mut Vec<PathBuf>) {
+        for n in nodes {
+            match n.children {
+                Some(children) => walk(children, out),
+                None => out.push(n.path),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(files::scan(dir), &mut out);
+    out.retain(|p| files::looks_like_text(p));
+    out
+}
+
+/// Every match of `regex` in the text files of `dir`. `open` holds the text of
+/// files open in the editor (unsaved edits included), read instead of the disk.
+pub fn search(
+    dir: &Path,
+    regex: &Regex,
+    open: &HashMap<PathBuf, Arc<str>>,
+    cancel: &AtomicBool,
+) -> Results {
+    let mut results = Results::default();
+    let mut total = 0;
+    for path in text_files(dir) {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let text: Arc<str> = match open.get(&path) {
+            Some(t) => t.clone(),
+            None => match crate::read_regular(&path) {
+                Some(t) => t.into(),
+                None => continue,
+            },
+        };
+        let matches = find(regex, &text, MAX_MATCHES - total);
+        if matches.is_empty() {
+            continue;
+        }
+        total += matches.len();
+        results.files.push(FileMatches { path, matches });
+        if total >= MAX_MATCHES {
+            results.truncated = true;
+            break;
+        }
+    }
+    results
+}
+
+/// The matches of `regex` in `text`, at most `limit`.
+pub fn find(regex: &Regex, text: &str, limit: usize) -> Vec<Match> {
+    let mut out = Vec::new();
+    let mut line = 0u32;
+    let mut counted = 0;
+    for m in regex.find_iter(text).filter(|m| !m.is_empty()).take(limit) {
+        line += text[counted..m.start()].matches('\n').count() as u32;
+        counted = m.start();
+        let line_start = text[..m.start()].rfind('\n').map_or(0, |i| i + 1);
+        let line_end = text[m.start()..]
+            .find('\n')
+            .map_or(text.len(), |i| m.start() + i);
+        // The match's first line, with some context on each side.
+        let end = m.end().min(line_end);
+        let from = floor_char(
+            text,
+            m.start().saturating_sub(PREVIEW_CONTEXT).max(line_start),
+        );
+        let to = ceil_char(text, (end + PREVIEW_CONTEXT).min(line_end));
+        let raw = &text[from..to];
+        let lead = raw.len() - raw.trim_start().len();
+        let preview = raw.trim().to_string();
+        let start = m.start() - from - lead;
+        let highlight = start..(end - from - lead).min(preview.len()).max(start);
+        out.push(Match {
+            range: m.range(),
+            line,
+            preview,
+            highlight,
+        });
+    }
+    out
+}
+
+fn floor_char(s: &str, mut i: usize) -> usize {
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn ceil_char(s: &str, mut i: usize) -> usize {
+    while !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn query(text: &str) -> Query {
+        Query {
+            text: text.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn finds_with_options() {
+        let text = "Euler's identity\n  holds: euler, Eulerian.\n";
+        let all = find(&query("euler").compile().unwrap(), text, 10);
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[1].line, 1);
+        assert_eq!(all[1].preview, "holds: euler, Eulerian.");
+        assert_eq!(&all[1].preview[all[1].highlight.clone()], "euler");
+
+        let case = Query {
+            case_sensitive: true,
+            ..query("Euler")
+        };
+        assert_eq!(find(&case.compile().unwrap(), text, 10).len(), 2);
+        let word = Query {
+            whole_word: true,
+            ..query("euler")
+        };
+        assert_eq!(find(&word.compile().unwrap(), text, 10).len(), 2);
+        // Literal unless asked: the dot is no wildcard.
+        assert!(find(&query("s.").compile().unwrap(), text, 10).is_empty());
+        let re = Query {
+            regex: true,
+            ..query(r"\bE\w+")
+        };
+        assert_eq!(find(&re.compile().unwrap(), text, 10).len(), 3);
+        assert!(
+            Query {
+                regex: true,
+                ..query("(")
+            }
+            .compile()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn replaces() {
+        let literal = query("$x$");
+        let re = literal.compile().unwrap();
+        assert_eq!(
+            literal.replace_all(&re, "a $x$ b $x$", "$1"),
+            ("a $1 b $1".to_string(), 2)
+        );
+        let groups = Query {
+            regex: true,
+            ..query(r"\\emph\{(\w+)\}")
+        };
+        let re = groups.compile().unwrap();
+        assert_eq!(
+            groups.replace_all(&re, r"an \emph{idea}", r"\textit{$1}"),
+            (r"an \textit{idea}".to_string(), 1)
+        );
+    }
+
+    #[test]
+    fn searches_a_folder_with_open_buffers() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("chapters")).unwrap();
+        std::fs::create_dir_all(root.join(".texoria/build")).unwrap();
+        std::fs::write(root.join("main.tex"), "needle\n").unwrap();
+        std::fs::write(root.join("chapters/a.tex"), "no\n").unwrap();
+        std::fs::write(root.join(".texoria/build/main.log"), "needle\n").unwrap();
+        std::fs::write(root.join("pic.png"), [0u8, 1, 2]).unwrap();
+        let open = HashMap::from([(root.join("chapters/a.tex"), Arc::from("a needle"))]);
+        let re = query("needle").compile().unwrap();
+        let results = search(root, &re, &open, &AtomicBool::new(false));
+        let files: Vec<_> = results
+            .files
+            .iter()
+            .map(|f| f.path.strip_prefix(root).unwrap().to_path_buf())
+            .collect();
+        assert_eq!(
+            files,
+            vec![PathBuf::from("chapters/a.tex"), PathBuf::from("main.tex")]
+        );
+        assert_eq!(results.count(), 2);
+    }
+
+    #[test]
+    fn previews_cut_on_char_boundaries() {
+        let text = format!("{}needle{}", "é".repeat(80), "à".repeat(80));
+        let m = &find(&query("needle").compile().unwrap(), &text, 10)[0];
+        assert_eq!(&m.preview[m.highlight.clone()], "needle");
+    }
+}

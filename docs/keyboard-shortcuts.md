@@ -22,6 +22,8 @@
 | Edit the selection with the agent | ⌘K | Ctrl+K |
 | Send a message to the agent (⇧↵: new line) | ↵ | Enter |
 | Commit (in the commit message box) | ⌘↵ | Ctrl+Enter |
+| Find in the open file / replace | ⌘F / ⌥⌘F | Ctrl+F / Ctrl+H |
+| Find (and replace) in the whole project | ⇧⌘F | Ctrl+Shift+F |
 | Comment / uncomment the selected lines | ⌘/ | Ctrl+/ |
 | Go to the definition (label, citation, file, command) | ⌘-click or F12 | Ctrl-click or F12 |
 | Soft wrap (current tab) | ⌥Z | Alt+Z |

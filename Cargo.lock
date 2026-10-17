@@ -6769,6 +6769,7 @@ dependencies = [
 name = "tex-project"
 version = "0.3.0"
 dependencies = [
+ "regex",
  "tempfile",
  "tex-syntax",
 ]

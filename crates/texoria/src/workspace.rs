@@ -45,6 +45,7 @@ use crate::latex::{
 };
 use crate::overleaf;
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
+use crate::search_panel::{SearchPanel, SearchPanelEvent};
 use crate::settings::{Session, Settings, SpellLanguage, ThemeChoice};
 use crate::settings_window::SettingsWindow;
 use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspelling, Spell};
@@ -52,10 +53,10 @@ use crate::theme::{self, ThemeExt};
 use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
     Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit, DecreaseFontSize,
-    EditWithAgent, Fetch, FixWithAgent, ForwardSearch, IncreaseFontSize, NewBranch, Open,
-    OpenFromOverleaf, OpenSettings, Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent,
-    SyncOverleaf, ToggleAgent, ToggleComment, ToggleDiagnostics, ToggleFiles, ToggleLivePreview,
-    ToggleOutline, ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
+    EditWithAgent, Fetch, FindInProject, FixWithAgent, ForwardSearch, IncreaseFontSize, NewBranch,
+    Open, OpenFromOverleaf, OpenSettings, Pull, Push, ResetFontSize, Save, ShowSourceControl,
+    StopAgent, SyncOverleaf, ToggleAgent, ToggleComment, ToggleDiagnostics, ToggleFiles,
+    ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -89,6 +90,7 @@ struct Buffer {
 enum Sidebar {
     Outline,
     Files,
+    Search,
     SourceControl,
     Agent,
 }
@@ -117,6 +119,7 @@ pub struct Workspace {
     /// The last of Outline and Files: what the sidebar button shows.
     navigator: Sidebar,
     files: Entity<FileTree>,
+    search: Entity<SearchPanel>,
     git: Entity<GitPanel>,
     agent: Entity<AgentPanel>,
     /// An agent is working: the editors are read-only meanwhile.
@@ -167,6 +170,7 @@ impl Workspace {
         }
         let pdf = cx.new(|cx| PdfPane::new(pdfium_dirs(), cx));
         let files = cx.new(FileTree::new);
+        let search = cx.new(|cx| SearchPanel::new(window, cx));
         let git = cx.new(|cx| GitPanel::new(window, cx));
         let agent = cx.new(|cx| AgentPanel::new(window, cx));
         let updater = cx.new(Updater::new);
@@ -183,6 +187,7 @@ impl Workspace {
             ),
             cx.subscribe_in(&git, window, Self::on_git_event),
             cx.subscribe_in(&files, window, Self::on_file_tree_event),
+            cx.subscribe_in(&search, window, Self::on_search_event),
             cx.subscribe_in(&agent, window, Self::on_agent_event),
             cx.subscribe_in(&updater, window, Self::on_updater_event),
             // Coming back to the window: pick up what changed meanwhile
@@ -269,6 +274,7 @@ impl Workspace {
             sidebar: Sidebar::Outline,
             navigator: Sidebar::Outline,
             files,
+            search,
             git,
             agent,
             agent_busy: false,
@@ -594,6 +600,8 @@ impl Workspace {
             self.sync_agent(cx);
             self.files
                 .update(cx, |f, cx| f.set_project(Some(root.clone()), cx));
+            let dir = self.project_dir();
+            self.search.update(cx, |s, cx| s.set_dir(dir, cx));
             // Show a previous build right away, if any.
             if self.show_old_pdf && job.artifact("pdf").is_file() {
                 let synctex = Some(job.artifact("synctex.gz")).filter(|p| p.is_file());
@@ -1092,6 +1100,180 @@ impl Workspace {
         self.remember_session();
     }
 
+    // ── Search ───────────────────────────────────────────────────────────
+
+    /// Show the Search view, searching for the editor's selection if any.
+    fn find_in_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self.buffers.get(self.active).and_then(|b| {
+            let state = b.editor.read(cx);
+            let range = state.selected_range();
+            let text = state.text().slice(range).to_string();
+            (!text.is_empty() && !text.contains('\n')).then_some(text)
+        });
+        self.show_sidebar(Sidebar::Search, cx);
+        self.search
+            .update(cx, |s, cx| s.focus(selected, window, cx));
+    }
+
+    fn on_search_event(
+        &mut self,
+        _: &Entity<SearchPanel>,
+        ev: &SearchPanelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match ev {
+            SearchPanelEvent::Search => {
+                let open = self
+                    .buffers
+                    .iter()
+                    .map(|b| {
+                        (
+                            b.path.clone(),
+                            Arc::from(b.editor.read(cx).text().to_string()),
+                        )
+                    })
+                    .collect();
+                self.search.update(cx, |s, cx| s.run(open, cx));
+            }
+            SearchPanelEvent::Open { path, range } => {
+                self.reveal_range(path.clone(), range.clone(), window, cx)
+            }
+            SearchPanelEvent::ReplaceAll {
+                query,
+                replacement,
+                files,
+            } => self.confirm_replace_all(
+                query.clone(),
+                replacement.clone(),
+                files.clone(),
+                window,
+                cx,
+            ),
+        }
+    }
+
+    fn confirm_replace_all(
+        &mut self,
+        query: tex_project::search::Query,
+        replacement: String,
+        files: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.agent_busy {
+            window.push_notification(
+                Notification::info("Wait for the agent to finish before replacing."),
+                cx,
+            );
+            return;
+        }
+        let closed = files
+            .iter()
+            .filter(|f| !self.buffers.iter().any(|b| &b.path == *f))
+            .count();
+        let message = format!(
+            "Replace every match of “{}” with “{}” in {} file{}?{}",
+            query.text,
+            replacement,
+            files.len(),
+            plural(files.len()),
+            if closed > 0 {
+                " Files that are not open are written directly: only Git can undo that."
+            } else {
+                ""
+            }
+        );
+        let weak = cx.entity().downgrade();
+        git_panel::open_form(
+            window,
+            cx,
+            "Replace All",
+            "Replace",
+            None,
+            move |_, cx| {
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(message.clone())
+                    .into_any_element()
+            },
+            move |window, cx| {
+                weak.update(cx, |this, cx| {
+                    this.replace_all(&query, &replacement, &files, window, cx)
+                })
+                .ok();
+                true
+            },
+        );
+    }
+
+    /// Replace every match of `query` in `files`: in the editor for open ones
+    /// (so that it can be undone), on disk for the others.
+    fn replace_all(
+        &mut self,
+        query: &tex_project::search::Query,
+        replacement: &str,
+        files: &[PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Ok(regex) = query.compile() else {
+            return;
+        };
+        let (mut total, mut changed) = (0, 0);
+        for path in files {
+            if let Some(b) = self.buffers.iter().find(|b| &b.path == path) {
+                let n = b.editor.update(cx, |state, cx| {
+                    let text = state.text().to_string();
+                    let (new, n) = query.replace_all(&regex, &text, replacement);
+                    if n > 0 {
+                        let cursor = state.cursor().min(new.len());
+                        state.set_selected_range(0..text.len(), cx);
+                        state.replace(new, window, cx);
+                        state.set_selected_range(cursor..cursor, cx);
+                    }
+                    n
+                });
+                total += n;
+                changed += (n > 0) as usize;
+                continue;
+            }
+            let Some(text) = tex_project::read_regular(path) else {
+                continue;
+            };
+            let (new, n) = query.replace_all(&regex, &text, replacement);
+            if n == 0 {
+                continue;
+            }
+            match atomic::write(path, new.as_bytes()) {
+                Ok(()) => {
+                    total += n;
+                    changed += 1;
+                    self.project.write().unwrap().update(path, &new);
+                }
+                Err(e) => window.push_notification(
+                    Notification::error(format!("Cannot write {}: {e}", path.display())),
+                    cx,
+                ),
+            }
+        }
+        if total > 0 {
+            window.push_notification(
+                Notification::success(format!(
+                    "Replaced {total} match{} in {changed} file{}.",
+                    if total == 1 { "" } else { "es" },
+                    plural(changed)
+                )),
+                cx,
+            );
+        }
+        self.reindex(cx);
+        self.git.update(cx, |g, cx| g.refresh(cx));
+        self.on_search_event(&self.search.clone(), &SearchPanelEvent::Search, window, cx);
+        self.build(cx);
+    }
+
     // ── Diff tab ─────────────────────────────────────────────────────────
 
     fn open_diff(&mut self, source: DiffSource, window: &mut Window, cx: &mut Context<Self>) {
@@ -1548,7 +1730,7 @@ impl Workspace {
                 self.navigator = kind;
                 self.files.update(cx, |f, cx| f.refresh(cx));
             }
-            Sidebar::SourceControl => {}
+            Sidebar::Search | Sidebar::SourceControl => {}
             Sidebar::Agent => self.agent.update(cx, |a, cx| a.activate(cx)),
         }
         cx.notify();
@@ -2556,6 +2738,21 @@ impl Workspace {
                                     this.toggle_sidebar(this.navigator, cx)
                                 })),
                         )
+                        .when(has_project, |d| {
+                            d.child(
+                                Button::new("toggle-search")
+                                    .ghost()
+                                    .icon(Glyph::Search)
+                                    .tooltip("Find in project (⇧⌘F)")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        if this.show_sidebar && this.sidebar == Sidebar::Search {
+                                            this.toggle_sidebar(Sidebar::Search, cx);
+                                        } else {
+                                            this.find_in_project(window, cx);
+                                        }
+                                    })),
+                            )
+                        })
                         .when(has_project, |d| {
                             d.child(
                                 Button::new("toggle-git")
@@ -3572,6 +3769,13 @@ impl Render for Workspace {
             self.files.update(cx, |f, cx| f.set_active(active, cx));
             let sidebar = match self.sidebar {
                 Sidebar::Outline | Sidebar::Files => self.render_navigator(cx).into_any_element(),
+                Sidebar::Search => div()
+                    .size_full()
+                    .bg(theme.sidebar)
+                    .border_r_1()
+                    .border_color(theme.sidebar_border)
+                    .child(self.search.clone())
+                    .into_any_element(),
                 Sidebar::SourceControl => self.git.clone().into_any_element(),
                 Sidebar::Agent => self.agent.clone().into_any_element(),
             };
@@ -3710,6 +3914,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, a: &OpenLocation, window, cx| {
                 this.reveal_range(a.file.clone(), a.range.clone(), window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &FindInProject, window, cx| this.find_in_project(window, cx)),
+            )
             .on_action(cx.listener(|this, a: &PackageDocs, window, cx| {
                 this.package_docs(a.name.clone(), window, cx)
             }))

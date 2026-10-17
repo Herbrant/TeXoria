@@ -101,6 +101,10 @@ glyphs! {
     Tool => "wrench",
     Web => "globe",
     Changes => "file-diff",
+    CaseSensitive => "case-sensitive",
+    WholeWord => "whole-word",
+    Regex => "regex",
+    ReplaceAll => "replace-all",
 }
 
 pub struct Assets;

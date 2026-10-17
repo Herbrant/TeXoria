@@ -57,6 +57,19 @@ follow a renamed file and close when their file is deleted. Documents and pictur
 text, such as images and PDFs, open in their usual app. Any other file could be a program (a
 project may come from anywhere), so TeXoria shows it in its folder instead of starting it.
 
+## Search
+
+⌘F (Ctrl+F) finds in the open file, ⌥⌘F (Ctrl+H) replaces in it.
+
+⇧⌘F (Ctrl+Shift+F), or the magnifying glass in the title bar, searches every text file of the
+project folder, starting with the selected text. The buttons in the search field match the
+case, whole words only, or a regular expression. Results are grouped by file: click one to
+jump to it. Open files are searched as they are on screen, unsaved edits included.
+
+The arrow on the left shows the replace field. *Replace All* changes every match: in open files
+through the editor, so ⌘Z undoes it, and directly on disk for the others. With a regular
+expression, `$1`, `$2`… in the replacement stand for its groups.
+
 ## Diagnostics
 
 After each run, the errors and warnings of the TeX log are underlined in the source and listed
