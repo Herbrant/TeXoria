@@ -2366,50 +2366,58 @@ impl Workspace {
         let changes = self.git.read(cx).change_count();
         let has_project = self.root.is_some();
 
+        // On Windows the whole title bar is a drag area: a press there is the
+        // system's (it moves the window) unless something on top blocks it, so
+        // the buttons are grouped in boxes that do. This also keeps a drag that
+        // starts on a button from moving the window elsewhere.
+        let buttons = || h_flex().gap_1().h_full().occlude();
         TitleBar::new().child(
             h_flex()
                 .flex_1()
                 .h_full()
                 .gap_1()
                 .child(
-                    Button::new("toggle-outline")
-                        .ghost()
-                        .small()
-                        .icon(Glyph::PanelLeft)
-                        .tooltip("Outline and files (⌘1, ⇧⌘E)")
-                        .on_click(
-                            cx.listener(|this, _, _, cx| this.toggle_sidebar(this.navigator, cx)),
-                        ),
+                    buttons()
+                        .child(
+                            Button::new("toggle-outline")
+                                .ghost()
+                                .small()
+                                .icon(Glyph::PanelLeft)
+                                .tooltip("Outline and files (⌘1, ⇧⌘E)")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.toggle_sidebar(this.navigator, cx)
+                                })),
+                        )
+                        .when(has_project, |d| {
+                            d.child(
+                                Button::new("toggle-git")
+                                    .ghost()
+                                    .small()
+                                    .icon(Glyph::Branch)
+                                    .when(changes > 0, |b| b.label(changes.to_string()))
+                                    .tooltip("Source control (⇧⌘G)")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.toggle_sidebar(Sidebar::SourceControl, cx)
+                                    })),
+                            )
+                        })
+                        .when(has_project, |d| {
+                            d.child(
+                                Button::new("toggle-agent")
+                                    .ghost()
+                                    .small()
+                                    .icon(Glyph::Sparkles)
+                                    .tooltip("Agent (⇧⌘K)")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        if this.show_sidebar && this.sidebar == Sidebar::Agent {
+                                            this.toggle_sidebar(Sidebar::Agent, cx);
+                                        } else {
+                                            this.show_agent(window, cx);
+                                        }
+                                    })),
+                            )
+                        }),
                 )
-                .when(has_project, |d| {
-                    d.child(
-                        Button::new("toggle-git")
-                            .ghost()
-                            .small()
-                            .icon(Glyph::Branch)
-                            .when(changes > 0, |b| b.label(changes.to_string()))
-                            .tooltip("Source control (⇧⌘G)")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.toggle_sidebar(Sidebar::SourceControl, cx)
-                            })),
-                    )
-                })
-                .when(has_project, |d| {
-                    d.child(
-                        Button::new("toggle-agent")
-                            .ghost()
-                            .small()
-                            .icon(Glyph::Sparkles)
-                            .tooltip("Agent (⇧⌘K)")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                if this.show_sidebar && this.sidebar == Sidebar::Agent {
-                                    this.toggle_sidebar(Sidebar::Agent, cx);
-                                } else {
-                                    this.show_agent(window, cx);
-                                }
-                            })),
-                    )
-                })
                 .child(
                     h_flex()
                         .flex_1()
@@ -2430,36 +2438,43 @@ impl Workspace {
                             )
                         }),
                 )
-                .child(self.render_status_pill(cx))
                 .child(
-                    Button::new("build")
-                        .primary()
-                        .small()
-                        .icon(Glyph::Play)
-                        .label("Build")
-                        .tooltip("Build now (⌘R)")
-                        .on_click(cx.listener(|this, _, _, cx| this.build(cx))),
-                )
-                .child(
-                    Button::new("theme")
-                        .ghost()
-                        .small()
-                        .icon(if cx.theme_is_dark() {
-                            Glyph::Sun
-                        } else {
-                            Glyph::Moon
-                        })
-                        .tooltip("Toggle light/dark")
-                        .on_click(cx.listener(|this, _, window, cx| this.toggle_theme(window, cx))),
-                )
-                .child(
-                    Button::new("settings")
-                        .ghost()
-                        .small()
-                        .icon(Glyph::Settings)
-                        .tooltip("Settings (⌘,)")
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
+                    buttons()
+                        .child(self.render_status_pill(cx))
+                        .child(
+                            Button::new("build")
+                                .primary()
+                                .small()
+                                .icon(Glyph::Play)
+                                .label("Build")
+                                .tooltip("Build now (⌘R)")
+                                .on_click(cx.listener(|this, _, _, cx| this.build(cx))),
+                        )
+                        .child(
+                            Button::new("theme")
+                                .ghost()
+                                .small()
+                                .icon(if cx.theme_is_dark() {
+                                    Glyph::Sun
+                                } else {
+                                    Glyph::Moon
+                                })
+                                .tooltip("Toggle light/dark")
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.toggle_theme(window, cx)
+                                    }),
+                                ),
+                        )
+                        .child(
+                            Button::new("settings")
+                                .ghost()
+                                .small()
+                                .icon(Glyph::Settings)
+                                .tooltip("Settings (⌘,)")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_settings(window, cx)
+                                })),
                         ),
                 )
                 .child(div().w(px(6.))),

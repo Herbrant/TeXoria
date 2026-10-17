@@ -168,13 +168,14 @@ fn main() {
             set_menus(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
 
+            // The title bar moves the window and handles double clicks itself
+            // (otherwise macOS does both too, and delays clicks on its buttons).
             let options = WindowOptions {
-                titlebar: Some(component::TitleBar::title_bar_options()),
                 window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
                 window_min_size: Some(size(px(720.), px(480.))),
                 // Matches the packaged `texoria.desktop`, so Linux shells pick up its icon.
                 app_id: Some("texoria".into()),
-                ..Default::default()
+                ..component::TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
                 cx.new(|cx| Workspace::new(path, window, cx))
