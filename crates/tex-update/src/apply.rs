@@ -332,7 +332,9 @@ fn install_tarball(tarball: &Path, prefix: &Path, staging: &Path) -> Result<()> 
     Ok(())
 }
 
-/// Copy the files under `from` into `to`, replacing them, except `skip`ped ones.
+/// Copy the files under `from` into `to`, replacing them, except `skip`ped
+/// ones. Links are copied as links: `fs::copy` would copy what they point to,
+/// wherever that is. A file or link in `to` is replaced, not written through.
 fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool) -> Result<()> {
     fs::create_dir_all(to)?;
     for e in fs::read_dir(from)? {
@@ -342,13 +344,33 @@ fn copy_tree(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool) -> Result<()>
             continue;
         }
         let dest = to.join(e.file_name());
-        if e.file_type()?.is_dir() {
+        let kind = e.file_type()?;
+        if kind.is_dir() {
             copy_tree(&path, &dest, skip)?;
+            continue;
+        }
+        if fs::symlink_metadata(&dest).is_ok_and(|m| !m.is_dir()) {
+            fs::remove_file(&dest)?;
+        }
+        if kind.is_symlink() {
+            copy_link(&path, &dest)?;
         } else {
             fs::copy(&path, &dest)?;
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn copy_link(link: &Path, dest: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(fs::read_link(link)?, dest)?;
+    Ok(())
+}
+
+/// Only Linux has tarball installs.
+#[cfg(not(unix))]
+fn copy_link(link: &Path, _: &Path) -> Result<()> {
+    bail!("{} is a link", link.display())
 }
 
 /// Move `current` to `aside` and `new` to `current`, putting `current` back
@@ -543,6 +565,54 @@ mod tests {
             .map(|e| e.file_name())
             .collect();
         assert_eq!(left, ["lib"]);
+    }
+
+    /// Links in the update are copied as links, never as the files they
+    /// point to, and the prefix's own links are replaced, not written through.
+    #[cfg(unix)]
+    #[test]
+    fn links_are_copied_as_links() {
+        let prefix = tempfile::tempdir().unwrap();
+        let p = prefix.path();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let secret = elsewhere.path().join("secret");
+        let mine = elsewhere.path().join("mine");
+        fs::write(&secret, "private").unwrap();
+        fs::write(&mine, "mine").unwrap();
+        fs::create_dir_all(p.join("bin")).unwrap();
+        fs::create_dir_all(p.join("share/icons")).unwrap();
+        std::os::unix::fs::symlink(&mine, p.join("share/icons/b.png")).unwrap();
+
+        let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut tar = tar::Builder::new(gz);
+        for (path, content) in [
+            ("usr/bin/texoria", &b"new"[..]),
+            ("usr/lib/texoria/libpdfium.so", b"new"),
+            ("usr/share/icons/b.png", b"png"),
+        ] {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(content.len() as u64);
+            h.set_mode(0o755);
+            tar.append_data(&mut h, path, content).unwrap();
+        }
+        let mut h = tar::Header::new_gnu();
+        h.set_entry_type(tar::EntryType::Symlink);
+        h.set_size(0);
+        h.set_mode(0o777);
+        tar.append_link(&mut h, "usr/share/icons/a.png", &secret)
+            .unwrap();
+        let archive = tar.into_inner().unwrap().finish().unwrap();
+
+        update(tarball_kind(p), "t.tar.gz", &archive)
+            .install()
+            .unwrap();
+        let a = p.join("share/icons/a.png");
+        assert!(fs::symlink_metadata(&a).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&a).unwrap(), secret);
+        let b = p.join("share/icons/b.png");
+        assert!(fs::symlink_metadata(&b).unwrap().is_file());
+        assert_eq!(fs::read_to_string(&b).unwrap(), "png");
+        assert_eq!(fs::read_to_string(&mine).unwrap(), "mine");
     }
 
     #[test]
