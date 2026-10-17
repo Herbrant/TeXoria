@@ -164,8 +164,11 @@ pub fn find(regex: &Regex, text: &str, limit: usize) -> Vec<Match> {
         let raw = &text[from..to];
         let lead = raw.len() - raw.trim_start().len();
         let preview = raw.trim().to_string();
-        let start = m.start() - from - lead;
-        let highlight = start..(end - from - lead).min(preview.len()).max(start);
+        // Offsets in `preview`; a match starting in the leading whitespace is
+        // highlighted from where the preview starts.
+        let in_preview = |i: usize| (i.max(from + lead) - from - lead).min(preview.len());
+        let start = in_preview(m.start());
+        let highlight = start..in_preview(end).max(start);
         out.push(Match {
             range: m.range(),
             line,
@@ -279,6 +282,50 @@ mod tests {
             vec![PathBuf::from("chapters/a.tex"), PathBuf::from("main.tex")]
         );
         assert_eq!(results.count(), 2);
+    }
+
+    #[test]
+    fn highlights_matches_starting_in_leading_whitespace() {
+        let text = "  holds\n\t\\item x\n";
+        let m = &find(&query("  holds").compile().unwrap(), text, 10)[0];
+        assert_eq!(m.preview, "holds");
+        assert_eq!(&m.preview[m.highlight.clone()], "holds");
+        let re = Query {
+            regex: true,
+            ..query(r"[ \t]+\\item")
+        };
+        let m = &find(&re.compile().unwrap(), text, 10)[0];
+        assert_eq!(m.line, 1);
+        assert_eq!(&text[m.range.clone()], "\t\\item");
+        assert_eq!(m.preview, "\\item x");
+        assert_eq!(&m.preview[m.highlight.clone()], "\\item");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn highlights_stay_in_the_preview(
+            text in "[a \t\né\\\\]{0,200}",
+            needle in "[a \té\\\\]{1,4}",
+            regex in proptest::bool::ANY,
+        ) {
+            let q = Query { regex, ..query(&needle) };
+            let Ok(re) = q.compile() else { return Ok(()) };
+            for m in find(&re, &text, MAX_MATCHES) {
+                let h = m.highlight.clone();
+                proptest::prop_assert!(h.start <= h.end && h.end <= m.preview.len());
+                proptest::prop_assert!(m.preview.is_char_boundary(h.start));
+                proptest::prop_assert!(m.preview.is_char_boundary(h.end));
+                let found = &text[m.range.clone()];
+                proptest::prop_assert_eq!(
+                    m.line as usize,
+                    text[..m.range.start].matches('\n').count()
+                );
+                // A one-line match without surrounding whitespace is shown whole.
+                if !found.contains('\n') && found.trim() == found {
+                    proptest::prop_assert_eq!(&m.preview[h], found);
+                }
+            }
+        }
     }
 
     #[test]
