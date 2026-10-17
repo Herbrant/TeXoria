@@ -19,7 +19,7 @@ pub struct Settings {
     /// Stop a compile after this many seconds (0: never).
     pub compile_timeout_secs: u64,
     pub recent: Vec<PathBuf>,
-    /// Project directories whose Git configuration may run.
+    /// Repositories (their working tree) whose Git configuration may run.
     pub trusted_projects: Vec<PathBuf>,
     /// Project directories whose `latexmkrc` may run. `None` in settings
     /// written before it was split from `trusted_projects`.
@@ -165,8 +165,9 @@ impl Settings {
         (self.git_timeout_secs > 0).then(|| Duration::from_secs(self.git_timeout_secs))
     }
 
-    /// Whether Git may run in `dir`. Only `dir` itself: trusting a folder
-    /// must not extend to every repository below it (a home directory).
+    /// Whether Git may run in the repository whose working tree is `dir`.
+    /// Only `dir` itself: trusting a folder must not extend to every
+    /// repository below it (a home directory).
     pub fn is_trusted(&self, dir: &Path) -> bool {
         self.trusted_projects.iter().any(|p| p == dir)
     }

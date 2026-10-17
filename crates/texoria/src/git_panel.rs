@@ -189,7 +189,8 @@ enum RepoState {
     Searching,
     NoGit,
     NotRepo,
-    Untrusted,
+    /// The repository's working tree, which the user has not trusted.
+    Untrusted(PathBuf),
     Ready(Repo),
     Failed(SharedString),
 }
@@ -380,12 +381,12 @@ impl GitPanel {
         };
         // Cheap check first: no process (and no macOS developer-tools
         // prompt) for projects that are not in a repository.
-        if !inside_repo(&dir) {
+        let Some(top) = repo_top(&dir) else {
             self.state = RepoState::NotRepo;
             return;
-        }
+        };
         if !trusted {
-            self.state = RepoState::Untrusted;
+            self.state = RepoState::Untrusted(top);
             return;
         }
         self.state = RepoState::Searching;
@@ -397,7 +398,8 @@ impl GitPanel {
                     let git = cached
                         .unwrap_or_else(Git::find)
                         .map(|g| g.network_timeout(timeout));
-                    let found = git.as_ref().map(|g| g.discover(&dir));
+                    // Only the trusted working tree, never a repository above it.
+                    let found = git.as_ref().map(|g| g.discover_at(&top));
                     (git, found)
                 })
                 .await;
@@ -1072,7 +1074,7 @@ impl GitPanel {
 
     // ── Rendering ────────────────────────────────────────────────────────
 
-    fn render_message(&self, title: &'static str, body: &'static str, cx: &App) -> Div {
+    fn render_message(&self, title: &'static str, body: impl Into<SharedString>, cx: &App) -> Div {
         let theme = cx.theme();
         v_flex()
             .gap_1()
@@ -1089,7 +1091,7 @@ impl GitPanel {
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(body),
+                    .child(body.into()),
             )
     }
 
@@ -1786,11 +1788,19 @@ impl GitPanel {
                     ),
                 )
                 .into_any_element(),
-            RepoState::Untrusted => v_flex()
+            RepoState::Untrusted(top) => v_flex()
                 .child(self.render_message(
-                    "Trust this project to use Git",
-                    "A repository's configuration can run programs, so Git stays off \
-                     until you trust the project.",
+                    "Trust this repository to use Git",
+                    format!(
+                        "A repository's configuration can run programs, so Git stays off \
+                         until you trust it. The repository is {}{}.",
+                        top.display(),
+                        if self.project_dir.as_deref() == Some(top.as_path()) {
+                            ""
+                        } else {
+                            ", a folder above the document's"
+                        }
+                    ),
                     cx,
                 ))
                 .child(
@@ -1798,7 +1808,7 @@ impl GitPanel {
                         Button::new("git-trust")
                             .warning()
                             .small()
-                            .label("Trust Project")
+                            .label("Trust Repository")
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(GitPanelEvent::Trust))),
                     ),
                 )
@@ -2046,10 +2056,14 @@ fn main_remote<'a>(status: &Status, remotes: &'a [String]) -> Option<&'a str> {
         .map(String::as_str)
 }
 
-/// Whether `dir` or a parent has a `.git` (directory, or file for worktrees
-/// and submodules).
-fn inside_repo(dir: &Path) -> bool {
-    dir.ancestors().any(|d| d.join(".git").exists())
+/// The working tree of the repository `dir` is in: the nearest of `dir` and
+/// its parents with a `.git` (directory, or file for worktrees and
+/// submodules). Found without running git, which must not run before the
+/// user trusts that folder.
+pub fn repo_top(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors()
+        .find(|d| d.join(".git").exists())
+        .map(Path::to_path_buf)
 }
 
 fn file_name(path: &str) -> &str {
@@ -2170,7 +2184,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{SyncReview, civil_from_days, inside_repo, main_remote};
+    use super::{SyncReview, civil_from_days, main_remote, repo_top};
     use tex_git::{Change, Entry, Status};
 
     fn entry(path: &str, index: Change, worktree: Change) -> Entry {
@@ -2247,8 +2261,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("paper/figures");
         std::fs::create_dir_all(&sub).unwrap();
-        assert!(!inside_repo(&sub));
+        assert_eq!(repo_top(&sub), None);
         std::fs::create_dir(dir.path().join(".git")).unwrap();
-        assert!(inside_repo(&sub));
+        assert_eq!(repo_top(&sub).as_deref(), Some(dir.path()));
+        std::fs::write(
+            dir.path().join("paper/.git"),
+            "gitdir: ../.git/modules/paper\n",
+        )
+        .unwrap();
+        assert_eq!(repo_top(&sub), Some(dir.path().join("paper")));
     }
 }

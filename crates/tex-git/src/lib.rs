@@ -187,6 +187,29 @@ impl Git {
         Ok(Some(Repo::new(self.clone(), canon(root), canon(git_dir))))
     }
 
+    /// The repository whose working tree is exactly `top`, which the user
+    /// trusts. Git never looks above it (`GIT_CEILING_DIRECTORIES`): a `.git`
+    /// that git does not accept there must not hand the project over to a
+    /// repository in a parent folder, whose configuration nobody trusted.
+    pub fn discover_at(&self, top: &Path) -> Result<Option<Repo>> {
+        let mut git = self.clone();
+        if let Some(parent) = top.parent()
+            && let Ok(ceiling) = std::env::join_paths([parent])
+        {
+            git = git.env("GIT_CEILING_DIRECTORIES", ceiling);
+        }
+        let top = canon(&top.to_string_lossy());
+        match git.discover(&top)? {
+            Some(repo) if repo.root() == top => Ok(Some(repo)),
+            Some(repo) => Err(Error::Invalid(format!(
+                "Git found the repository at {}, not at {}",
+                repo.root().display(),
+                top.display()
+            ))),
+            None => Ok(None),
+        }
+    }
+
     /// `git init` in `dir` (created if needed), adding a LaTeX `.gitignore`
     /// unless there is one.
     pub fn init(&self, dir: &Path) -> Result<Repo> {

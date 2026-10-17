@@ -31,7 +31,7 @@ That is on purpose, until you allow it: see [latexmkrc](preview.md#latexmkrc).
 
 - *Git is not installed*: install Git (on macOS, `xcode-select --install` or Homebrew), then
   reopen the project.
-- *Trust this project to use Git*: see [Trusting a project](git.md#trusting-a-project).
+- *Trust this repository to use Git*: see [Trusting a project](git.md#trusting-a-project).
 
 ## Push or pull fails with an authentication error
 

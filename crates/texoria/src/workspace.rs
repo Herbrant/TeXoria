@@ -786,7 +786,11 @@ impl Workspace {
             .as_ref()
             .and_then(|r| r.parent())
             .map(Path::to_path_buf);
-        let trusted = dir.as_ref().is_some_and(|d| self.settings.is_trusted(d));
+        // Trust is the repository's: its configuration is what runs.
+        let trusted = dir
+            .as_deref()
+            .and_then(git_panel::repo_top)
+            .is_some_and(|top| self.settings.is_trusted(&top));
         self.git.update(cx, |g, cx| g.set_project(dir, trusted, cx));
     }
 
@@ -1189,7 +1193,12 @@ impl Workspace {
                         // latexmkrc comes from the remote and still needs consent. A
                         // `%!TEX root` may point elsewhere: that is not ours to trust.
                         let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
-                        if this.root.as_ref().is_some_and(|r| r.starts_with(&dir)) {
+                        let top = this
+                            .root
+                            .as_deref()
+                            .and_then(Path::parent)
+                            .and_then(git_panel::repo_top);
+                        if top.as_deref() == Some(dir.as_path()) {
                             this.trust_git(cx);
                         }
                     }
@@ -1383,11 +1392,15 @@ impl Workspace {
     }
 
     /// Let Git run in the project (its configuration can run programs).
+    /// Trust the repository the project is in (its working tree).
     fn trust_git(&mut self, cx: &mut Context<Self>) {
-        let Some(job) = self.job() else {
+        let Some(top) = self
+            .job()
+            .and_then(|job| git_panel::repo_top(job.work_dir()))
+        else {
             return;
         };
-        self.settings.trust(job.work_dir().to_path_buf());
+        self.settings.trust(top);
         self.settings.save();
         self.sync_git(cx);
         cx.notify();

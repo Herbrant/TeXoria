@@ -366,3 +366,26 @@ fn excluded_build_artifacts_stay_local() {
     assert!(repo.status().unwrap().is_clean());
     assert!(!repo.abs_path(".gitignore").exists());
 }
+
+#[test]
+fn discovery_stays_in_the_trusted_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(git) = git(tmp.path()) else {
+        eprintln!("git not found; skipping");
+        return;
+    };
+    let outer = git.init(&tmp.path().join("outer")).unwrap();
+    let paper = outer.root().join("paper");
+    // Not a repository git accepts: plain discovery climbs to `outer`.
+    std::fs::create_dir_all(paper.join(".git")).unwrap();
+    let climbed = git.discover(&paper).unwrap().unwrap();
+    assert_eq!(climbed.root(), outer.root());
+
+    assert!(git.discover_at(&paper).unwrap().is_none());
+    let found = git.discover_at(outer.root()).unwrap().unwrap();
+    assert_eq!(found.root(), outer.root());
+    // A subfolder of a repository is not its working tree.
+    let sub = outer.root().join("chapters");
+    std::fs::create_dir_all(&sub).unwrap();
+    assert!(git.discover_at(&sub).unwrap().is_none());
+}

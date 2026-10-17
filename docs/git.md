@@ -8,9 +8,12 @@ keep working as they do in a terminal.
 
 A repository's own configuration can run programs (for example `core.fsmonitor` or filters),
 even on a plain `git status`. So TeXoria does not run Git in a project you open until you choose
-*Trust Project* in the Source Control panel. Projects you clone from TeXoria are trusted
-automatically. Trust applies to that exact folder, not to the folders below it, and can be
-revoked in [Settings](settings.md#trusted-projects).
+*Trust Repository* in the Source Control panel. What you trust is the repository, the folder
+with its `.git`: the panel shows which one, and says so when it is a folder above the
+document's. Projects you clone from TeXoria are trusted automatically. Trust applies to that
+exact repository, not to the folders below it, and can be revoked in
+[Settings](settings.md#trusted-projects). Git never looks for a repository above the one you
+trusted.
 
 ## Changes and commits
 

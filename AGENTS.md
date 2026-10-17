@@ -100,7 +100,10 @@ texoria ─┬─ tex-compile ── tex-log
   own config can run programs even on `git status` (`core.fsmonitor`, filters), so the app only
   uses a `Repo` for trusted projects. Trust is split in `Settings`, both exact directories (never
   their subdirectories): `trusted_projects` lets Git run, `rc_allowed` lets a `latexmkrc` run; a
-  clone only gets the first, for its root file's directory when that is inside the clone.
+  clone only gets the first, when the root file's repository is the clone itself. Git trust is
+  the repository's working tree (`git_panel::repo_top` finds the nearest `.git` without running
+  git) and `Git::discover_at` sets `GIT_CEILING_DIRECTORIES`, so git never climbs to an
+  untrusted repository in a parent folder.
   Credentials are refused if a value has a control character (the credential protocol is line
   based), Overleaf servers must be HTTPS, and commands are logged without their environment. `Git::find` is lazy (on macOS `/usr/bin/git` is skipped without the
   Command Line Tools, whose stub would pop up an installer). Integration tests in
