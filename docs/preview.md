@@ -11,6 +11,11 @@ only once its pages are rendered, so the preview never flashes.
 With live preview off, typeset by hand with ⌘R. ⌘. stops a run (outside the editor) and a run
 is stopped anyway after a timeout (5 minutes by default).
 
+A project opened before shows its last PDF right away. The first time, TeXoria typesets the
+document from scratch and only shows the PDF it made: build files that came with the project
+(in a clone or an archive) are never shown, since they could be crafted to attack the PDF
+renderer.
+
 ## SyncTeX
 
 - **Source → PDF**: ⌘J scrolls the preview to the cursor's position.

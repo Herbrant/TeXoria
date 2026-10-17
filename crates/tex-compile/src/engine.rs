@@ -40,6 +40,9 @@ pub struct Job {
     /// Let latexmk read the project's own `latexmkrc` / `.latexmkrc`. These
     /// are Perl scripts, so they are only honored for trusted projects.
     pub allow_project_rc: bool,
+    /// Typeset even if the outputs look up to date (latexmk `-g`): they may
+    /// not be the engine's.
+    pub force: bool,
 }
 
 impl Job {
@@ -55,6 +58,7 @@ impl Job {
             root_file,
             out_dir,
             allow_project_rc: false,
+            force: false,
         }
     }
 
@@ -125,6 +129,9 @@ impl Engine {
                     for rc in latexmk_rc_files() {
                         c.arg("-r").arg(rc);
                     }
+                }
+                if job.force {
+                    c.arg("-g");
                 }
                 c.arg(flavor.latexmk_flag())
                     .args(["-interaction=nonstopmode", "-file-line-error", "-synctex=1"])
@@ -398,7 +405,9 @@ mod tests {
         job.allow_project_rc = true;
         let args = args_of(&engine.command(&job));
         assert_eq!(args[0], "-pdf");
-        assert!(!args.iter().any(|a| a == "-norc" || a == "-r"));
+        assert!(!args.iter().any(|a| a == "-norc" || a == "-r" || a == "-g"));
+        job.force = true;
+        assert!(args_of(&engine.command(&job)).iter().any(|a| a == "-g"));
     }
 
     #[test]

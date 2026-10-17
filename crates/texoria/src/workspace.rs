@@ -130,6 +130,10 @@ pub struct Workspace {
     show_diagnostics: bool,
     /// The project has a `latexmkrc` that is ignored until the user trusts it.
     untrusted_rc: bool,
+    /// A PDF already in the build folder may be shown: TeXoria built it, or
+    /// the project was opened before. One that came with the project (a
+    /// clone, an archive) could be crafted for the PDF renderer.
+    show_old_pdf: bool,
     /// A close was already refused once because saving failed.
     refused_close: bool,
     fixups: Rc<RefCell<Vec<CursorFixup>>>,
@@ -268,6 +272,7 @@ impl Workspace {
             cloning: None,
             show_diagnostics: false,
             untrusted_rc: false,
+            show_old_pdf: false,
             refused_close: false,
             fixups: Rc::new(RefCell::new(Vec::new())),
             focus: cx.focus_handle(),
@@ -489,6 +494,7 @@ impl Workspace {
             self.root = Some(root.clone());
             *self.project.write().unwrap() = Project::open(&root);
             self.refresh_outline(cx);
+            self.show_old_pdf = self.settings.recent.contains(&root);
             self.settings.push_recent(root.clone());
             self.settings.save();
             // The previous project's run is irrelevant now.
@@ -504,7 +510,7 @@ impl Workspace {
             self.files
                 .update(cx, |f, cx| f.set_project(Some(root.clone()), cx));
             // Show a previous build right away, if any.
-            if job.artifact("pdf").is_file() {
+            if self.show_old_pdf && job.artifact("pdf").is_file() {
                 let synctex = Some(job.artifact("synctex.gz")).filter(|p| p.is_file());
                 self.pdf
                     .update(cx, |pdf, cx| pdf.load(job.artifact("pdf"), synctex, cx));
@@ -1443,9 +1449,12 @@ impl Workspace {
     }
 
     fn typeset(&mut self, cx: &mut Context<Self>) {
-        let Some(job) = self.job() else {
+        let Some(mut job) = self.job() else {
             return;
         };
+        // Build files that came with the project would make latexmk skip
+        // the run, and leave their PDF in place of ours.
+        job.force = !self.show_old_pdf;
         if !self.save_all(cx) {
             return;
         }
@@ -1513,7 +1522,8 @@ impl Workspace {
                 let report = self.typeset_report(out.status, out.elapsed);
                 self.answer_typeset(out.id, ToolResult::ok(report));
                 self.agent.update(cx, |a, cx| a.set_errors(errors, cx));
-                if let Some(pdf) = out.pdf {
+                self.show_old_pdf |= out.pdf_written;
+                if let Some(pdf) = out.pdf.filter(|_| self.show_old_pdf) {
                     self.pdf.update(cx, |p, cx| p.load(pdf, out.synctex, cx));
                 }
                 // .bib files may have been edited outside the app.

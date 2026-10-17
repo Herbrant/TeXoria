@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use tex_log::{Diagnostic, Severity};
 
@@ -39,6 +39,9 @@ pub struct Output {
     pub status: Status,
     /// Present if the PDF exists after the run.
     pub pdf: Option<PathBuf>,
+    /// The engine wrote the PDF during this run (it may also have left an
+    /// older one alone, up to date or not).
+    pub pdf_written: bool,
     pub synctex: Option<PathBuf>,
     pub diagnostics: Vec<Diagnostic>,
     pub elapsed: Duration,
@@ -138,6 +141,7 @@ struct Running {
     job: Job,
     child: Child,
     started: Instant,
+    started_at: SystemTime,
 }
 
 struct Worker {
@@ -262,6 +266,7 @@ impl Worker {
                     job,
                     child,
                     started: Instant::now(),
+                    started_at: SystemTime::now(),
                 });
             }
             Err(e) => {
@@ -344,9 +349,17 @@ impl Worker {
             status = Status::Failed;
         }
         let existing = |p: PathBuf| p.is_file().then_some(p);
+        let pdf = existing(job.artifact("pdf"));
+        // File times may be coarser than the clock.
+        let since = run.started_at - Duration::from_secs(2);
+        let pdf_written = pdf
+            .as_ref()
+            .and_then(|p| p.metadata().ok()?.modified().ok())
+            .is_some_and(|t| t >= since);
         let out = Output {
             id: run.id,
-            pdf: existing(job.artifact("pdf")),
+            pdf,
+            pdf_written,
             synctex: existing(job.artifact("synctex.gz"))
                 .or_else(|| existing(job.artifact("synctex"))),
             job,
@@ -491,8 +504,26 @@ mod tests {
         assert_eq!(done.len(), 1, "requests should coalesce");
         assert_eq!(done[0].status, Status::Success);
         assert_eq!(done[0].pdf.as_deref(), Some(job.artifact("pdf").as_path()));
+        assert!(done[0].pdf_written);
         let ignore = std::fs::read_to_string(dir.path().join(".texoria/.gitignore")).unwrap();
         assert!(ignore.lines().any(|l| l == "*"));
+    }
+
+    #[test]
+    fn tells_a_pdf_left_from_before() {
+        let dir = tempfile::tempdir().unwrap();
+        let job = Job::for_root(dir.path().join("main.tex"));
+        std::fs::create_dir_all(&job.out_dir).unwrap();
+        let old = std::fs::File::create(job.artifact("pdf")).unwrap();
+        old.set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+        let (events, sink) = collect();
+        let compiler = Compiler::new(fake_engine("true"), Duration::ZERO, sink);
+        compiler.request_now(job.clone());
+        wait_for(&events, 1);
+        let done = finished(&events);
+        assert!(done[0].pdf.is_some());
+        assert!(!done[0].pdf_written);
     }
 
     #[test]
