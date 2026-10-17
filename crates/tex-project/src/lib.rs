@@ -537,6 +537,179 @@ mod tests {
         assert!(check::run(&p).iter().all(|i| i.code != "duplicate-label"));
     }
 
+    #[test]
+    fn include_cycles_are_walked_once() {
+        let dir = project(&[
+            ("main.tex", "\\section{M}\\input{a}"),
+            ("a.tex", "\\section{A}\\input{b}\\input{main}"),
+            ("b.tex", "\\section{B}\\input{a}\\input{b}"),
+        ]);
+        let p = Project::open(dir.path().join("main.tex"));
+        assert_eq!(titles(&p), ["M", "A", "B"]);
+        assert_eq!(p.files().len(), 3);
+    }
+
+    #[test]
+    fn loads_at_most_max_files() {
+        let mut files: Vec<(String, String)> = vec![("main.tex".into(), "\\input{f0}".into())];
+        for i in 0..MAX_FILES + 5 {
+            files.push((format!("f{i}.tex"), format!("\\input{{f{}}}", i + 1)));
+        }
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let dir = project(&files);
+        let p = Project::open(dir.path().join("main.tex"));
+        assert_eq!(p.files().len(), MAX_FILES);
+    }
+
+    #[test]
+    fn updates_and_reloads_bibliographies() {
+        let dir = project(&[
+            (
+                "main.tex",
+                "\\documentclass{article}\\addbibresource{refs.bib}\\input{ch}",
+            ),
+            ("refs.bib", "@misc{a, title={A}}"),
+            ("ch.tex", "\\label{c}"),
+        ]);
+        let (main, bib) = (dir.path().join("main.tex"), dir.path().join("refs.bib"));
+        let mut p = Project::open(&main);
+        assert!(p.is_bib(&bib) && !p.is_bib(&main));
+        assert!(p.contains(&dir.path().join("ch.tex")) && !p.contains(&bib));
+        assert_eq!(
+            p.index(&dir.path().join("ch.tex")).unwrap().labels[0].name,
+            "c"
+        );
+        assert!(p.index(&bib).is_none());
+        let keys = |p: &Project| p.bib_entries().map(|e| e.key.clone()).collect::<Vec<_>>();
+        // The editor's text of the .bib.
+        p.update(&bib, "@misc{b, title={B}}");
+        assert_eq!(keys(&p), ["b"]);
+        assert!(!p.contains(&bib));
+        // Back to what is on disk.
+        p.reload_bibs();
+        assert_eq!(keys(&p), ["a"]);
+        std::fs::write(&bib, "@misc{c, title={C}}").unwrap();
+        p.reload_bibs();
+        assert_eq!(keys(&p), ["c"]);
+        assert_eq!(p.root(), main);
+        assert_eq!(p.root_dir(), dir.path());
+        assert_eq!(p.packages().count(), 0);
+    }
+
+    #[test]
+    fn lists_graphics_paths_once_and_resolves_pictures() {
+        let dir = project(&[
+            (
+                "main.tex",
+                "\\graphicspath{{img/}{fig/}}\\input{a}\\newenvironment{e}{}{}",
+            ),
+            ("a.tex", "\\graphicspath{{fig/}}\\usepackage{x}"),
+            ("plot.png", ""),
+            ("img/photo.jpeg", ""),
+            ("fig/chart.pdf", ""),
+            ("fig/chart.png", ""),
+            ("fig/raw", ""),
+            ("img/both.eps", ""),
+            ("both.svg", ""),
+        ]);
+        let p = Project::open(dir.path().join("main.tex"));
+        let gp = p.graphics_paths();
+        assert_eq!(gp, ["img/", "fig/"]);
+        assert_eq!(p.environments().collect::<Vec<_>>(), ["e"]);
+        assert_eq!(p.packages().collect::<Vec<_>>(), ["x"]);
+        let d = dir.path();
+        let find = |name: &str| resolve_graphics(d, &gp, name);
+        assert_eq!(find("plot"), Some(d.join("plot.png")));
+        assert_eq!(find(" plot.png "), Some(d.join("plot.png")));
+        assert_eq!(find("photo"), Some(d.join("img/photo.jpeg")));
+        // Extensions in their order of preference.
+        assert_eq!(find("chart"), Some(d.join("fig/chart.pdf")));
+        assert_eq!(find("raw"), Some(d.join("fig/raw")));
+        // The root folder first.
+        assert_eq!(find("both"), Some(d.join("both.svg")));
+        assert_eq!(find("./img/../plot"), Some(d.join("plot.png")));
+        assert_eq!(find("missing"), None);
+        assert_eq!(find("  "), None);
+        assert_eq!(resolve_graphics(d, &[], "photo"), None);
+    }
+
+    #[test]
+    fn resolves_paths_with_their_extension_once() {
+        let root = Path::new("/p");
+        assert_eq!(resolve_tex(root, "ch/a"), PathBuf::from("/p/ch/a.tex"));
+        assert_eq!(
+            resolve_tex(root, " ch/a.tex "),
+            PathBuf::from("/p/ch/a.tex")
+        );
+        // TeX adds `.tex` to anything else.
+        assert_eq!(
+            resolve_tex(root, "foo.sty"),
+            PathBuf::from("/p/foo.sty.tex")
+        );
+        assert_eq!(resolve_tex(root, "a.TEX"), PathBuf::from("/p/a.TEX.tex"));
+        assert_eq!(resolve_tex(root, "./x/../b"), PathBuf::from("/p/b.tex"));
+        assert_eq!(resolve_bib(root, "refs"), PathBuf::from("/p/refs.bib"));
+        assert_eq!(resolve_bib(root, "refs.bib"), PathBuf::from("/p/refs.bib"));
+        let abs = std::env::temp_dir().join("abs");
+        assert_eq!(
+            resolve_bib(root, abs.to_str().unwrap()),
+            normalize(&abs.with_extension("bib"))
+        );
+    }
+
+    #[test]
+    fn root_from_a_magic_comment_in_the_first_lines() {
+        let file = Path::new("/p/ch/a.tex");
+        for magic in [
+            "% !TEX root = ../main.tex",
+            "%!TeX root=../main.tex",
+            "%% !TEX root =  ../main.tex  ",
+            "\t% !TEX root = ./../main.tex",
+        ] {
+            assert_eq!(
+                find_root(file, magic),
+                PathBuf::from("/p/main.tex"),
+                "{magic}"
+            );
+        }
+        // Past the 20th line: not a magic comment any more.
+        let late = format!("{}% !TEX root = ../main.tex", "\n".repeat(20));
+        assert_eq!(find_root(file, &late), file);
+        // The file itself, as a root.
+        assert_eq!(find_root(file, "\\documentclass{article}"), file);
+    }
+
+    #[test]
+    fn root_found_up_to_two_folders_above() {
+        let dir = project(&[
+            ("thesis.tex", "\\documentclass{book}\\input{parts/one/ch}"),
+            ("parts/one/ch.tex", "\\section{x}"),
+            ("parts/one/other.tex", "\\documentclass{article}"),
+            ("parts/latin1.tex", ""),
+        ]);
+        std::fs::write(
+            dir.path().join("parts/latin1.tex"),
+            b"\\documentclass caf\xe9",
+        )
+        .unwrap();
+        let ch = dir.path().join("parts/one/ch.tex");
+        assert_eq!(
+            find_root(&ch, "\\section{x}"),
+            dir.path().join("thesis.tex")
+        );
+
+        // Three folders up is too far.
+        let dir = project(&[
+            ("thesis.tex", "\\documentclass{book}\\input{a/b/c/ch}"),
+            ("a/b/c/ch.tex", ""),
+        ]);
+        let ch = dir.path().join("a/b/c/ch.tex");
+        assert_eq!(find_root(&ch, ""), ch);
+    }
+
     #[cfg(unix)]
     #[test]
     fn skips_named_pipes() {
