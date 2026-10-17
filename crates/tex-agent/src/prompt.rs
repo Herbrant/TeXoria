@@ -182,10 +182,10 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn diag(severity: Severity, file: &str, line: u32, message: &str) -> Diagnostic {
+    fn diag(severity: Severity, file: PathBuf, line: u32, message: &str) -> Diagnostic {
         Diagnostic {
             severity,
-            file: Some(PathBuf::from(file)),
+            file: Some(file),
             line: Some(line),
             message: message.into(),
         }
@@ -193,21 +193,24 @@ mod tests {
 
     #[test]
     fn fix_errors_lists_errors_relative_to_the_project() {
+        // Joined like the app's paths, so that the separators are the
+        // platform's (`strip_prefix` keeps those of the original).
+        let dir = Path::new("/p");
         let ds = [
             diag(
                 Severity::Warning,
-                "/p/main.tex",
+                dir.join("main.tex"),
                 3,
                 "Reference `x' undefined",
             ),
             diag(
                 Severity::Error,
-                "/p/ch/a.tex",
+                dir.join("ch").join("a.tex"),
                 12,
                 "Undefined control sequence",
             ),
         ];
-        let p = fix_errors(Path::new("/p"), &ds);
+        let p = fix_errors(dir, &ds);
         assert!(p.starts_with("The document fails to typeset."));
         let a = Path::new("ch").join("a.tex");
         assert!(p.contains(&format!(
@@ -219,7 +222,7 @@ mod tests {
             "warnings are left out when there are errors"
         );
 
-        let p = fix_errors(Path::new("/p"), &ds[..1]);
+        let p = fix_errors(dir, &ds[..1]);
         assert!(p.starts_with("The document typesets with warnings."));
         assert!(p.contains("main.tex:3: warning:"));
     }
