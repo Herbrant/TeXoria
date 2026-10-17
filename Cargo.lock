@@ -4916,7 +4916,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-view"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "log",
  "pdfium-render",
@@ -6699,7 +6699,7 @@ dependencies = [
 
 [[package]]
 name = "synctex"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "flate2",
  "tempfile",
@@ -6842,7 +6842,7 @@ dependencies = [
 
 [[package]]
 name = "tex-agent"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agent-client-protocol-schema",
  "futures-channel",
@@ -6861,7 +6861,7 @@ dependencies = [
 
 [[package]]
 name = "tex-cite"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -6872,7 +6872,7 @@ dependencies = [
 
 [[package]]
 name = "tex-compile"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "log",
@@ -6883,7 +6883,7 @@ dependencies = [
 
 [[package]]
 name = "tex-complete"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "nucleo-matcher",
  "serde",
@@ -6916,7 +6916,7 @@ dependencies = [
 
 [[package]]
 name = "tex-git"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "log",
@@ -6928,14 +6928,14 @@ dependencies = [
 
 [[package]]
 name = "tex-log"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "regex",
 ]
 
 [[package]]
 name = "tex-project"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "regex",
  "tempfile",
@@ -6944,7 +6944,7 @@ dependencies = [
 
 [[package]]
 name = "tex-spell"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "encoding_rs",
@@ -6962,7 +6962,7 @@ dependencies = [
 
 [[package]]
 name = "tex-syntax"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "codebook-tree-sitter-latex",
  "tree-sitter",
@@ -6970,7 +6970,7 @@ dependencies = [
 
 [[package]]
 name = "tex-update"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -6986,11 +6986,11 @@ dependencies = [
 
 [[package]]
 name = "tex-vim"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "texoria"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

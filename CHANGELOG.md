@@ -3,6 +3,83 @@
 Notable changes to TeXoria, newest first. Each release's section is also its GitHub release notes
 (`scripts/release-notes.sh`), so every release must have one before it is tagged.
 
+## [0.4.0] - 2026-10-17
+
+### Added
+
+- **Find and replace in the whole project.** The new Search view (⇧⌘F / Ctrl+Shift+F, or the
+  magnifying glass in the title bar) looks through every text file of the project, unsaved edits
+  included, matching the case, whole words or a regular expression. Replace All changes open
+  files through the editor, so it can be undone, and writes the others. ([47cebfa](https://github.com/Herbrant/TeXoria/commit/47cebfa))
+- **Go to definition and hover.** ⌘-click or F12 on a `\ref`, `\cite`, `\input`,
+  `\includegraphics` or one of your commands and environments goes to its label, `.bib` entry,
+  file or definition. Hovering shows a citation's authors and title, what a label is attached to
+  and how often it is referenced, file sizes and what a command does. ([a75284e](https://github.com/Herbrant/TeXoria/commit/a75284e))
+- **Problems found as you type.** References to labels that do not exist, labels defined twice,
+  citations missing from the bibliography, `\input`/`\includegraphics` of missing files, and
+  `.bib` entries that are not closed, share a key, lack a required field or have a malformed
+  DOI are underlined without building, explained on hover and listed with the problems.
+  ([8e84e19](https://github.com/Herbrant/TeXoria/commit/8e84e19))
+- **Grammar checking with LanguageTool.** With LanguageTool installed (`brew install
+  languagetool`), grammar and style mistakes are underlined in the file's language, with their
+  corrections in the context menu. LaTeX commands are read as what they stand for, so they are
+  not mistakes. TeXoria starts the local server when needed and stops it on quit; your text
+  stays on your computer unless you set another server. Off by default. ([87261f9](https://github.com/Herbrant/TeXoria/commit/87261f9))
+- **Citations from a DOI, arXiv or a search.** Edit → Add Citation… (⇧⌘C) fetches the entry of a
+  DOI or an arXiv preprint, or lists Crossref's matches for some words of a title and authors,
+  writes it to the project's `.bib` and cites it at the cursor. ([6448c12](https://github.com/Herbrant/TeXoria/commit/6448c12))
+- **Word count.** The status bar shows the project's words (or the selection's); click it for
+  the words in the text, headings and captions, the formulas, and each file's. ([db9917b](https://github.com/Herbrant/TeXoria/commit/db9917b))
+- **Vim mode.** Edit → Vim Mode (or Settings → Editor) turns on Vim's keys: normal, insert and
+  visual modes, counts, operators with motions and text objects, including `ie`/`ae` for the
+  environment around the cursor and `i$`/`a$` for inline math, registers shared with the
+  clipboard, search, `.` and `:w`/`:q`. ([9e14f1b](https://github.com/Herbrant/TeXoria/commit/9e14f1b))
+- **A complete PDF viewer.** The preview shows the current page and goes to any page (⌘G), fits
+  the whole page (⌘9), moves page by page with the arrows, Page Up/Down, Home and End
+  ([028b310](https://github.com/Herbrant/TeXoria/commit/028b310)); follows `hyperref` links, opening web and email links in their apps and never
+  files or programs ([b8d527b](https://github.com/Herbrant/TeXoria/commit/b8d527b)); finds text with ⌘F ([cb539f6](https://github.com/Herbrant/TeXoria/commit/cb539f6)); and copies the text you
+  drag across with ⌘C ([3f800d4](https://github.com/Herbrant/TeXoria/commit/3f800d4)).
+- **Presentations.** View → Present PDF (⇧⌘↵) shows the PDF full screen, one page at a time, with
+  the usual presentation keys; it follows rebuilds. ([7da9608](https://github.com/Herbrant/TeXoria/commit/7da9608))
+- **Export the PDF.** File → Export PDF… (⇧⌘S) saves a copy where you like, starting from where
+  the last one went. ([753d5f7](https://github.com/Herbrant/TeXoria/commit/753d5f7))
+- **Formatting.** Edit → Format Document (⇧⌥F) indents the file with tex-fmt in one undoable
+  edit, following a `tex-fmt.toml` in the project; Format on save does it on every ⌘S.
+  ([855ea3c](https://github.com/Herbrant/TeXoria/commit/855ea3c))
+- **Shell escape for trusted projects.** When a build fails because a package (`minted`, `svg`,
+  `pythontex`…) needs to run programs, a banner lets you allow shell escape for that project; it
+  is listed and revocable with the other trusted projects. ([aeeeb8d](https://github.com/Herbrant/TeXoria/commit/aeeeb8d))
+- Comment or uncomment the selected lines with ⌘/ (Ctrl+/). ([dbc7813](https://github.com/Herbrant/TeXoria/commit/dbc7813))
+- Path completion in `\input`, `\include`, `\includegraphics`, `\bibliography` and
+  `\addbibresource`. ([e3213ee](https://github.com/Herbrant/TeXoria/commit/e3213ee))
+- A project opens again with the tabs you left open. ([a414c3e](https://github.com/Herbrant/TeXoria/commit/a414c3e))
+- Right-click a package in `\usepackage` to open its documentation, from your TeX distribution
+  or texdoc.org. ([ababb1b](https://github.com/Herbrant/TeXoria/commit/ababb1b))
+- Agents can see the PDF: new tools give them a picture of a page (to check the layout), the
+  PDF's text, the bibliography entries matching a search and the word count; the problems they
+  get include those found as you type. ([6569d9b](https://github.com/Herbrant/TeXoria/commit/6569d9b))
+- ⌘= / ⌘- / ⌘0 change the editor's font size (a new *Font size* setting); after clicking the
+  preview they zoom the PDF as before. Buttons, the sidebar and the status bar are larger.
+  ([15aa17d](https://github.com/Herbrant/TeXoria/commit/15aa17d))
+
+### Changed
+
+- The editor's Replace moved from ⇧⌘F to ⌥⌘F (Ctrl+H stays), since ⇧⌘F now searches the whole
+  project. ([47cebfa](https://github.com/Herbrant/TeXoria/commit/47cebfa))
+- The Edit menu lists the editing commands (undo, find, comment, format, citations, Vim mode).
+  ([dbc7813](https://github.com/Herbrant/TeXoria/commit/dbc7813), [47cebfa](https://github.com/Herbrant/TeXoria/commit/47cebfa))
+
+### Build and documentation
+
+- New crates: `tex-cite` (DOI, arXiv and Crossref lookups) and `tex-vim` (the Vim emulation);
+  `pdf-view` answers queries about the text, links and pages of a PDF, and a small hyperref PDF
+  is a new test fixture. ([6448c12](https://github.com/Herbrant/TeXoria/commit/6448c12), [9e14f1b](https://github.com/Herbrant/TeXoria/commit/9e14f1b), [6fc3148](https://github.com/Herbrant/TeXoria/commit/6fc3148))
+- The project index and the bibliography reader record where every label, reference, citation,
+  include and entry is. ([ff54788](https://github.com/Herbrant/TeXoria/commit/ff54788))
+- New README screenshots. ([5d39d26](https://github.com/Herbrant/TeXoria/commit/5d39d26))
+
+**Full changelog**: [v0.3.0...v0.4.0](https://github.com/Herbrant/TeXoria/compare/v0.3.0...v0.4.0)
+
 ## [0.3.0] - 2026-10-17
 
 ### Added
