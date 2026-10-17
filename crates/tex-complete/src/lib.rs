@@ -123,6 +123,9 @@ pub(crate) static DB: LazyLock<Database> = LazyLock::new(|| {
 
 /// Detect the completion context at byte `offset` of `text`.
 pub fn context(text: &str, offset: usize) -> Option<Context> {
+    if !text.is_char_boundary(offset) {
+        return None;
+    }
     let line_start = text[..offset].rfind('\n').map_or(0, |i| i + 1);
     let before = &text[line_start..offset];
     if in_comment(before) {
@@ -823,6 +826,14 @@ mod tests {
         // An escaped percent sign is text.
         assert_eq!(ctx("50\\% \\sec|"), Some(Context::Command { prefix: 5..9 }));
         assert_eq!(ctx("|"), None);
+    }
+
+    #[test]
+    fn offsets_outside_the_text_or_inside_a_character() {
+        assert_eq!(context("\\sec", 10), None);
+        assert_eq!(context("\\ref{é", 6), None);
+        assert!(complete("\\sec", 10, None, "  ").is_empty());
+        assert!(complete("\\ref{é", 6, None, "  ").is_empty());
     }
 
     #[test]

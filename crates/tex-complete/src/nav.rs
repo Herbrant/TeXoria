@@ -680,7 +680,10 @@ mod tests {
             Some(Target::Source { file, .. }) if file == dir.path().join("refs.bib")
         ));
         assert_eq!(definition(&p, &path("missing", PathKind::Bib)), None);
-        assert_eq!(target_text(definition(&p, &path("part", PathKind::Tex))), "");
+        assert_eq!(
+            target_text(definition(&p, &path("part", PathKind::Tex))),
+            ""
+        );
         // Pictures through `\graphicspath`, opened with another app.
         assert_eq!(
             definition(&p, &path("plot", PathKind::Graphics)),
