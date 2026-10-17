@@ -592,15 +592,25 @@ fn innermost_open_env(text: &str) -> Option<String> {
     stack.pop().map(str::to_string)
 }
 
+/// A project written to a temporary folder, for the tests: the first file is the root.
+#[cfg(test)]
+pub(crate) fn temp_project(files: &[(&str, &str)]) -> (tempfile::TempDir, Project) {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, text) in files {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    let project = Project::open(dir.path().join(files[0].0));
+    (dir, project)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use std::path::Path;
-
-    fn at(text: &str) -> (String, usize) {
-        let i = text.find('|').unwrap();
-        (text.replacen('|', "", 1), i)
-    }
+    use test_support::at;
 
     #[test]
     fn detects_contexts() {
@@ -734,8 +744,7 @@ mod tests {
 
     #[test]
     fn labels_and_citations_from_project() {
-        let root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample/main.tex");
+        let root = test_support::fixtures().join("sample/main.tex");
         let p = Project::open(std::fs::canonicalize(root).unwrap());
 
         let (t, o) = at("\\ref{sec:me|");
@@ -761,5 +770,377 @@ mod tests {
         assert_eq!(expand_snippet("a${1:x}b"), ("axb".into(), 1));
         assert_eq!(expand_snippet("x$0y"), ("xy".into(), 1));
         assert_eq!(expand_snippet("\\alpha"), ("\\alpha".into(), 6));
+    }
+
+    fn labels(items: &[Item]) -> Vec<&str> {
+        items.iter().map(|i| i.label.as_str()).collect()
+    }
+
+    #[test]
+    fn context_edge_cases() {
+        let ctx = |src: &str| {
+            let (t, o) = at(src);
+            context(&t, o)
+        };
+        // Only the cursor's line counts, whatever its line ending.
+        assert_eq!(
+            ctx("\\cite{a}\r\n\\ref{x|"),
+            Some(Context::Label { prefix: 15..16 })
+        );
+        assert_eq!(
+            ctx("\\section{A}\r\n\\sec|"),
+            Some(Context::Command { prefix: 13..17 })
+        );
+        // An argument opened on an earlier line is not seen.
+        assert_eq!(ctx("\\cite{a,\n  b|"), None);
+        // Starred commands and the list commands.
+        assert_eq!(ctx("\\ref*{x|"), Some(Context::Label { prefix: 6..7 }));
+        assert_eq!(
+            ctx("\\includeonly{a,b|"),
+            Some(Context::Path {
+                prefix: 15..16,
+                kind: PathKind::Tex
+            })
+        );
+        assert_eq!(
+            ctx("\\addbibresource{my refs,1.b|"),
+            Some(Context::Path {
+                prefix: 16..27,
+                kind: PathKind::BibResource
+            })
+        );
+        assert_eq!(
+            ctx("\\RequirePackage{x|"),
+            Some(Context::Package { prefix: 16..17 })
+        );
+        // Only the first argument of a command is known.
+        assert_eq!(ctx("\\citep{a}{b|"), None);
+        // A brace without a command, or after something that is not a name.
+        assert_eq!(ctx("{a|"), None);
+        assert_eq!(ctx("\\1{a|"), None);
+        assert_eq!(ctx("\\@x{a|"), None);
+        assert_eq!(ctx("\\foo1|"), None);
+        // An escaped percent sign is text.
+        assert_eq!(ctx("50\\% \\sec|"), Some(Context::Command { prefix: 5..9 }));
+        assert_eq!(ctx("|"), None);
+    }
+
+    #[test]
+    fn paths_need_a_project() {
+        let (t, o) = at("\\input{ch|");
+        assert!(complete(&t, o, None, "  ").is_empty());
+        let (dir, p) = temp_project(&[("main.tex", ""), ("chapter.tex", "")]);
+        let items = complete(&t, o, Some(&p), "  ");
+        assert_eq!(labels(&items), vec!["chapter.tex"]);
+        assert_eq!(items[0].replace, 7..9);
+        drop(dir);
+    }
+
+    #[test]
+    fn completes_packages_and_nothing_without_a_project() {
+        let (t, o) = at("\\usepackage{amsm|}");
+        let items = complete(&t, o, None, "  ");
+        assert_eq!(items[0].label, "amsmath");
+        assert_eq!(items[0].kind, ItemKind::Package);
+        // The closing brace stays: only environments swallow it.
+        assert_eq!(items[0].replace, 12..16);
+        for src in ["\\ref{a|", "\\cite{a|"] {
+            let (t, o) = at(src);
+            assert!(complete(&t, o, None, "  ").is_empty(), "{src}");
+        }
+    }
+
+    #[test]
+    fn completes_from_a_project() {
+        let (_dir, p) = temp_project(&[
+            (
+                "main.tex",
+                "\\newcommand{\\pair}[2]{(#1,#2)}\n\\newcommand{\\dup}{a}\n\
+                 \\newtheorem{conj}{Conjecture}\n\\newenvironment{itemize}{}{}\n\
+                 \\input{other}\n\\bibliography{refs}",
+            ),
+            ("other.tex", "\\newcommand{\\dup}{b}\n\\label{sec:other}"),
+            (
+                "refs.bib",
+                "@book{full, title={Full}, author={A. Author}, year=2000}\n\
+                 @book{titled, title={Only a title}}\n@misc{bare, note={x}}",
+            ),
+        ]);
+        let (t, o) = at("\\pai|");
+        let items = complete(&t, o, Some(&p), "  ");
+        let pair = items.iter().find(|i| i.label == "\\pair").unwrap();
+        assert_eq!(pair.detail.as_deref(), Some("User command [2]"));
+        assert_eq!(pair.insert, "\\pair{}{}");
+        assert_eq!(pair.cursor, "\\pair{".len());
+
+        // A command defined twice is offered once.
+        let (t, o) = at("\\dup|");
+        let items = complete(&t, o, Some(&p), "  ");
+        assert_eq!(items.iter().filter(|i| i.label == "\\dup").count(), 1);
+        assert_eq!(items[0].detail.as_deref(), Some("User command"));
+
+        // User environments, but not twice when the database has them.
+        let (t, o) = at("\\begin{conj|");
+        let items = complete(&t, o, Some(&p), "  ");
+        assert_eq!(items[0].label, "conj");
+        assert_eq!(items[0].detail.as_deref(), Some("User environment"));
+        assert_eq!(items[0].insert, "conj}\n  \n\\end{conj}");
+        assert_eq!(items[0].cursor, "conj}\n  ".len());
+        let (t, o) = at("\\begin{itemize|");
+        let items = complete(&t, o, Some(&p), "  ");
+        assert_eq!(items.iter().filter(|i| i.label == "itemize").count(), 1);
+
+        let (t, o) = at("\\cref{sec:oth|");
+        let items = complete(&t, o, Some(&p), "  ");
+        assert_eq!(labels(&items), vec!["sec:other"]);
+        assert_eq!(items[0].kind, ItemKind::Label);
+
+        // Citation details from whatever the entry has.
+        let (t, o) = at("\\cite{|");
+        let items = complete(&t, o, Some(&p), "  ");
+        let detail = |key: &str| {
+            items
+                .iter()
+                .find(|i| i.label == key)
+                .unwrap()
+                .detail
+                .clone()
+        };
+        assert_eq!(detail("full").as_deref(), Some("A. Author · 2000 · Full"));
+        assert_eq!(detail("titled").as_deref(), Some("Only a title"));
+        assert_eq!(detail("bare"), None);
+    }
+
+    #[test]
+    fn end_without_an_open_environment() {
+        for src in ["\\end{|", "\\begin{a}\\end{a}\\end{|", "\\begin{a\\end{|"] {
+            let (t, o) = at(src);
+            assert!(complete(&t, o, None, "  ").is_empty(), "{src}");
+        }
+        // An `\end` without its name closes nothing.
+        assert_eq!(innermost_open_env("\\begin{a}\\end{a"), Some("a".into()));
+        assert_eq!(innermost_open_env("\\begin{a}\\begin{b}\\end{a}"), None);
+        assert_eq!(innermost_open_env("\\begin{a}\\end{b}"), Some("a".into()));
+    }
+
+    #[test]
+    fn begin_keeps_the_line_indentation() {
+        let (t, o) = at("\t\\begin{equation*|");
+        let items = complete(&t, o, None, "\t");
+        let it = items.iter().find(|i| i.label == "equation*").unwrap();
+        assert!(
+            it.insert.ends_with("\n\t\\end{equation*}"),
+            "{:?}",
+            it.insert
+        );
+        assert_eq!(it.replace, 8..t.len());
+    }
+
+    #[test]
+    fn ranking() {
+        // Nothing typed: candidates in order, capped.
+        let (t, o) = at("\\|");
+        let items = complete(&t, o, None, "  ");
+        assert_eq!(items.len(), MAX_ITEMS);
+        assert_eq!(items[0].label, DB.commands[0].name);
+
+        let item = |label: &str| Item {
+            kind: ItemKind::Label,
+            label: label.into(),
+            detail: None,
+            replace: 0..0,
+            insert: label.into(),
+            cursor: 0,
+        };
+        let many: Vec<_> = (0..MAX_ITEMS + 50)
+            .map(|i| (format!("x{i}"), item(&format!("x{i}"))))
+            .collect();
+        assert_eq!(rank("x", many.clone()).len(), MAX_ITEMS);
+        assert_eq!(rank("", many).len(), MAX_ITEMS);
+        // Equal scores keep the candidates' order.
+        let ties = vec![("ab".into(), item("first")), ("ab".into(), item("second"))];
+        assert_eq!(labels(&rank("ab", ties)), vec!["first", "second"]);
+        // An exact match beats a longer prefix match, which beats a fuzzy one.
+        let mixed = vec![
+            ("a_x_b".into(), item("fuzzy")),
+            ("abc".into(), item("prefix")),
+            ("ab".into(), item("exact")),
+        ];
+        assert_eq!(labels(&rank("ab", mixed)), vec!["exact", "prefix", "fuzzy"]);
+        assert!(rank("zzz", vec![("abc".into(), item("abc"))]).is_empty());
+    }
+
+    #[test]
+    fn snippet_edge_cases() {
+        // Lowest tab stop first, whatever its place.
+        assert_eq!(expand_snippet("a$2b$1c"), ("abc".into(), 2));
+        assert_eq!(expand_snippet("$0a$0b"), ("ab".into(), 0));
+        // Dollars that are not tab stops stay.
+        assert_eq!(expand_snippet("$"), ("$".into(), 1));
+        assert_eq!(expand_snippet("a$x$"), ("a$x$".into(), 4));
+        assert_eq!(expand_snippet("${x:y}"), ("${x:y}".into(), 6));
+        // An unclosed placeholder runs to the end.
+        assert_eq!(expand_snippet("a${1:bc"), ("abc".into(), 1));
+        assert_eq!(expand_snippet("a${1"), ("a".into(), 1));
+        assert_eq!(expand_snippet("${"), ("${".into(), 2));
+        // Defaults are not nested: the first `}` ends one.
+        assert_eq!(expand_snippet("${1:a${2:b}}"), ("a${2:b}".into(), 0));
+        assert_eq!(expand_snippet("é${1:ü}ß"), ("éüß".into(), 2));
+        assert_eq!(expand_snippet(""), (String::new(), 0));
+    }
+
+    #[test]
+    fn path_completion_edge_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("sub/deep")).unwrap();
+        for f in [
+            "Main.TEX",
+            "README",
+            ".hidden.tex",
+            "sub/a.tex",
+            "sub/b.bib",
+        ] {
+            std::fs::write(root.join(f), "").unwrap();
+        }
+        let names = |items: Vec<Item>| {
+            items
+                .into_iter()
+                .map(|i| (i.label, i.insert, i.kind))
+                .collect::<Vec<_>>()
+        };
+        // Extensions in any case; no hidden files, nor files without extension.
+        assert_eq!(
+            names(complete_path(root, "", 0..0, PathKind::Tex)),
+            vec![
+                ("sub/".into(), "sub/".into(), ItemKind::Folder),
+                ("Main.TEX".into(), "Main".into(), ItemKind::File),
+            ]
+        );
+        assert_eq!(
+            names(complete_path(root, "sub/", 0..4, PathKind::Bib)),
+            vec![
+                ("deep/".into(), "sub/deep/".into(), ItemKind::Folder),
+                ("b.bib".into(), "sub/b".into(), ItemKind::File),
+            ]
+        );
+        // Parent folders and absolute folders.
+        let items = complete_path(&root.join("sub/deep"), "../", 0..0, PathKind::Tex);
+        assert!(names(items).iter().any(|(_, i, _)| i == "../a"));
+        let abs = format!("{}/", root.join("sub").to_str().unwrap().replace('\\', "/"));
+        let items = complete_path(Path::new("/nowhere"), &abs, 0..0, PathKind::Tex);
+        assert_eq!(items.len(), 2, "{abs}");
+        assert!(items.iter().any(|i| i.insert == format!("{abs}a")));
+        // A folder that does not exist.
+        assert!(complete_path(root, "missing/", 0..0, PathKind::Tex).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_completion_follows_symlinked_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("real")).unwrap();
+        std::fs::write(root.join("real/x.tex"), "").unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+        let items = complete_path(root, "link/", 0..0, PathKind::Tex);
+        assert_eq!(labels(&items), vec!["x.tex"]);
+        assert_eq!(items[0].insert, "link/x");
+    }
+
+    #[test]
+    fn many_entries_are_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..MAX_DIR_ENTRIES + 10 {
+            std::fs::write(dir.path().join(format!("f{i}.tex")), "").unwrap();
+        }
+        let items = complete_path(dir.path(), "", 0..0, PathKind::Tex);
+        assert_eq!(items.len(), MAX_ITEMS);
+    }
+
+    /// Text made of what matters to the context: commands, braces, brackets,
+    /// commas, comments, lines and multi-byte characters.
+    const LATEXISH: &str = "[a-z\\\\{}\\[\\],%* \n\r$0-9é€]{0,40}";
+
+    fn naive_unclosed_brace(s: &str) -> Option<usize> {
+        let opens: Vec<usize> = s.match_indices('{').map(|(i, _)| i).collect();
+        opens.into_iter().rev().find(|&i| {
+            let after = &s[i + 1..];
+            let mut depth = 0i32;
+            for c in after.chars() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+                if depth < 0 {
+                    return false;
+                }
+            }
+            true
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn context_and_complete_never_panic(text in LATEXISH, at in 0usize..64) {
+            let offset = at.min(text.len());
+            prop_assume!(text.is_char_boundary(offset));
+            if let Some(ctx) = context(&text, offset) {
+                let prefix = match ctx {
+                    Context::Command { prefix }
+                    | Context::Begin { prefix }
+                    | Context::End { prefix }
+                    | Context::Label { prefix }
+                    | Context::Citation { prefix }
+                    | Context::Package { prefix }
+                    | Context::Path { prefix, .. } => prefix,
+                };
+                prop_assert!(prefix.start <= prefix.end && prefix.end == offset);
+                prop_assert!(text.is_char_boundary(prefix.start));
+            }
+            for item in complete(&text, offset, None, "  ") {
+                prop_assert!(item.cursor <= item.insert.len());
+                prop_assert!(item.insert.is_char_boundary(item.cursor));
+                prop_assert!(item.replace.end <= text.len());
+                prop_assert!(text.is_char_boundary(item.replace.start));
+                prop_assert!(text.is_char_boundary(item.replace.end));
+            }
+        }
+
+        #[test]
+        fn snippets_put_the_cursor_inside(snippet in "[a-z${}:0-9é]{0,30}") {
+            let (out, cursor) = expand_snippet(&snippet);
+            prop_assert!(cursor <= out.len());
+            prop_assert!(out.is_char_boundary(cursor));
+            if !snippet.contains('$') {
+                prop_assert_eq!(&out, &snippet);
+                prop_assert_eq!(cursor, out.len());
+            }
+        }
+
+        #[test]
+        fn unclosed_brace_matches_a_naive_search(s in "[a{}é]{0,30}") {
+            prop_assert_eq!(unclosed_brace(&s), naive_unclosed_brace(&s));
+        }
+
+        #[test]
+        fn ranking_is_capped(n in 0usize..300, typed in "[a-c]{0,2}") {
+            let candidates = (0..n)
+                .map(|i| {
+                    let name = format!("{}{i}", ["a", "b", "c"][i % 3]);
+                    let item = Item {
+                        kind: ItemKind::Label,
+                        label: name.clone(),
+                        detail: None,
+                        replace: 0..0,
+                        insert: name.clone(),
+                        cursor: 0,
+                    };
+                    (name, item)
+                })
+                .collect();
+            prop_assert!(rank(&typed, candidates).len() <= MAX_ITEMS.min(n));
+        }
     }
 }

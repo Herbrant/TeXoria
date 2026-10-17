@@ -384,11 +384,9 @@ fn escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn at(src: &str) -> (String, usize) {
-        let o = src.find('|').unwrap();
-        (src.replacen('|', "", 1), o)
-    }
+    use crate::temp_project;
+    use proptest::prelude::*;
+    use test_support::at;
 
     fn sym(src: &str) -> Option<Symbol> {
         let (t, o) = at(src);
@@ -436,9 +434,7 @@ mod tests {
     }
 
     fn sample() -> Project {
-        let root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample/main.tex");
-        Project::open(root)
+        Project::open(test_support::fixtures().join("sample/main.tex"))
     }
 
     #[test]
@@ -491,5 +487,365 @@ mod tests {
         )
         .unwrap();
         assert!(hover_text.contains("Knuth"), "{hover_text}");
+    }
+
+    #[test]
+    fn symbol_edge_cases() {
+        assert_eq!(
+            sym("\\label{ sec:a|b }"),
+            Some(Symbol::Label {
+                name: "sec:ab".into(),
+                range: 8..14
+            })
+        );
+        assert!(matches!(
+            sym("\\end{ite|mize}"),
+            Some(Symbol::Environment { name, .. }) if name == "itemize"
+        ));
+        assert!(matches!(
+            sym("\\RequirePackage[x]{tik|z}"),
+            Some(Symbol::Package { name, .. }) if name == "tikz"
+        ));
+        assert!(matches!(
+            sym("\\ref*{a|}"),
+            Some(Symbol::Reference { name, .. }) if name == "a"
+        ));
+        assert!(matches!(
+            sym("\\bibliography{a,b|c}"),
+            Some(Symbol::Path { path, kind: PathKind::Bib, range }) if path == "bc" && range == (16..18)
+        ));
+        // At either end of a command name.
+        assert!(matches!(sym("|\\alpha"), Some(Symbol::Command { name, .. }) if name == "\\alpha"));
+        assert!(matches!(sym("\\alpha|"), Some(Symbol::Command { name, .. }) if name == "\\alpha"));
+        assert_eq!(sym("\\alpha |x"), None);
+        assert_eq!(sym("\\|"), None);
+        // Empty items, unknown commands, groups without a command.
+        assert_eq!(sym("\\cite{a,|,b}"), None);
+        assert_eq!(sym("\\cite{|}"), None);
+        assert_eq!(sym("\\textit{x}{a|}"), None);
+        assert_eq!(sym("{a|}"), None);
+        assert_eq!(sym("\\x1{a|}"), None);
+        // The argument must close on the same line, whatever its ending.
+        assert_eq!(sym("\\ref{a|\nb}"), None);
+        assert!(matches!(
+            sym("x\r\n\\ref{a|}\r\n"),
+            Some(Symbol::Reference { range, .. }) if range == (8..9)
+        ));
+        // An offset past the end is the end; one inside a character is nothing.
+        assert!(matches!(
+            symbol_at("\\alpha", 100),
+            Some(Symbol::Command { range, .. }) if range == (0..6)
+        ));
+        assert_eq!(symbol_at("\\ref{é}", 6), None);
+        assert_eq!(symbol_at("", 0), None);
+    }
+
+    #[test]
+    fn symbol_ranges() {
+        let all = [
+            Symbol::Reference {
+                name: "a".into(),
+                range: 1..2,
+            },
+            Symbol::Citation {
+                key: "a".into(),
+                range: 1..2,
+            },
+            Symbol::Label {
+                name: "a".into(),
+                range: 1..2,
+            },
+            Symbol::Path {
+                path: "a".into(),
+                kind: PathKind::Tex,
+                range: 1..2,
+            },
+            Symbol::Package {
+                name: "a".into(),
+                range: 1..2,
+            },
+            Symbol::Environment {
+                name: "a".into(),
+                range: 1..2,
+            },
+            Symbol::Command {
+                name: "a".into(),
+                range: 1..2,
+            },
+        ];
+        assert!(all.iter().all(|s| s.range() == (1..2)));
+    }
+
+    const MAIN: &str = "\\documentclass{article}\n\\usepackage{graphicx}\n\
+        \\graphicspath{{img/}}\n\\newcommand{\\one}[1]{#1}\n\\newcommand{\\two}[2]{#1#2}\n\
+        \\newcommand{\\zero}{z}\n\\newenvironment{box}{}{}\n\\begin{document}\n\
+        \\section{Intro}\\label{sec:a}\n\\ref{sec:a} \\ref{sec:a} \\ref{sec:b}\n\
+        \\input{part}\n\\includegraphics{plot}\n\\bibliography{refs,missing}\n\
+        \\begin{thebibliography}{9}\n\\bibitem{old} Old.\n\\end{thebibliography}\n\
+        \\end{document}\n";
+
+    fn project() -> (tempfile::TempDir, Project) {
+        temp_project(&[
+            ("main.tex", MAIN),
+            (
+                "part.tex",
+                "\\label{sec:b}\n\\label{sec:unused}\n\\cref{sec:b}",
+            ),
+            ("img/plot.png", &"x".repeat(2048)),
+            (
+                "refs.bib",
+                "@article{full, title={On *Stars*}, author={A and B}, journal={J_1}, year={2001}}\n\
+                 @misc{bare, note={x}}\n",
+            ),
+        ])
+    }
+
+    fn reference(name: &str) -> Symbol {
+        Symbol::Reference {
+            name: name.into(),
+            range: 0..0,
+        }
+    }
+
+    fn label(name: &str) -> Symbol {
+        Symbol::Label {
+            name: name.into(),
+            range: 0..0,
+        }
+    }
+
+    fn citation(key: &str) -> Symbol {
+        Symbol::Citation {
+            key: key.into(),
+            range: 0..0,
+        }
+    }
+
+    fn path(path: &str, kind: PathKind) -> Symbol {
+        Symbol::Path {
+            path: path.into(),
+            kind,
+            range: 0..0,
+        }
+    }
+
+    fn command(name: &str) -> Symbol {
+        Symbol::Command {
+            name: name.into(),
+            range: 0..0,
+        }
+    }
+
+    fn environment(name: &str) -> Symbol {
+        Symbol::Environment {
+            name: name.into(),
+            range: 0..0,
+        }
+    }
+
+    /// The text a definition points to.
+    fn target_text(target: Option<Target>) -> String {
+        match target {
+            Some(Target::Source { file, range }) => {
+                let text = std::fs::read_to_string(file).unwrap();
+                text[range].to_string()
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn definitions_of_every_kind() {
+        let (dir, p) = project();
+        assert_eq!(target_text(definition(&p, &reference("sec:b"))), "sec:b");
+        assert_eq!(definition(&p, &reference("nowhere")), None);
+        assert_eq!(target_text(definition(&p, &citation("full"))), "full");
+        // A `\bibitem` when no bibliography has the key.
+        assert_eq!(target_text(definition(&p, &citation("old"))), "old");
+        assert_eq!(definition(&p, &citation("nokey")), None);
+        assert_eq!(target_text(definition(&p, &command("\\two"))), "\\two");
+        assert_eq!(definition(&p, &command("\\alpha")), None);
+        assert_eq!(target_text(definition(&p, &environment("box"))), "box");
+        assert_eq!(definition(&p, &environment("itemize")), None);
+
+        assert_eq!(
+            definition(&p, &path("refs", PathKind::Bib)),
+            Some(Target::Source {
+                file: dir.path().join("refs.bib"),
+                range: 0..0
+            })
+        );
+        assert!(matches!(
+            definition(&p, &path("refs.bib", PathKind::BibResource)),
+            Some(Target::Source { file, .. }) if file == dir.path().join("refs.bib")
+        ));
+        assert_eq!(definition(&p, &path("missing", PathKind::Bib)), None);
+        assert_eq!(target_text(definition(&p, &path("part", PathKind::Tex))), "");
+        // Pictures through `\graphicspath`, opened with another app.
+        assert_eq!(
+            definition(&p, &path("plot", PathKind::Graphics)),
+            Some(Target::External(dir.path().join("img/plot.png")))
+        );
+        assert_eq!(definition(&p, &path("nope", PathKind::Graphics)), None);
+        assert_eq!(definition(&p, &label("sec:a")), None);
+        let package = Symbol::Package {
+            name: "graphicx".into(),
+            range: 0..0,
+        };
+        assert_eq!(definition(&p, &package), None);
+    }
+
+    #[test]
+    fn hovers_of_every_kind() {
+        let (_dir, p) = project();
+        let hover = |s: Symbol| hover(&p, &s);
+        assert_eq!(
+            hover(reference("sec:a")).as_deref(),
+            Some("**Label** `sec:a` — Intro\n\nmain.tex:9")
+        );
+        assert_eq!(
+            hover(reference("nowhere")).as_deref(),
+            Some("No `\\label{nowhere}` in the project.")
+        );
+        // Labels count their references across files.
+        let uses = |name: &str| hover(label(name)).unwrap();
+        assert_eq!(uses("sec:a"), "**Label** `sec:a`\n\nReferenced 2 times.");
+        assert_eq!(uses("sec:b"), "**Label** `sec:b`\n\nReferenced 2 times.");
+        assert_eq!(
+            uses("sec:unused"),
+            "**Label** `sec:unused`\n\nReferenced nowhere."
+        );
+        let (_d, single) = temp_project(&[("main.tex", "\\label{x}\\ref{x}")]);
+        assert_eq!(
+            super::hover(&single, &label("x")).unwrap(),
+            "**Label** `x`\n\nReferenced once."
+        );
+
+        // Citations: Markdown is escaped, the venue is in italics.
+        assert_eq!(
+            hover(citation("full")).unwrap(),
+            "**On \\*Stars\\***\n\nA, B\n\n*J\\_1*, 2001\n\n`@article{full}` — refs.bib"
+        );
+        assert_eq!(hover(citation("bare")).unwrap(), "`@misc{bare}` — refs.bib");
+        assert_eq!(
+            hover(citation("old")).as_deref(),
+            Some("**Citation** `old` (`\\bibitem`)")
+        );
+        assert_eq!(
+            hover(citation("nokey")).as_deref(),
+            Some("No entry `nokey` in the project's bibliography.")
+        );
+
+        assert_eq!(
+            hover(path("plot", PathKind::Graphics)).as_deref(),
+            Some("`img/plot.png` — 2 KB\n\n⌘-click to open it.")
+        );
+        assert!(
+            hover(path("part", PathKind::Tex))
+                .unwrap()
+                .starts_with("`part.tex` — ")
+        );
+        assert_eq!(
+            hover(path("gone", PathKind::Tex)).as_deref(),
+            Some("`gone` was not found.")
+        );
+        let package = Symbol::Package {
+            name: "graphicx".into(),
+            range: 0..0,
+        };
+        assert_eq!(
+            hover(package).as_deref(),
+            Some(
+                "**Package** `graphicx`\n\n[Documentation on texdoc.org](https://texdoc.org/pkg/graphicx)"
+            )
+        );
+
+        // User definitions first, then the database, else nothing.
+        assert_eq!(
+            hover(environment("box")).as_deref(),
+            Some("**Environment** `box` — main.tex")
+        );
+        assert!(
+            hover(environment("itemize"))
+                .unwrap()
+                .starts_with("**Environment** `itemize` — ")
+        );
+        assert_eq!(hover(environment("nosuchenv")), None);
+        assert_eq!(
+            hover(command("\\zero")).as_deref(),
+            Some("`\\zero` — main.tex:6")
+        );
+        assert_eq!(
+            hover(command("\\one")).as_deref(),
+            Some("`\\one`, 1 argument — main.tex:4")
+        );
+        assert_eq!(
+            hover(command("\\two")).as_deref(),
+            Some("`\\two`, 2 arguments — main.tex:5")
+        );
+        assert!(
+            hover(command("\\section"))
+                .unwrap()
+                .starts_with("`\\section` — ")
+        );
+        assert_eq!(hover(command("\\nosuchcommand")), None);
+    }
+
+    #[test]
+    fn sizes_and_escapes() {
+        assert_eq!(human_size(0), "0 bytes");
+        assert_eq!(human_size(1023), "1023 bytes");
+        assert_eq!(human_size(1024), "1 KB");
+        assert_eq!(human_size((1 << 20) - 1), "1023 KB");
+        assert_eq!(human_size(1 << 20), "1.0 MB");
+        assert_eq!(human_size(3 << 19), "1.5 MB");
+        assert_eq!(
+            escape("a*b_c`d[e]f<g>h#i\\j"),
+            "a\\*b\\_c\\`d\\[e\\]f\\<g\\>h\\#i\\\\j"
+        );
+        assert_eq!(escape("plain é"), "plain é");
+        let dir = Path::new("/p");
+        assert_eq!(
+            relative(dir, Path::new("/elsewhere/x.tex")),
+            Path::new("/elsewhere/x.tex").display().to_string()
+        );
+    }
+
+    fn naive_closing_brace(s: &str) -> Option<usize> {
+        s.match_indices('}').map(|(i, _)| i).find(|&i| {
+            let before = &s[..i];
+            before.matches('{').count() == before.matches('}').count()
+                && (0..i)
+                    .filter(|&k| s.is_char_boundary(k))
+                    .all(|k| s[..k].matches('{').count() >= s[..k].matches('}').count())
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn symbols_name_their_range(text in "[a-z\\\\{}\\[\\],%* \n\r:é]{0,40}", at in 0usize..48) {
+            let offset = at.min(text.len());
+            prop_assume!(text.is_char_boundary(offset));
+            if let Some(symbol) = symbol_at(&text, offset) {
+                let range = symbol.range();
+                let name = match &symbol {
+                    Symbol::Reference { name, .. }
+                    | Symbol::Label { name, .. }
+                    | Symbol::Package { name, .. }
+                    | Symbol::Environment { name, .. }
+                    | Symbol::Command { name, .. } => name,
+                    Symbol::Citation { key, .. } => key,
+                    Symbol::Path { path, .. } => path,
+                };
+                prop_assert_eq!(&text[range.clone()], name.as_str());
+                // On the offset's line.
+                prop_assert!(!text[range.start.min(offset)..range.end.max(offset)].contains('\n'));
+            }
+        }
+
+        #[test]
+        fn closing_brace_matches_a_naive_search(s in "[a{}é]{0,30}") {
+            prop_assert_eq!(closing_brace(&s), naive_closing_brace(&s));
+        }
     }
 }
