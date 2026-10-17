@@ -491,4 +491,246 @@ mod tests {
             None
         );
     }
+
+    /// Every way out of [`InstallKind::classify`] that the other tests do
+    /// not take.
+    #[test]
+    fn other_layouts() {
+        let manual = |kind: InstallKind| matches!(kind, InstallKind::Manual(_));
+        let none = Fake::default();
+        assert_eq!(classify("/", "linux", &none), InstallKind::Dev);
+        assert!(manual(classify("/home/me/bin/texoria", "freebsd", &none)));
+        assert!(manual(classify("/home/me/bin/texoria", "", &none)));
+        // Not a bundle: no MacOS folder, or not an .app.
+        let fs = Fake::default().with("/Applications", true);
+        assert!(manual(classify(
+            "/Applications/TeXoria.app/Contents/texoria",
+            "macos",
+            &fs
+        )));
+        assert!(manual(classify(
+            "/Applications/TeXoria/Contents/MacOS/texoria",
+            "macos",
+            &fs
+        )));
+        // Installed for all users.
+        let exe = "C:/Program Files/TeXoria/texoria.exe";
+        let fs = Fake::default()
+            .with("C:/Program Files/TeXoria", false)
+            .with("C:/Program Files/TeXoria/uninstall.exe", false);
+        let kind = classify(exe, "windows", &fs);
+        assert!(
+            kind.instructions().unwrap().contains("administrator"),
+            "{kind:?}"
+        );
+        // An AppImage the user cannot replace.
+        let image = Path::new("/opt/apps/TeXoria.AppImage");
+        let exe = Path::new("/tmp/.mount_x/usr/bin/texoria");
+        let fs = Fake::default().with("/opt/apps", false);
+        let kind = InstallKind::classify(exe, "linux", Some(image), &fs);
+        assert!(
+            kind.instructions().unwrap().contains("AppImage"),
+            "{kind:?}"
+        );
+        let kind = InstallKind::classify(exe, "linux", Some(Path::new("/")), &fs);
+        assert!(manual(kind));
+        // A tarball whose bin or lib folder the user cannot write to.
+        let tarball = |bin: bool, lib: bool| {
+            Fake::default()
+                .with("/home/me/.local", true)
+                .with("/home/me/.local/bin", bin)
+                .with("/home/me/.local/lib", lib)
+                .with("/home/me/.local/lib/texoria", true)
+        };
+        for (bin, lib) in [(false, true), (true, false)] {
+            let kind = classify("/home/me/.local/bin/texoria", "linux", &tarball(bin, lib));
+            assert!(manual(kind), "{bin} {lib}");
+        }
+        assert!(manual(classify(
+            "/home/me/texoria",
+            "linux",
+            &tarball(true, true)
+        )));
+    }
+
+    #[test]
+    fn what_each_kind_offers() {
+        let kinds = [
+            InstallKind::MacApp {
+                bundle: "/Applications/TeXoria.app".into(),
+            },
+            InstallKind::Windows { dir: "C:/x".into() },
+            InstallKind::AppImage {
+                file: "/home/me/Apps/TeXoria.AppImage".into(),
+            },
+            InstallKind::Tarball {
+                prefix: "/home/me/.local".into(),
+            },
+            InstallKind::Managed(Manager::Homebrew),
+            InstallKind::Managed(Manager::System),
+            InstallKind::Manual("Why."),
+            InstallKind::Dev,
+        ];
+        let parents: Vec<Option<PathBuf>> = kinds.iter().map(InstallKind::staging_parent).collect();
+        assert_eq!(
+            parents,
+            [
+                Some("/Applications".into()),
+                Some(std::env::temp_dir()),
+                Some("/home/me/Apps".into()),
+                Some("/home/me/.local".into()),
+                None,
+                None,
+                None,
+                None,
+            ]
+        );
+        let how: Vec<Option<&str>> = kinds.iter().map(InstallKind::instructions).collect();
+        assert_eq!(
+            how,
+            [
+                None,
+                None,
+                None,
+                None,
+                Some("Update it with: brew upgrade --cask texoria"),
+                Some("Update it with your package manager."),
+                Some("Why."),
+                None,
+            ]
+        );
+        let v = Version::new(1, 0, 0);
+        for kind in &kinds {
+            assert_eq!(
+                kind.self_updating(),
+                kind.asset(&v, "x86_64").is_some(),
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// The test program lives in `target/debug/deps`: never an installation
+    /// that updates itself.
+    #[test]
+    fn detects_the_test_program() {
+        let kind = InstallKind::detect();
+        assert!(!kind.self_updating(), "{kind:?}");
+        assert!(kind.instructions().is_some(), "{kind:?}");
+    }
+
+    #[test]
+    fn plain_paths() {
+        let p = PathBuf::from("/a/b");
+        assert_eq!(plain(p.clone()), p);
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                plain(r"\\?\C:\TeXoria".into()),
+                PathBuf::from(r"C:\TeXoria")
+            );
+            let unc = PathBuf::from(r"\\?\UNC\server\share");
+            assert_eq!(plain(unc.clone()), unc);
+        }
+    }
+
+    #[test]
+    fn real_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Disk.exists(dir.path()) && Disk.writable(dir.path()));
+        let missing = dir.path().join("missing");
+        assert!(!Disk.exists(&missing) && !Disk.writable(&missing));
+    }
+
+    mod props {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+
+        use proptest::prelude::*;
+
+        use super::*;
+
+        /// A file system that answers at random, but always the same for a path.
+        struct Coin(u64);
+
+        impl Coin {
+            fn flip(&self, path: &Path, side: u64) -> bool {
+                let mut h = DefaultHasher::new();
+                (self.0, side, path).hash(&mut h);
+                h.finish() & 1 == 1
+            }
+        }
+
+        impl Probe for Coin {
+            fn exists(&self, path: &Path) -> bool {
+                self.flip(path, 0)
+            }
+            fn writable(&self, path: &Path) -> bool {
+                self.flip(path, 1)
+            }
+        }
+
+        fn path() -> impl Strategy<Value = PathBuf> {
+            let name = prop::sample::select(vec![
+                "",
+                "Applications",
+                "TeXoria.app",
+                "Contents",
+                "MacOS",
+                "texoria",
+                "bin",
+                "lib",
+                "usr",
+                "local",
+                "opt",
+                "target",
+                "debug",
+                "release",
+                "AppTranslocation",
+                "C:",
+                "x",
+                "..",
+                ".",
+            ]);
+            (any::<bool>(), prop::collection::vec(name, 0..8)).prop_map(|(root, names)| {
+                let p = names.join("/");
+                PathBuf::from(if root { format!("/{p}") } else { p })
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn classify_is_total(
+                exe in path(),
+                os in prop_oneof![
+                    Just("macos".to_string()),
+                    Just("linux".to_string()),
+                    Just("windows".to_string()),
+                    "[a-z]{0,8}",
+                ],
+                appimage in prop::option::of(path()),
+                seed in any::<u64>(),
+            ) {
+                let kind = InstallKind::classify(&exe, &os, appimage.as_deref(), &Coin(seed));
+                let v = Version::new(1, 2, 3);
+                prop_assert_eq!(kind.asset(&v, "aarch64").is_some(), kind.self_updating());
+                prop_assert_eq!(kind.staging_parent().is_some(), kind.self_updating(), "{:?}", kind);
+                prop_assert_eq!(
+                    kind.instructions().is_some(),
+                    !kind.self_updating() && kind != InstallKind::Dev
+                );
+                if let Some(asset) = kind.asset(&v, "aarch64") {
+                    prop_assert!(asset.starts_with("texoria-1.2.3-") && asset.contains("aarch64"));
+                }
+                // An installation is only updated in place where it is.
+                match &kind {
+                    InstallKind::MacApp { bundle } => prop_assert!(exe.starts_with(bundle)),
+                    InstallKind::Windows { dir } => prop_assert_eq!(exe.parent(), Some(dir.as_path())),
+                    InstallKind::Tarball { prefix } => {
+                        prop_assert_eq!(exe.parent().and_then(Path::parent), Some(prefix.as_path()))
+                    }
+                    InstallKind::AppImage { file } => prop_assert_eq!(Some(file), appimage.as_ref()),
+                    _ => {}
+                }
+            }
+        }
+    }
 }
