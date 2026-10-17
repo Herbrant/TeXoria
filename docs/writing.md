@@ -15,6 +15,12 @@ Suggestions appear as you type and depend on where the cursor is:
 Ranking is fuzzy, so `\sec` finds `\section` and `\subsection`. Completions follow unsaved
 changes in every open tab.
 
+## Comments
+
+⌘/ (Ctrl+/) comments the lines of the selection out with `%`, at the indentation of the
+least indented one, or uncomments them if they all are comments already. Also in *Edit* →
+*Toggle Comment*.
+
 ## Outline
 
 The outline (⌘1) lists the parts, chapters, sections and subsections of the whole project,

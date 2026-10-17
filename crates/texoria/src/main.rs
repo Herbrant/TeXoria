@@ -5,6 +5,7 @@ mod agent_tools;
 mod assets;
 mod atomic;
 mod diff_view;
+mod edit;
 mod file_tree;
 mod git_panel;
 mod latex;
@@ -59,6 +60,7 @@ actions!(
         EditWithAgent,
         FixWithAgent,
         StopAgent,
+        ToggleComment,
         Quit,
     ]
 );
@@ -91,6 +93,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-k", ToggleAgent, None),
         KeyBinding::new("secondary-k", EditWithAgent, None),
         KeyBinding::new("secondary-q", Quit, None),
+        KeyBinding::new("secondary-/", ToggleComment, Some("Input")),
     ]);
 }
 
@@ -109,6 +112,17 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Open from Overleaf…", OpenFromOverleaf),
             MenuItem::separator(),
             MenuItem::action("Close Tab", CloseTab),
+        ]),
+        Menu::new("Edit").items([
+            MenuItem::action("Undo", gpui_kit::component::input::Undo),
+            MenuItem::action("Redo", gpui_kit::component::input::Redo),
+            MenuItem::separator(),
+            MenuItem::action("Cut", gpui_kit::component::input::Cut),
+            MenuItem::action("Copy", gpui_kit::component::input::Copy),
+            MenuItem::action("Paste", gpui_kit::component::input::Paste),
+            MenuItem::action("Select All", gpui_kit::component::input::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Toggle Comment", ToggleComment),
         ]),
         Menu::new("Build").items([
             MenuItem::action("Build", Build),

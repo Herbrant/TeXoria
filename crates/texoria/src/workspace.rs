@@ -37,6 +37,7 @@ use crate::agent_tools::{AppTools, ToolCall};
 use crate::assets::Glyph;
 use crate::atomic;
 use crate::diff_view::{DiffSource, DiffView, DiffViewEvent};
+use crate::edit;
 use crate::file_tree::{FileOp, FileTree, FileTreeEvent};
 use crate::git_panel::{self, GitOp, GitPanel, GitPanelEvent};
 use crate::latex::{self, CursorFixup, LatexCompletions};
@@ -51,8 +52,8 @@ use crate::{
     Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit, DecreaseFontSize,
     EditWithAgent, Fetch, FixWithAgent, ForwardSearch, IncreaseFontSize, NewBranch, Open,
     OpenFromOverleaf, OpenSettings, Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent,
-    SyncOverleaf, ToggleAgent, ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline,
-    ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
+    SyncOverleaf, ToggleAgent, ToggleComment, ToggleDiagnostics, ToggleFiles, ToggleLivePreview,
+    ToggleOutline, ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -2121,6 +2122,23 @@ impl Workspace {
         self.update_settings(|s| s.set_spell_language(&path, language), window, cx);
     }
 
+    /// Comment the selected lines out, or back in (⌘/).
+    fn toggle_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(b) = self.buffers.get(self.active).filter(|_| !self.diff_active) else {
+            return;
+        };
+        // Other text fields (a commit message) take the shortcut too.
+        if self.agent_busy || !b.editor.focus_handle(cx).is_focused(window) {
+            return;
+        }
+        b.editor.update(cx, |state, cx| {
+            let e = edit::toggle_comment(&state.text().to_string(), state.selected_range());
+            state.set_selected_range(e.range, cx);
+            state.replace(e.text, window, cx);
+            state.set_selected_range(e.selection, cx);
+        });
+    }
+
     fn replace_misspelling(
         &mut self,
         action: &ReplaceMisspelling,
@@ -3552,6 +3570,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, a: &RewriteSelection, window, cx| {
                 this.rewrite_selection(a.how.clone(), window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &ToggleComment, window, cx| this.toggle_comment(window, cx)),
+            )
             .on_action(cx.listener(|this, a: &ReplaceMisspelling, window, cx| {
                 this.replace_misspelling(a, window, cx)
             }))

@@ -22,6 +22,7 @@
 | Edit the selection with the agent | ⌘K | Ctrl+K |
 | Send a message to the agent (⇧↵: new line) | ↵ | Enter |
 | Commit (in the commit message box) | ⌘↵ | Ctrl+Enter |
+| Comment / uncomment the selected lines | ⌘/ | Ctrl+/ |
 | Soft wrap (current tab) | ⌥Z | Alt+Z |
 | Spelling corrections (code actions, in the editor) | ⌘. or right-click | Ctrl+. or right-click |
 | Switch light / dark theme | ⌘⇧L | Ctrl+Shift+L |
