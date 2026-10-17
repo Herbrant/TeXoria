@@ -105,13 +105,13 @@ impl Relaunch {
         if self.forwards_args {
             extra.extend(args);
         }
-        self.spawn_with(extra)
+        self.spawn_after(std::process::id(), extra)
     }
 
-    #[cfg(unix)]
-    fn spawn_with(&self, extra: Vec<OsString>) -> Result<()> {
-        use std::os::unix::process::CommandExt;
-
+    /// The program's arguments, with `extra` (`open` takes the app's after
+    /// `--args`).
+    #[cfg(any(unix, test))]
+    fn command_args(&self, extra: Vec<OsString>) -> Vec<OsString> {
         let mut args = self.args.clone();
         if !extra.is_empty() {
             if self.program == Path::new("/usr/bin/open") {
@@ -119,6 +119,15 @@ impl Relaunch {
             }
             args.extend(extra);
         }
+        args
+    }
+
+    /// Start the program once the process `pid` has exited.
+    #[cfg(unix)]
+    fn spawn_after(&self, pid: u32, extra: Vec<OsString>) -> Result<()> {
+        use std::os::unix::process::CommandExt;
+
+        let args = self.command_args(extra);
         let script = r#"pid=$1; shift
 while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
 exec "$@""#;
@@ -126,7 +135,7 @@ exec "$@""#;
             .arg("-c")
             .arg(script)
             .arg("sh")
-            .arg(std::process::id().to_string())
+            .arg(pid.to_string())
             .arg(&self.program)
             .args(args)
             .stdin(Stdio::null())
@@ -143,7 +152,7 @@ exec "$@""#;
     /// asks to close the other windows, which would lose their unsaved edits,
     /// and only then starts it.
     #[cfg(windows)]
-    fn spawn_with(&self, _extra: Vec<OsString>) -> Result<()> {
+    fn spawn_after(&self, pid: u32, _extra: Vec<OsString>) -> Result<()> {
         use std::os::windows::process::CommandExt;
 
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
@@ -151,15 +160,7 @@ exec "$@""#;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
         let powershell = Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
-        // `Start-Process` passes a single argument string as is: NSIS reads
-        // `/D=` raw, and quoting would become part of the path.
-        let mut args = OsString::new();
-        for (i, a) in self.args.iter().enumerate() {
-            if i > 0 {
-                args.push(" ");
-            }
-            args.push(a);
-        }
+        let args = self.installer_args();
         let spawn = |flags: u32| {
             Command::new(&powershell)
                 .args([
@@ -170,7 +171,7 @@ exec "$@""#;
                 ])
                 .args(["-WindowStyle", "Hidden", "-EncodedCommand"])
                 .arg(encode_command(WINDOWS_SCRIPT))
-                .env("TEXORIA_UPDATE_PID", std::process::id().to_string())
+                .env("TEXORIA_UPDATE_PID", pid.to_string())
                 .env("TEXORIA_UPDATE_INSTALLER", &self.program)
                 .env("TEXORIA_UPDATE_ARGS", &args)
                 .env("TEXORIA_UPDATE_MESSAGE", OTHER_WINDOWS)
@@ -187,6 +188,20 @@ exec "$@""#;
             .or_else(|_| spawn(flags))
             .with_context(|| format!("starting {}", powershell.display()))?;
         Ok(())
+    }
+
+    /// `Start-Process` passes a single argument string as is: NSIS reads
+    /// `/D=` raw, and quoting would become part of the path.
+    #[cfg(any(windows, test))]
+    fn installer_args(&self) -> OsString {
+        let mut args = OsString::new();
+        for (i, a) in self.args.iter().enumerate() {
+            if i > 0 {
+                args.push(" ");
+            }
+            args.push(a);
+        }
+        args
     }
 }
 
@@ -636,5 +651,424 @@ mod tests {
         let missing = dir.path().join("missing.app");
         assert!(swap(&current, &missing, &dir.path().join("old.app")).is_err());
         assert!(current.is_dir());
+    }
+
+    #[test]
+    fn some_installations_cannot_be_updated() {
+        let dir = tempfile::tempdir().unwrap();
+        for kind in [
+            InstallKind::Managed(crate::Manager::Homebrew),
+            InstallKind::Manual("no"),
+            InstallKind::Dev,
+        ] {
+            let staging = tempfile::tempdir_in(dir.path()).unwrap();
+            let file = staging.path().join("x");
+            let update = Update {
+                version: Version::new(9, 0, 0),
+                kind,
+                in_use: None,
+                staging,
+                file,
+            };
+            let err = update.install().unwrap_err();
+            assert!(err.to_string().contains("cannot update itself"), "{err}");
+        }
+        // Nothing left behind.
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// Windows: the installer runs once the app has quit, from a folder that
+    /// outlives it, in the installation's folder.
+    #[test]
+    fn the_windows_installer_runs_later() {
+        let dir = PathBuf::from(r"C:\Users\me\AppData\Local\TeXoria");
+        let update = update(
+            InstallKind::Windows { dir: dir.clone() },
+            "setup.exe",
+            b"MZ",
+        );
+        let setup = update.file.clone();
+        let relaunch = update.install().unwrap();
+        assert!(relaunch.installs());
+        assert_eq!(relaunch.program, setup);
+        let mut d = OsString::from("/D=");
+        d.push(&dir);
+        assert_eq!(
+            relaunch.args,
+            [OsString::from("/P"), "/R".into(), "/NS".into(), d]
+        );
+        assert_eq!(
+            relaunch.installer_args(),
+            OsString::from(r"/P /R /NS /D=C:\Users\me\AppData\Local\TeXoria")
+        );
+        // Kept for the installer.
+        assert!(setup.is_file());
+        fs::remove_dir_all(setup.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn relaunch_arguments() {
+        let open = Relaunch {
+            program: "/usr/bin/open".into(),
+            args: vec!["/Applications/TeXoria.app".into()],
+            forwards_args: true,
+        };
+        assert!(!open.installs());
+        assert_eq!(open.command_args(Vec::new()), ["/Applications/TeXoria.app"]);
+        assert_eq!(
+            open.command_args(vec!["a.tex".into()]),
+            ["/Applications/TeXoria.app", "--args", "a.tex"]
+        );
+        let direct = Relaunch {
+            program: "/home/me/.local/bin/texoria".into(),
+            args: Vec::new(),
+            forwards_args: true,
+        };
+        assert_eq!(direct.command_args(vec!["a.tex".into()]), ["a.tex"]);
+        assert_eq!(direct.installer_args(), OsString::new());
+    }
+
+    /// The icons are not worth failing an update that went through.
+    #[test]
+    fn failing_to_copy_the_icons_is_not_a_failure() {
+        let prefix = tempfile::tempdir().unwrap();
+        let p = prefix.path();
+        fs::create_dir_all(p.join("bin")).unwrap();
+        fs::write(p.join("share"), "a file where the folder goes").unwrap();
+        let archive = tarball(&[
+            ("usr/bin/texoria", b"new"),
+            ("usr/lib/texoria/libpdfium.so", b"new"),
+            ("usr/share/icons/texoria.png", b"png"),
+        ]);
+        update(tarball_kind(p), "t.tar.gz", &archive)
+            .install()
+            .unwrap();
+        assert_eq!(fs::read_to_string(p.join("bin/texoria")).unwrap(), "new");
+        assert!(p.join("share").is_file());
+    }
+
+    #[test]
+    fn archives_that_are_not_releases() {
+        let prefix = tempfile::tempdir().unwrap();
+        let p = prefix.path();
+        fs::create_dir_all(p.join("bin")).unwrap();
+        for archive in [
+            b"not gzip".to_vec(),
+            tarball(&[("usr/lib/texoria/libpdfium.so", b"new")]),
+            tarball(&[("bin/texoria", b"new"), ("lib/texoria/x", b"new")]),
+        ] {
+            assert!(
+                update(tarball_kind(p), "t.tar.gz", &archive)
+                    .install()
+                    .is_err()
+            );
+            let left: Vec<_> = fs::read_dir(p)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name())
+                .collect();
+            assert_eq!(left, ["bin"]);
+        }
+    }
+
+    #[test]
+    fn replacing_a_file_that_cannot_be_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("new");
+        fs::write(&file, "x").unwrap();
+        let err = replace_file(&file, &dir.path().join("gone/TeXoria.AppImage")).unwrap_err();
+        assert!(format!("{err:#}").contains("replacing"), "{err:#}");
+        assert!(replace_file(&dir.path().join("missing"), &file).is_err());
+    }
+
+    #[test]
+    fn commands_that_fail() {
+        let missing = Path::new("/nonexistent/program");
+        let err = run(&mut Command::new(missing)).unwrap_err();
+        assert!(
+            err.to_string().contains("running /nonexistent/program"),
+            "{err}"
+        );
+        let exe = std::env::current_exe().unwrap();
+        // The test program, with an option it does not know: its error is
+        // in the message.
+        let err = run(Command::new(&exe).arg("--no-such-option")).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(" failed: ") && msg.contains("no-such-option"),
+            "{msg}"
+        );
+    }
+
+    /// The reference: Base64 of the UTF-16LE text, bit by bit.
+    fn reference_encoding(text: &str) -> String {
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let bytes: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let bits: Vec<bool> = bytes
+            .iter()
+            .flat_map(|b| (0..8).rev().map(move |i| b >> i & 1 == 1))
+            .collect();
+        let mut out: String = bits
+            .chunks(6)
+            .map(|c| {
+                let n = (0..6).fold(0, |n, i| n << 1 | usize::from(c.get(i) == Some(&true)));
+                ALPHABET[n] as char
+            })
+            .collect();
+        while !out.len().is_multiple_of(4) {
+            out.push('=');
+        }
+        out
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn powershell_encoding_is_base64_of_utf16(text in "\\PC{0,40}") {
+            proptest::prop_assert_eq!(encode_command(&text), reference_encoding(&text));
+        }
+    }
+
+    #[test]
+    fn encodes_the_windows_script() {
+        assert_eq!(
+            encode_command(WINDOWS_SCRIPT),
+            reference_encoding(WINDOWS_SCRIPT)
+        );
+        assert_eq!(reference_encoding("abc"), "YQBiAGMA");
+    }
+
+    /// The libraries' folder cannot be written to: nothing changes.
+    #[cfg(unix)]
+    #[test]
+    fn failed_library_rename_changes_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let prefix = tempfile::tempdir().unwrap();
+        let p = prefix.path();
+        fs::create_dir_all(p.join("bin")).unwrap();
+        fs::write(p.join("bin/texoria"), "old").unwrap();
+        fs::create_dir_all(p.join("lib")).unwrap();
+        fs::set_permissions(p.join("lib"), fs::Permissions::from_mode(0o555)).unwrap();
+        if tempfile::tempfile_in(p.join("lib")).is_ok() {
+            // root writes anywhere.
+            return;
+        }
+        let err = update(tarball_kind(p), "t.tar.gz", &release_tarball())
+            .install()
+            .unwrap_err();
+        fs::set_permissions(p.join("lib"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            format!("{err:#}").contains("replacing the libraries"),
+            "{err:#}"
+        );
+        assert_eq!(fs::read_to_string(p.join("bin/texoria")).unwrap(), "old");
+        assert!(!p.join("lib/texoria").exists());
+    }
+
+    /// The new version starts once the old one has exited, with its arguments.
+    #[cfg(unix)]
+    #[test]
+    fn relaunches_after_exit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("texoria");
+        let marker = dir.path().join("started");
+        fs::write(
+            &program,
+            format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        let relaunch = Relaunch {
+            program,
+            args: vec!["--new".into()],
+            forwards_args: true,
+        };
+        let mut old = Command::new("sleep").arg("1").spawn().unwrap();
+        relaunch
+            .spawn_after(old.id(), vec!["a b.tex".into()])
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!marker.exists(), "started before the old version exited");
+        old.wait().unwrap();
+        let started = std::time::Instant::now();
+        while !marker.exists() {
+            assert!(started.elapsed().as_secs() < 30, "never started");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "--new a b.tex\n");
+    }
+
+    /// PowerShell waits for the old process, then starts the installer with
+    /// its arguments as they are.
+    #[cfg(windows)]
+    #[test]
+    fn windows_installer_starts_after_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("started.txt");
+        let root = std::env::var_os("SystemRoot").unwrap();
+        let cmd = Path::new(&root).join(r"System32\cmd.exe");
+        let mut args: Vec<OsString> = ["/C", "echo", "installed>"].map(OsString::from).to_vec();
+        args.push(marker.clone().into());
+        let relaunch = Relaunch {
+            program: cmd.clone(),
+            args,
+            forwards_args: false,
+        };
+        let mut old = Command::new(&cmd)
+            .args(["/C", "ping -n 3 127.0.0.1 >NUL"])
+            .spawn()
+            .unwrap();
+        relaunch.spawn_after(old.id(), Vec::new()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert!(!marker.exists(), "started before the old version exited");
+        old.wait().unwrap();
+        let started = std::time::Instant::now();
+        while !marker.exists() {
+            assert!(started.elapsed().as_secs() < 60, "never started");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(fs::read_to_string(&marker).unwrap().contains("installed"));
+    }
+
+    /// The `.dmg` route, with a tiny app signed ad hoc like the releases.
+    #[cfg(target_os = "macos")]
+    mod mac {
+        use super::*;
+
+        fn tools() -> bool {
+            ["/usr/bin/hdiutil", "/usr/bin/codesign", "/usr/bin/ditto"]
+                .iter()
+                .all(|t| Path::new(t).exists())
+        }
+
+        const PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>texoria</string>
+<key>CFBundleIdentifier</key><string>org.texoria.test</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+"#;
+
+        /// `TeXoria.app` in `dir`, whose `Resources/version` is `version`.
+        fn app(dir: &Path, version: &str, sign: bool) -> PathBuf {
+            let app = dir.join("TeXoria.app");
+            let contents = app.join("Contents");
+            fs::create_dir_all(contents.join("MacOS")).unwrap();
+            fs::create_dir_all(contents.join("Resources")).unwrap();
+            fs::write(contents.join("Info.plist"), PLIST).unwrap();
+            fs::write(contents.join("Resources/version"), version).unwrap();
+            fs::copy("/usr/bin/true", contents.join("MacOS/texoria")).unwrap();
+            if sign {
+                run(Command::new("codesign")
+                    .args(["--force", "--deep", "--sign", "-"])
+                    .arg(&app))
+                .unwrap();
+            }
+            app
+        }
+
+        /// A disk image of `folder`, as the update's file.
+        fn dmg(folder: &Path, kind: InstallKind) -> Update {
+            let update = update(kind, "texoria.dmg", b"");
+            fs::remove_file(&update.file).unwrap();
+            run(Command::new("hdiutil")
+                .args(["create", "-quiet", "-format", "UDZO", "-volname", "TeXoria"])
+                .arg("-srcfolder")
+                .arg(folder)
+                .arg(&update.file))
+            .unwrap();
+            update
+        }
+
+        fn installed(apps: &Path) -> (InstallKind, PathBuf) {
+            let bundle = app(apps, "old", false);
+            (
+                InstallKind::MacApp {
+                    bundle: bundle.clone(),
+                },
+                bundle,
+            )
+        }
+
+        fn version(bundle: &Path) -> String {
+            fs::read_to_string(bundle.join("Contents/Resources/version")).unwrap()
+        }
+
+        fn left(apps: &Path) -> Vec<OsString> {
+            fs::read_dir(apps)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name())
+                .collect()
+        }
+
+        #[test]
+        fn installs_from_a_disk_image() {
+            if !tools() {
+                test_support::skip("HDIUTIL", "hdiutil or codesign not found");
+                return;
+            }
+            let tmp = tempfile::tempdir().unwrap();
+            let apps = tmp.path().join("Applications");
+            let (kind, bundle) = installed(&apps);
+            let src = tmp.path().join("src");
+            app(&src, "new", true);
+            let relaunch = dmg(&src, kind).install().unwrap();
+            assert_eq!(version(&bundle), "new");
+            assert_eq!(relaunch.program, Path::new("/usr/bin/open"));
+            assert_eq!(relaunch.args, [bundle.as_os_str()]);
+            assert!(!relaunch.installs());
+            run(Command::new("codesign")
+                .args(["--verify", "--strict"])
+                .arg(&bundle))
+            .unwrap();
+            assert_eq!(left(&apps), ["TeXoria.app"]);
+        }
+
+        /// An app whose signature does not hold is not installed.
+        #[test]
+        fn refuses_a_broken_signature() {
+            if !tools() {
+                test_support::skip("HDIUTIL", "hdiutil or codesign not found");
+                return;
+            }
+            let tmp = tempfile::tempdir().unwrap();
+            let apps = tmp.path().join("Applications");
+            let (kind, bundle) = installed(&apps);
+            let src = tmp.path().join("src");
+            let new = app(&src, "new", true);
+            fs::write(new.join("Contents/Resources/version"), "tampered").unwrap();
+            let err = dmg(&src, kind).install().unwrap_err();
+            assert!(err.to_string().contains("codesign failed"), "{err}");
+            assert_eq!(version(&bundle), "old");
+            assert_eq!(left(&apps), ["TeXoria.app"]);
+        }
+
+        #[test]
+        fn refuses_an_image_without_the_app() {
+            if !tools() {
+                test_support::skip("HDIUTIL", "hdiutil or codesign not found");
+                return;
+            }
+            let tmp = tempfile::tempdir().unwrap();
+            let apps = tmp.path().join("Applications");
+            let (kind, bundle) = installed(&apps);
+            let src = tmp.path().join("src");
+            fs::create_dir_all(&src).unwrap();
+            fs::write(src.join("README"), "no app").unwrap();
+            let err = dmg(&src, kind.clone()).install().unwrap_err();
+            assert!(err.to_string().contains("ditto failed"), "{err}");
+            assert_eq!(version(&bundle), "old");
+            // Not a disk image at all.
+            let update = update(kind, "texoria.dmg", b"not a dmg");
+            let err = update.install().unwrap_err();
+            assert!(err.to_string().contains("hdiutil failed"), "{err}");
+            assert_eq!(left(&apps), ["TeXoria.app"]);
+        }
     }
 }
