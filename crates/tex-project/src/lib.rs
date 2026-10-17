@@ -359,7 +359,8 @@ fn normalize(p: &Path) -> PathBuf {
 /// 1. a `% !TEX root = path` magic comment in the first lines;
 /// 2. the file itself if it contains `\documentclass`;
 /// 3. a `.tex` file in the same or a parent directory (up to two levels)
-///    that has `\documentclass` and `\input`s this file;
+///    that has `\documentclass` and `\input`s this file (huge files are not
+///    read);
 /// 4. otherwise the file itself.
 pub fn find_root(file: &Path, text: &str) -> PathBuf {
     let dir = file.parent().unwrap_or(Path::new("."));
@@ -384,6 +385,13 @@ pub fn find_root(file: &Path, text: &str) -> PathBuf {
         for entry in std::fs::read_dir(d).into_iter().flatten().flatten() {
             let p = entry.path();
             if p == file || p.extension().is_none_or(|e| e != "tex") {
+                continue;
+            }
+            // Runs on the UI thread, maybe in a folder full of unrelated files.
+            if entry
+                .metadata()
+                .is_ok_and(|m| m.len() > files::MAX_TEXT_BYTES)
+            {
                 continue;
             }
             let Some(src) = read_regular(&p) else {
@@ -722,6 +730,21 @@ mod tests {
             ("a/b/c/ch.tex", ""),
         ]);
         let ch = dir.path().join("a/b/c/ch.tex");
+        assert_eq!(find_root(&ch, ""), ch);
+    }
+
+    #[test]
+    fn root_search_skips_huge_files() {
+        let dir = project(&[
+            ("ch.tex", ""),
+            ("big.tex", "\\documentclass{book}\\input{ch}"),
+        ]);
+        let big = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.path().join("big.tex"))
+            .unwrap();
+        big.set_len(files::MAX_TEXT_BYTES + 1).unwrap();
+        let ch = dir.path().join("ch.tex");
         assert_eq!(find_root(&ch, ""), ch);
     }
 
