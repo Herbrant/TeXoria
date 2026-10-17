@@ -7,6 +7,9 @@ Start TeXoria and choose *Open a document…* (⌘O on macOS, Ctrl+O elsewhere).
 with a `\documentclass`. The welcome screen can also *Clone a repository…* or *Open from
 Overleaf…* (see [Git](git.md) and [Overleaf](overleaf.md)).
 
+A project opens again with the tabs you left open, and on the one you were working in (unless
+you opened a specific file of it).
+
 From a terminal, pass the file or folder as the only argument:
 
 ```sh

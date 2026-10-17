@@ -21,6 +21,8 @@ pub struct Settings {
     /// Stop a compile after this many seconds (0: never).
     pub compile_timeout_secs: u64,
     pub recent: Vec<PathBuf>,
+    /// The tabs left open in each recent project, most recent first.
+    pub sessions: Vec<Session>,
     /// Repositories (their working tree) whose Git configuration may run.
     pub trusted_projects: Vec<PathBuf>,
     /// Project directories whose `latexmkrc` may run. `None` in settings
@@ -55,6 +57,19 @@ pub struct Settings {
     /// Why the file could not be read in full, to tell the user once.
     #[serde(skip)]
     pub load_error: Option<String>,
+}
+
+/// A project's open tabs, restored when it is opened again.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Session {
+    /// The project's root file.
+    pub root: PathBuf,
+    pub files: Vec<PathBuf>,
+    /// The file of the active tab.
+    pub active: Option<PathBuf>,
+    /// Where the PDF was last exported.
+    pub export: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +128,7 @@ impl Default for Settings {
             editor_font_size: Settings::DEFAULT_FONT_SIZE,
             compile_timeout_secs: 300,
             recent: Vec::new(),
+            sessions: Vec::new(),
             trusted_projects: Vec::new(),
             rc_allowed: Some(Vec::new()),
             diff_split: false,
@@ -315,11 +331,49 @@ impl Settings {
         self.recent.insert(0, file);
         self.recent.truncate(10);
     }
+
+    pub fn session(&self, root: &Path) -> Option<&Session> {
+        self.sessions.iter().find(|s| s.root == root)
+    }
+
+    /// Record a project's session; returns whether it changed.
+    pub fn set_session(&mut self, session: Session) -> bool {
+        if self.sessions.first() == Some(&session) {
+            return false;
+        }
+        self.sessions.retain(|s| s.root != session.root);
+        self.sessions.insert(0, session);
+        self.sessions.truncate(Self::MAX_SESSIONS);
+        true
+    }
+
+    const MAX_SESSIONS: usize = 20;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sessions_are_per_project_and_capped() {
+        let mut s = Settings::default();
+        let session = |root: &str| Session {
+            root: PathBuf::from(root),
+            files: vec![PathBuf::from(root)],
+            active: None,
+            export: None,
+        };
+        assert!(s.set_session(session("/a/main.tex")));
+        assert!(!s.set_session(session("/a/main.tex")));
+        for i in 0..30 {
+            s.set_session(session(&format!("/p{i}/main.tex")));
+        }
+        assert_eq!(s.sessions.len(), Settings::MAX_SESSIONS);
+        assert!(s.session(Path::new("/a/main.tex")).is_none());
+        let text = toml::to_string(&s).unwrap();
+        let back = Settings::parse(&text);
+        assert_eq!(back.sessions, s.sessions);
+    }
 
     #[test]
     fn font_size_stays_in_range() {

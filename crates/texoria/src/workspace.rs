@@ -43,7 +43,7 @@ use crate::git_panel::{self, GitOp, GitPanel, GitPanelEvent};
 use crate::latex::{self, CursorFixup, LatexCompletions};
 use crate::overleaf;
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
-use crate::settings::{Settings, SpellLanguage, ThemeChoice};
+use crate::settings::{Session, Settings, SpellLanguage, ThemeChoice};
 use crate::settings_window::SettingsWindow;
 use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspelling, Spell};
 use crate::theme::{self, ThemeExt};
@@ -505,8 +505,70 @@ impl Workspace {
         let text = tex_project::read_regular(&file).unwrap_or_default();
         let root = tex_project::find_root(&file, &text);
         let root = std::fs::canonicalize(&root).unwrap_or(root);
-        self.set_root(root, cx);
-        self.activate_file(file, window, cx);
+        let new_project = self.root.as_ref() != Some(&root);
+        let session = new_project
+            .then(|| self.settings.session(&root).cloned())
+            .flatten();
+        self.set_root(root.clone(), cx);
+        match session {
+            Some(session) => self.restore_session(session, file, window, cx),
+            None => {
+                self.activate_file(file, window, cx);
+            }
+        }
+    }
+
+    /// Reopen a project's tabs, then show `file`, or the tab that was
+    /// active if `file` is the root (the project was opened, not a file).
+    fn restore_session(
+        &mut self,
+        session: Session,
+        file: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dir = self.project_dir();
+        for f in &session.files {
+            let inside = dir.as_ref().is_some_and(|d| f.starts_with(d));
+            if inside && f.is_file() && files::looks_like_text(f) {
+                self.activate_file(f.clone(), window, cx);
+            }
+        }
+        let active = session
+            .active
+            .filter(|a| {
+                Some(&file) == self.root.as_ref() && self.buffers.iter().any(|b| &b.path == a)
+            })
+            .unwrap_or(file);
+        self.activate_file(active, window, cx);
+    }
+
+    /// Remember the project's open tabs (saved with the settings).
+    fn remember_session(&mut self) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        let dir = self.project_dir();
+        let inside = |p: &Path| dir.as_ref().is_some_and(|d| p.starts_with(d));
+        let previous = self.settings.session(&root).cloned().unwrap_or_default();
+        let session = Session {
+            root,
+            files: self
+                .buffers
+                .iter()
+                .map(|b| b.path.clone())
+                .filter(|p| inside(p))
+                .collect(),
+            active: self
+                .buffers
+                .get(self.active)
+                .map(|b| b.path.clone())
+                .filter(|p| inside(p)),
+            export: previous.export,
+        };
+        if self.settings.set_session(session) {
+            self.settings.save();
+        }
     }
 
     /// Make `root` the project's root file (a no-op if it already is).
@@ -550,6 +612,7 @@ impl Workspace {
         self.diff_active = false;
         if let Some(ix) = self.buffers.iter().position(|b| b.path == file) {
             self.active = ix;
+            self.remember_session();
             cx.notify();
             return Some(ix);
         }
@@ -629,6 +692,7 @@ impl Workspace {
             _subscription: subscription,
         });
         self.active = self.buffers.len() - 1;
+        self.remember_session();
         self.spellcheck(self.active, Duration::ZERO, cx);
         self.apply_diagnostics(cx);
         let focus = self.buffers[self.active].editor.focus_handle(cx);
@@ -815,6 +879,7 @@ impl Workspace {
         }
         if changed {
             self.active = self.active.min(self.buffers.len().saturating_sub(1));
+            self.remember_session();
             self.reindex(cx);
             self.apply_diagnostics(cx);
             self.build(cx);
@@ -963,6 +1028,7 @@ impl Workspace {
         self.files.update(cx, |f, cx| f.refresh(cx));
         self.git.update(cx, |g, cx| g.refresh(cx));
         self.reindex(cx);
+        self.remember_session();
     }
 
     // ── Diff tab ─────────────────────────────────────────────────────────
@@ -2372,6 +2438,7 @@ impl Workspace {
         }
         self.buffers.remove(self.active);
         self.active = self.active.min(self.buffers.len() - 1);
+        self.remember_session();
         cx.notify();
     }
 
@@ -2807,6 +2874,7 @@ impl Workspace {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.active = i;
                         this.diff_active = false;
+                        this.remember_session();
                         cx.notify();
                     }))
             }))
