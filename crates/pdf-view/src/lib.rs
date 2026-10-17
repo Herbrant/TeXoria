@@ -1,9 +1,12 @@
 //! PDF rasterization on a dedicated thread with PDFium.
 //!
-//! PDFium is not thread-safe and its documents borrow the library handle, so
-//! one worker thread owns both. The UI pushes the set of pages it currently
-//! wants (in priority order) and receives BGRA bitmaps — the pixel format
-//! GPUI uploads directly.
+//! Each [`Renderer`] has a worker thread that owns its documents. The UI
+//! pushes the set of pages it currently wants (in priority order) and
+//! receives BGRA bitmaps — the pixel format GPUI uploads directly.
+//!
+//! PDFium is not thread-safe and can be bound only once per process: every
+//! renderer shares one binding, made by the first that finds the library,
+//! and pdfium-render's `thread_safe` feature runs one PDFium call at a time.
 //!
 //! Documents are loaded from memory, never from the file on disk: on
 //! Windows an open file handle would stop the TeX engine from overwriting
@@ -15,7 +18,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
 use pdfium_render::prelude::*;
@@ -227,17 +230,18 @@ pub struct Renderer {
 
 impl Renderer {
     /// Start the worker. `library_dirs` are searched for the PDFium shared
-    /// library before falling back to the system library path.
+    /// library before falling back to the system library path, unless an
+    /// earlier renderer of this process already loaded it.
     pub fn new(
         library_dirs: Vec<PathBuf>,
         on_event: impl Fn(Event) + Send + 'static,
     ) -> Result<Self, Error> {
-        let bindings = bind(&library_dirs)?;
+        let pdfium = pdfium(&library_dirs)?;
         let shared = Arc::new((Mutex::new(Shared::default()), Condvar::new()));
         let worker_shared = shared.clone();
         let thread = std::thread::Builder::new()
             .name("pdf-render".into())
-            .spawn(move || worker(Pdfium::new(bindings), worker_shared, Box::new(on_event)))
+            .spawn(move || worker(pdfium, worker_shared, Box::new(on_event)))
             .expect("spawn pdf thread");
         Ok(Renderer {
             shared,
@@ -293,6 +297,19 @@ impl Drop for Renderer {
     }
 }
 
+/// The process's PDFium, bound on first use. A failed attempt is not
+/// remembered: a later one may look in other directories.
+fn pdfium(dirs: &[PathBuf]) -> Result<&'static Pdfium, Error> {
+    static PDFIUM: OnceLock<Pdfium> = OnceLock::new();
+    static BINDING: Mutex<()> = Mutex::new(());
+    let _binding = BINDING.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(p) = PDFIUM.get() {
+        return Ok(p);
+    }
+    let bindings = bind(dirs)?;
+    Ok(PDFIUM.get_or_init(|| Pdfium::new(bindings)))
+}
+
 fn bind(dirs: &[PathBuf]) -> Result<Box<dyn PdfiumLibraryBindings>, Error> {
     let mut last_err = String::from("not found");
     for dir in dirs {
@@ -309,7 +326,7 @@ fn bind(dirs: &[PathBuf]) -> Result<Box<dyn PdfiumLibraryBindings>, Error> {
 }
 
 fn worker(
-    pdfium: Pdfium,
+    pdfium: &'static Pdfium,
     shared: Arc<(Mutex<Shared>, Condvar)>,
     on_event: Box<dyn Fn(Event) + Send>,
 ) {
@@ -674,15 +691,66 @@ mod tests {
         assert_eq!(text_of(&chars, 1..9), "bc");
     }
 
-    /// A renderer on the repository's `vendor/pdfium`, if PDFium is available.
+    fn vendor() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/pdfium")
+    }
+
+    /// A renderer on the repository's `vendor/pdfium`, if PDFium is there. Only a missing
+    /// library skips: any other error fails the test.
     fn renderer(on_event: impl Fn(Event) + Send + 'static) -> Option<Renderer> {
-        let vendor = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/pdfium");
-        match Renderer::new(vec![vendor], on_event) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                test_support::skip("PDFIUM", &format!("PDFium not available ({e})"));
-                None
-            }
+        let library = Pdfium::pdfium_platform_library_name_at_path(&vendor());
+        if !library.is_file() {
+            test_support::skip("PDFIUM", &format!("no {}", library.display()));
+            return None;
+        }
+        Some(Renderer::new(vec![vendor()], on_event).expect("start the renderer"))
+    }
+
+    /// A channel's receiver that waits at most 10 s for each event.
+    fn next(rx: &mpsc::Receiver<Event>) -> Event {
+        rx.recv_timeout(Duration::from_secs(10)).expect("an event")
+    }
+
+    #[test]
+    fn several_renderers_share_the_library() {
+        let bytes = std::fs::read(test_support::fixtures().join("links/links.pdf")).unwrap();
+        let start = || {
+            let (tx, rx) = mpsc::channel();
+            let r = renderer(move |e| {
+                let _ = tx.send(e);
+            })?;
+            Some((r, rx))
+        };
+        // Started together from several threads, as tests in one process do.
+        let started: Vec<_> = (0..4).map(|_| std::thread::spawn(start)).collect();
+        let renderers: Vec<_> = started.into_iter().map(|t| t.join().unwrap()).collect();
+        let Some(mut renderers) = renderers.into_iter().collect::<Option<Vec<_>>>() else {
+            return;
+        };
+        // One more once the library is bound, even from directories without it.
+        let (tx, rx) = mpsc::channel();
+        let late = Renderer::new(vec![PathBuf::from("/nonexistent")], move |e| {
+            let _ = tx.send(e);
+        })
+        .expect("reuse the bound library");
+        renderers.push((late, rx));
+        for (g, (r, _)) in renderers.iter().enumerate() {
+            r.load(g as u64 + 1, bytes.clone());
+            r.request(vec![RenderKey {
+                generation: g as u64 + 1,
+                page: 1,
+                scale_milli: 500,
+                dark: false,
+            }]);
+        }
+        for (g, (_, rx)) in renderers.iter().enumerate() {
+            let generation = g as u64 + 1;
+            assert!(matches!(next(rx), Event::Loaded { generation: l, .. } if l == generation));
+            let Event::Rendered { key, bitmap } = next(rx) else {
+                panic!("expected Rendered")
+            };
+            assert_eq!((key.generation, key.page), (generation, 1));
+            assert_eq!(bitmap.width, 306);
         }
     }
 
