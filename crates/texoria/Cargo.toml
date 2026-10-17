@@ -34,6 +34,8 @@ image = { version = "0.25", default-features = false }
 sys-locale = "0.3"
 tempfile.workspace = true
 similar.workspace = true
+# Format Document.
+tex-fmt = { version = "0.5.7", default-features = false }
 
 [build-dependencies]
 embed-resource = "3"

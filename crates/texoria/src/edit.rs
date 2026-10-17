@@ -2,6 +2,9 @@
 //! workspace.
 
 use std::ops::Range;
+use std::path::Path;
+
+use tex_fmt::args::{Args, OptionArgs};
 
 /// A replacement of `range` with `text`, and the selection to set after it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +83,68 @@ pub fn toggle_comment(text: &str, selection: Range<usize>) -> Edit {
     }
 }
 
+/// `text` formatted by tex-fmt: indented environments and groups, without
+/// wrapping lines unless the project's `tex-fmt.toml` asks for it.
+pub fn format_latex(text: &str, file: &Path, project_dir: Option<&Path>) -> Result<String, String> {
+    let config = project_dir
+        .map(|d| d.join("tex-fmt.toml"))
+        .filter(|p| p.is_file());
+    let text = text.to_string();
+    let file = file.to_path_buf();
+    // tex-fmt panics on what it cannot handle (and on a bad config file).
+    std::panic::catch_unwind(move || {
+        let args = format_args(config.as_deref());
+        let mut logs = Vec::new();
+        let out = tex_fmt::format::format_file(&text, &file, &args, &mut logs);
+        // Its line ending is the platform's; the editor's is `\n`.
+        if text.contains("\r\n") {
+            out
+        } else {
+            out.replace("\r\n", "\n")
+        }
+    })
+    .map_err(|e| {
+        e.downcast_ref::<String>()
+            .cloned()
+            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_else(|| "tex-fmt could not format the file".into())
+    })
+}
+
+fn format_args(config: Option<&Path>) -> Args {
+    let mut args = OptionArgs {
+        // Wrapping rewrites paragraphs: only on request.
+        wrap: Some(false),
+        ..OptionArgs::default()
+    };
+    let read = config.and_then(|path| {
+        tex_fmt::config::get_config_args(tex_fmt::config::get_config(&OptionArgs {
+            config: Some(path.to_path_buf()),
+            ..OptionArgs::new()
+        }))
+    });
+    if let Some(c) = read {
+        let pick = |v: &mut Vec<String>, from: Vec<String>| {
+            if !from.is_empty() {
+                v.extend(from);
+            }
+        };
+        args.wrap = c.wrap.or(args.wrap);
+        args.wraplen = c.wraplen.or(args.wraplen);
+        args.wrapmin = c.wrapmin.or(args.wrapmin);
+        args.tabsize = c.tabsize.or(args.tabsize);
+        args.tabchar = c.tabchar.or(args.tabchar);
+        args.format_tables = c.format_tables.or(args.format_tables);
+        pick(&mut args.lists, c.lists);
+        pick(&mut args.verbatims, c.verbatims);
+        pick(&mut args.no_indent_envs, c.no_indent_envs);
+        if !c.wrap_chars.is_empty() {
+            args.wrap_chars = c.wrap_chars;
+        }
+    }
+    Args::from(args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +203,33 @@ mod tests {
         let e = toggle_comment("", 0..0);
         assert_eq!(e.text, "% ");
         assert_eq!(e.selection, 2..2);
+    }
+
+    #[test]
+    fn formats_latex() {
+        let text =
+            "\\begin{itemize}\n\\item a\n\\begin{equation}\nx\n\\end{equation}\n\\end{itemize}\n";
+        let out = format_latex(text, Path::new("a.tex"), None).unwrap();
+        assert_eq!(
+            out,
+            "\\begin{itemize}\n  \\item a\n    \\begin{equation}\n      x\n    \\end{equation}\n\\end{itemize}\n"
+        );
+        let long = format!("{}\n", "word ".repeat(40).trim_end());
+        assert_eq!(format_latex(&long, Path::new("a.tex"), None).unwrap(), long);
+    }
+
+    #[test]
+    fn reads_the_project_config() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tex-fmt.toml"), "tabsize = 4\n").unwrap();
+        let out = format_latex(
+            "\\begin{center}\nx\n\\end{center}\n",
+            Path::new("a.tex"),
+            Some(dir.path()),
+        )
+        .unwrap();
+        assert_eq!(out, "\\begin{center}\n    x\n\\end{center}\n");
+        std::fs::write(dir.path().join("tex-fmt.toml"), "tabsize = [").unwrap();
+        assert!(format_latex("x\n", Path::new("a.tex"), Some(dir.path())).is_err());
     }
 }

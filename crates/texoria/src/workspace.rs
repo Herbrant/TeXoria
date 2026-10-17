@@ -53,10 +53,11 @@ use crate::theme::{self, ThemeExt};
 use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
     Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit, DecreaseFontSize,
-    EditWithAgent, Fetch, FindInProject, FixWithAgent, ForwardSearch, IncreaseFontSize, NewBranch,
-    Open, OpenFromOverleaf, OpenSettings, Pull, Push, ResetFontSize, Save, ShowSourceControl,
-    StopAgent, SyncOverleaf, ToggleAgent, ToggleComment, ToggleDiagnostics, ToggleFiles,
-    ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
+    EditWithAgent, Fetch, FindInProject, FixWithAgent, FormatDocument, ForwardSearch,
+    IncreaseFontSize, NewBranch, Open, OpenFromOverleaf, OpenSettings, Pull, Push, ResetFontSize,
+    Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent, ToggleComment,
+    ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline, ToggleSoftWrap, ToggleTheme,
+    ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -2431,6 +2432,52 @@ impl Workspace {
         self.update_settings(|s| s.set_spell_language(&path, language), window, cx);
     }
 
+    /// Format the active file with tex-fmt (⇧⌥F), in the background.
+    fn format_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(b) = self.buffers.get(self.active).filter(|_| !self.diff_active) else {
+            return;
+        };
+        if self.agent_busy || !is_tex(&b.path) {
+            return;
+        }
+        let editor = b.editor.clone();
+        let path = b.path.clone();
+        let dir = self.project_dir();
+        let text = editor.read(cx).text().to_string();
+        cx.spawn_in(window, async move |this, cx| {
+            let input = text.clone();
+            let formatted = cx
+                .background_spawn(async move { edit::format_latex(&input, &path, dir.as_deref()) })
+                .await;
+            this.update_in(cx, |_, window, cx| match formatted {
+                // Edited meanwhile: formatting it would undo those edits.
+                Ok(new) if *editor.read(cx).text() == text => {
+                    apply_format(&editor, new, window, cx)
+                }
+                Ok(_) => {}
+                Err(e) => window
+                    .push_notification(Notification::error(e).title("Cannot format the file"), cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// ⌘S: format the active file first if asked to, then save everything.
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.format_on_save
+            && !self.agent_busy
+            && let Some(b) = self.buffers.get(self.active).filter(|b| is_tex(&b.path))
+        {
+            let text = b.editor.read(cx).text().to_string();
+            match edit::format_latex(&text, &b.path, self.project_dir().as_deref()) {
+                Ok(new) => apply_format(&b.editor.clone(), new, window, cx),
+                Err(e) => log::warn!("formatting {}: {e}", b.path.display()),
+            }
+        }
+        self.save_all(cx);
+    }
+
     /// Comment the selected lines out, or back in (⌘/).
     fn toggle_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(b) = self.buffers.get(self.active).filter(|_| !self.diff_active) else {
@@ -3810,9 +3857,12 @@ impl Render for Workspace {
             .text_color(theme.foreground)
             .font_family(theme.font_family.clone())
             .on_action(cx.listener(|this, _: &Open, window, cx| this.prompt_open(window, cx)))
-            .on_action(cx.listener(|this, _: &Save, _, cx| {
-                this.save_all(cx);
-            }))
+            .on_action(cx.listener(|this, _: &Save, window, cx| this.save(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &FormatDocument, window, cx| {
+                    this.format_document(window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &Build, _, cx| this.build(cx)))
             .on_action(cx.listener(|this, _: &CheckForUpdates, _, cx| {
                 this.updater.update(cx, |u, cx| u.check(true, cx))
@@ -3938,6 +3988,28 @@ impl Render for Workspace {
                 d.child(self.render_status_bar(cx))
             })
     }
+}
+
+/// A LaTeX source (not a `.bib`, `.cls` is fine).
+fn is_tex(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e, "tex" | "ltx" | "sty" | "cls" | "dtx"))
+}
+
+/// Replace a buffer's text with its formatted version as one undoable edit,
+/// keeping the cursor on the same line.
+fn apply_format(editor: &Entity<EditorState>, new: String, window: &mut Window, cx: &mut App) {
+    editor.update(cx, |state, cx| {
+        if *state.text() == new {
+            return;
+        }
+        let cursor = state.cursor_position();
+        let len = state.text().len();
+        state.set_selected_range(0..len, cx);
+        state.replace(new, window, cx);
+        state.set_cursor_position(cursor, window, cx);
+    });
 }
 
 fn plural(n: usize) -> &'static str {

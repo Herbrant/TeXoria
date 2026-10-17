@@ -63,6 +63,7 @@ actions!(
         StopAgent,
         ToggleComment,
         FindInProject,
+        FormatDocument,
         Quit,
     ]
 );
@@ -96,6 +97,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-k", EditWithAgent, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-/", ToggleComment, Some("Input")),
+        KeyBinding::new("shift-alt-f", FormatDocument, Some("Input")),
         // Find in the project, like other editors; the editor's Replace moves.
         KeyBinding::new("secondary-shift-f", FindInProject, None),
         KeyBinding::new("secondary-shift-f", FindInProject, Some("Input")),
@@ -142,6 +144,7 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Find in Project", FindInProject),
             MenuItem::separator(),
             MenuItem::action("Toggle Comment", ToggleComment),
+            MenuItem::action("Format Document", FormatDocument),
         ]),
         Menu::new("Build").items([
             MenuItem::action("Build", Build),

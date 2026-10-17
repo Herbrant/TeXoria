@@ -43,6 +43,15 @@ link to a package's documentation. Right-click a package in `\usepackage{…}` a
 least indented one, or uncomments them if they all are comments already. Also in *Edit* →
 *Toggle Comment*.
 
+## Formatting
+
+*Edit* → *Format Document* (⇧⌥F, Shift+Alt+F) indents the file with
+[tex-fmt](https://github.com/WGUNDERWOOD/tex-fmt): environments, lists and groups, two spaces
+per level, leaving verbatim-like environments alone. Lines are not rewrapped. It is one edit,
+undone with ⌘Z. A `tex-fmt.toml` in the project folder changes the rules (tab size, wrapping,
+extra list or verbatim environments). To format on every ⌘S, turn on
+[Settings](settings.md) → *Editor* → *Format on save*.
+
 ## Outline
 
 The outline (⌘1) lists the parts, chapters, sections and subsections of the whole project,

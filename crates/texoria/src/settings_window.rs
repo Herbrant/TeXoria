@@ -264,6 +264,17 @@ impl SettingsWindow {
                         "Wrap long lines in the editor. Very long files always start unwrapped; \
                          ⌥Z toggles the current tab.",
                     ),
+                )
+                .item(
+                    SettingItem::new(
+                        "Format on save",
+                        bool_field(&t, |s| s.format_on_save, |s, v| s.format_on_save = v)
+                            .default_value(Settings::default().format_on_save),
+                    )
+                    .description(
+                        "Indent the file with tex-fmt when you save it with ⌘S (⇧⌥F formats it \
+                         at any time). A tex-fmt.toml in the project folder changes its rules.",
+                    ),
                 ),
             SettingGroup::new()
                 .title("Spelling")

@@ -16,6 +16,8 @@ pub struct Settings {
     /// Pause after the last keystroke before a live compile.
     pub live_delay_ms: u64,
     pub soft_wrap: bool,
+    /// Format a file with tex-fmt when it is saved with ⌘S.
+    pub format_on_save: bool,
     /// Size of the editor's text, in pixels.
     pub editor_font_size: f32,
     /// Stop a compile after this many seconds (0: never).
@@ -125,6 +127,7 @@ impl Default for Settings {
             live_preview: true,
             live_delay_ms: 700,
             soft_wrap: true,
+            format_on_save: false,
             editor_font_size: Settings::DEFAULT_FONT_SIZE,
             compile_timeout_secs: 300,
             recent: Vec::new(),
