@@ -25,8 +25,9 @@ jump to it.
 
 The Files view (⌘⇧E) shares the sidebar with the outline and shows the project folder as a tree,
 colored by Git status. From it you can open, create, rename and delete files and folders. Tabs
-follow a renamed file and close when their file is deleted. Files that are not text, such as
-images and PDFs, open in their usual app.
+follow a renamed file and close when their file is deleted. Documents and pictures that are not
+text, such as images and PDFs, open in their usual app. Any other file could be a program (a
+project may come from anywhere), so TeXoria shows it in its folder instead of starting it.
 
 ## Diagnostics
 

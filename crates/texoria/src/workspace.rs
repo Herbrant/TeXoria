@@ -842,8 +842,19 @@ impl Workspace {
             FileTreeEvent::Open(path) => {
                 if files::looks_like_text(path) {
                     self.activate_file(path.clone(), window, cx);
-                } else {
+                } else if files::safe_to_open(path) {
                     cx.open_with_system(path);
+                } else {
+                    // It could be a program: let the user decide in the file
+                    // manager rather than start it.
+                    cx.reveal_path(path);
+                    window.push_notification(
+                        Notification::info(
+                            "TeXoria opens only documents and pictures with other apps: the \
+                             file is shown in its folder instead.",
+                        ),
+                        cx,
+                    );
                 }
             }
             FileTreeEvent::Request(op) => self.run_file_op(op.clone(), window, cx),

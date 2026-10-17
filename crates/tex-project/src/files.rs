@@ -119,6 +119,29 @@ pub fn looks_like_text(path: &Path) -> bool {
     }
 }
 
+/// Documents and pictures the system may open on a double click. Anything
+/// else could be a program (`.app`, `.command`, `.exe`, `.bat`, `.desktop`
+/// …), and files that came with a clone are not quarantined, so the system
+/// would start it without a warning.
+const SAFE_TO_OPEN: &[&str] = &[
+    "pdf", "ps", "eps", "png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp", "heic", "svg",
+    "csv", "tsv", "ods", "xlsx", "odt", "docx", "odp", "pptx", "rtf", "mp3", "wav", "mp4", "mov",
+];
+
+/// Whether the system app may open `path` directly: a regular file (a link
+/// counts as what it points to) of a [`SAFE_TO_OPEN`] type.
+pub fn safe_to_open(path: &Path) -> bool {
+    let Ok(target) = fs::canonicalize(path) else {
+        return false;
+    };
+    let safe_name = |p: &Path| {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| SAFE_TO_OPEN.iter().any(|s| s.eq_ignore_ascii_case(e)))
+    };
+    target.is_file() && safe_name(path) && safe_name(&target)
+}
+
 /// The path of a new file or directory called `name` inside `dir`. `name`
 /// may have subdirectories (`chapters/intro.tex`) but must stay inside `dir`.
 pub fn new_entry_path(dir: &Path, name: &str) -> Result<PathBuf, &'static str> {
@@ -187,6 +210,38 @@ mod tests {
 
     fn names(nodes: &[FileNode]) -> Vec<&str> {
         nodes.iter().map(|n| n.name.as_str()).collect()
+    }
+
+    #[test]
+    fn only_documents_open_with_the_system() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        for name in [
+            "fig.PDF",
+            "run.command",
+            "setup.exe",
+            "fig.pdf.bat",
+            "noext",
+        ] {
+            fs::write(d.join(name), "x").unwrap();
+        }
+        fs::create_dir(d.join("Tool.app")).unwrap();
+        assert!(safe_to_open(&d.join("fig.PDF")));
+        for name in [
+            "run.command",
+            "setup.exe",
+            "fig.pdf.bat",
+            "noext",
+            "Tool.app",
+            "gone.pdf",
+        ] {
+            assert!(!safe_to_open(&d.join(name)), "{name}");
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(d.join("run.command"), d.join("link.pdf")).unwrap();
+            assert!(!safe_to_open(&d.join("link.pdf")));
+        }
     }
 
     #[test]
