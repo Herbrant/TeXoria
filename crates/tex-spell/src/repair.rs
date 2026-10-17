@@ -209,6 +209,27 @@ pub fn drop_line(text: &str, line: usize, is_aff: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    /// `.aff`-like lines: directives, tables and their rows, flags of every type.
+    const AFF: &str = "(FLAG (num|long|UTF-8)\n)?((SFX|PFX|REP|AF|KEEPCASE|NEEDAFFIX)                        [ 0-9a-zé𝕏/,.YN]{0,12}\n){0,8}";
+    const DIC: &str = "[0-9x]{0,3}\n([a-zé\\\\/]{0,6}(/[0-9a-zé,]{0,6})?( [a-z:]{0,4})?\n){0,8}";
+
+    proptest! {
+        #[test]
+        fn repairs_never_panic(aff in AFF, dic in DIC, line in 0usize..12) {
+            let (a, d) = prepare(&aff, &dic);
+            let dropped = drop_line(&a, line, true);
+            prop_assert!(dropped.lines().count() <= a.lines().count());
+            let dropped = drop_line(&d, line, false);
+            prop_assert!(dropped.lines().count() <= d.lines().count());
+        }
+
+        #[test]
+        fn dictionaries_load_or_fail_without_panicking(aff in AFF, dic in DIC) {
+            let _ = crate::Speller::new(&format!("SET UTF-8\n{aff}"), &dic);
+        }
+    }
 
     #[test]
     fn reads_numeric_flags_like_hunspell() {
@@ -225,6 +246,36 @@ mod tests {
     fn drops_odd_long_flags() {
         let (_, dic) = prepare("FLAG long\n", "2\nhello/zz\nworld/m01 po:v\na\\/b/zz\n");
         assert_eq!(dic, "2\nhello/zz\na\\/b/zz\n");
+    }
+
+    #[test]
+    fn drops_numeric_flags_out_of_range() {
+        let aff = "FLAG num\nKEEPCASE 70000\nSFX 70000 Y 1\n";
+        let (fixed, dic) = prepare(aff, "2\nev/70000,3\nx/abc\n");
+        // Left for the parser to reject (and the line to be dropped).
+        assert_eq!(fixed, aff);
+        assert_eq!(dic, "2\nev/3\nx/\n");
+        assert_eq!(numeric(" 12 "), Some("12".into()));
+        assert_eq!(numeric("x"), None);
+    }
+
+    #[test]
+    fn drops_nothing_for_lines_that_do_not_exist() {
+        let text = "1\nword\n";
+        assert_eq!(drop_line(text, 0, false), text);
+        assert_eq!(drop_line(text, 3, false), text);
+        assert_eq!(drop_line(text, 3, true), text);
+        assert_eq!(drop_line("", 1, true), "");
+        // A table whose rows run past the end goes with what there is.
+        assert_eq!(
+            drop_line("SET UTF-8\nSFX k Y 9\nSFX k a b c", 2, true),
+            "SET UTF-8"
+        );
+        // A row after the table's last one is not part of it.
+        assert_eq!(
+            drop_line("REP 1\nREP a b\nREP c d", 3, true),
+            "REP 1\nREP a b"
+        );
     }
 
     #[test]
