@@ -304,9 +304,10 @@ fn install_tarball(tarball: &Path, prefix: &Path, staging: &Path) -> Result<()> 
     if had_lib {
         fs::rename(&target_lib, &old_lib)?;
     }
+    // The new libraries out of the way, the old ones (if any) back.
     let restore = || {
+        let _ = fs::rename(&target_lib, staging.join("new-lib"));
         if had_lib {
-            let _ = fs::rename(&target_lib, staging.join("new-lib"));
             let _ = fs::rename(&old_lib, &target_lib);
         }
     };
@@ -492,6 +493,56 @@ mod tests {
         assert!(update(kind, "t.tar.gz", &archive).install().is_err());
         assert_eq!(fs::read_to_string(p.join("bin/texoria")).unwrap(), "old");
         assert!(p.join("lib/texoria").is_dir());
+    }
+
+    fn tarball_kind(prefix: &Path) -> InstallKind {
+        InstallKind::Tarball {
+            prefix: prefix.to_path_buf(),
+        }
+    }
+
+    fn release_tarball() -> Vec<u8> {
+        tarball(&[
+            ("usr/bin/texoria", b"new"),
+            ("usr/lib/texoria/libpdfium.so", b"new"),
+        ])
+    }
+
+    /// The program cannot be put in place (here: no `bin` folder): the
+    /// libraries are what they were before.
+    #[test]
+    fn failed_program_rename_puts_the_libraries_back() {
+        let prefix = tempfile::tempdir().unwrap();
+        let p = prefix.path();
+        fs::create_dir_all(p.join("lib/texoria")).unwrap();
+        fs::write(p.join("lib/texoria/libpdfium.so"), "old").unwrap();
+        let err = update(tarball_kind(p), "t.tar.gz", &release_tarball())
+            .install()
+            .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("replacing the program"),
+            "{err:#}"
+        );
+        assert_eq!(
+            fs::read_to_string(p.join("lib/texoria/libpdfium.so")).unwrap(),
+            "old"
+        );
+
+        // Without libraries before, none after.
+        let prefix = tempfile::tempdir().unwrap();
+        let p = prefix.path();
+        assert!(
+            update(tarball_kind(p), "t.tar.gz", &release_tarball())
+                .install()
+                .is_err()
+        );
+        assert!(!p.join("lib/texoria").exists());
+        let left: Vec<_> = fs::read_dir(p)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, ["lib"]);
     }
 
     #[test]
