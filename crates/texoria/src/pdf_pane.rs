@@ -216,6 +216,11 @@ impl PdfPane {
                     self.to_drop.push(old.image);
                 }
             }
+            RenderEvent::PageText { .. }
+            | RenderEvent::Links { .. }
+            | RenderEvent::Found { .. }
+            | RenderEvent::Snapshot { .. }
+            | RenderEvent::Text { .. } => {}
         }
         cx.notify();
     }

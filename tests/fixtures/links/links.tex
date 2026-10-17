@@ -1,0 +1,12 @@
+% Fixture for pdf-view's tests: an internal link, a URL and searchable text.
+% Rebuild with: tectonic links.tex
+\documentclass{article}
+\usepackage{hyperref}
+\begin{document}
+See Section~\ref{sec:far} and \url{https://example.org}.
+The needle is here.
+\newpage
+\section{Far away}
+\label{sec:far}
+Another needle.
+\end{document}

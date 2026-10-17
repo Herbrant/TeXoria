@@ -8,7 +8,12 @@
 //! Documents are loaded from memory, never from the file on disk: on
 //! Windows an open file handle would stop the TeX engine from overwriting
 //! the PDF on the next compile.
+//!
+//! Besides bitmaps, the worker answers [`Query`]s about the loaded document:
+//! its text, its links, a search, a snapshot of a page. Positions are in PDF
+//! points from the page's top-left corner, y downwards (like SyncTeX's).
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -17,6 +22,8 @@ use pdfium_render::prelude::*;
 
 /// Hard cap on a single bitmap, to bound memory at extreme zoom levels.
 const MAX_PIXELS: f32 = 48_000_000.0;
+/// Search hits past this many are not reported.
+const MAX_HITS: usize = 2000;
 /// Hard cap on either side of a bitmap (degenerate page sizes).
 const MAX_SIDE: f32 = 16_384.0;
 /// Used for pages whose size is missing or nonsensical.
@@ -63,6 +70,71 @@ pub struct Bitmap {
     pub bgra: Vec<u8>,
 }
 
+/// A rectangle in PDF points, from the page's top-left corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Rect {
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x <= self.x + self.width && y >= self.y && y <= self.y + self.height
+    }
+}
+
+/// A character of a page's text, in reading order.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextChar {
+    pub ch: char,
+    pub rect: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LinkTarget {
+    /// A place in the document: a page, and how far down it (points).
+    Page {
+        page: usize,
+        y: Option<f32>,
+    },
+    Uri(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Link {
+    pub rect: Rect,
+    pub target: LinkTarget,
+}
+
+/// A search hit: the rectangles of its text (one per line it spans).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hit {
+    pub page: usize,
+    pub rects: Vec<Rect>,
+}
+
+/// A question about the loaded document, answered by an [`Event`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum Query {
+    /// The characters of a page → [`Event::PageText`].
+    PageText { page: usize },
+    /// The links of a page → [`Event::Links`].
+    Links { page: usize },
+    /// Every occurrence of `text` → [`Event::Found`].
+    Search {
+        id: u64,
+        text: String,
+        match_case: bool,
+        whole_word: bool,
+    },
+    /// A page as a bitmap at `scale` pixels per point → [`Event::Snapshot`].
+    Snapshot { id: u64, page: usize, scale: f32 },
+    /// The text of a page, or of every page → [`Event::Text`].
+    Text { id: u64, page: Option<usize> },
+}
+
 pub enum Event {
     Loaded {
         generation: u64,
@@ -76,12 +148,37 @@ pub enum Event {
         key: RenderKey,
         bitmap: Bitmap,
     },
+    PageText {
+        generation: u64,
+        page: usize,
+        chars: Vec<TextChar>,
+    },
+    Links {
+        generation: u64,
+        page: usize,
+        links: Vec<Link>,
+    },
+    Found {
+        generation: u64,
+        id: u64,
+        hits: Vec<Hit>,
+    },
+    /// `None` if there is no document or no such page.
+    Snapshot {
+        id: u64,
+        bitmap: Option<Bitmap>,
+    },
+    Text {
+        id: u64,
+        text: Option<String>,
+    },
 }
 
 #[derive(Default)]
 struct Shared {
     load: Option<(u64, Vec<u8>)>,
     wanted: Vec<RenderKey>,
+    queries: VecDeque<Query>,
     shutdown: bool,
 }
 
@@ -118,6 +215,20 @@ impl Renderer {
         let mut s = lock.lock().unwrap();
         s.load = Some((generation, bytes));
         s.wanted.retain(|k| k.generation >= generation);
+        cvar.notify_one();
+    }
+
+    /// Ask something about the loaded document; the answer comes as an event.
+    pub fn query(&self, query: Query) {
+        let (lock, cvar) = &*self.shared;
+        let mut s = lock.lock().unwrap();
+        // A newer search replaces one not started yet.
+        if matches!(query, Query::Search { .. }) {
+            s.queries.retain(|q| !matches!(q, Query::Search { .. }));
+        }
+        if !s.queries.contains(&query) {
+            s.queries.push_back(query);
+        }
         cvar.notify_one();
     }
 
@@ -168,6 +279,7 @@ fn worker(
     loop {
         enum Work {
             Load(u64, Vec<u8>),
+            Query(Query),
             Render(RenderKey),
         }
         let work = {
@@ -179,6 +291,9 @@ fn worker(
                 }
                 if let Some((g, bytes)) = s.load.take() {
                     break Work::Load(g, bytes);
+                }
+                if let Some(q) = s.queries.pop_front() {
+                    break Work::Query(q);
                 }
                 if !s.wanted.is_empty() {
                     break Work::Render(s.wanted.remove(0));
@@ -199,6 +314,10 @@ fn worker(
                     error: e.to_string(),
                 }),
             },
+            Work::Query(query) => {
+                let doc = doc.as_ref().map(|(g, d)| (*g, d));
+                on_event(answer(doc, query));
+            }
             Work::Render(key) => {
                 let Some((generation, d)) = &doc else {
                     continue;
@@ -212,6 +331,188 @@ fn worker(
                 }
             }
         }
+    }
+}
+
+/// Answer a query about `doc` (with its generation).
+fn answer(doc: Option<(u64, &PdfDocument)>, query: Query) -> Event {
+    let generation = doc.map_or(0, |(g, _)| g);
+    match query {
+        Query::PageText { page } => Event::PageText {
+            generation,
+            page,
+            chars: doc
+                .and_then(|(_, d)| page_chars(d, page).ok())
+                .unwrap_or_default(),
+        },
+        Query::Links { page } => Event::Links {
+            generation,
+            page,
+            links: doc
+                .and_then(|(_, d)| page_links(d, page).ok())
+                .unwrap_or_default(),
+        },
+        Query::Search {
+            id,
+            text,
+            match_case,
+            whole_word,
+        } => Event::Found {
+            generation,
+            id,
+            hits: doc
+                .map(|(_, d)| search(d, &text, match_case, whole_word))
+                .unwrap_or_default(),
+        },
+        Query::Snapshot { id, page, scale } => Event::Snapshot {
+            id,
+            bitmap: doc.and_then(|(g, d)| {
+                let key = RenderKey {
+                    generation: g,
+                    page,
+                    scale_milli: (scale.clamp(0.1, 4.0) * 1000.0) as u32,
+                    dark: false,
+                };
+                (page < d.pages().len() as usize)
+                    .then(|| render_page(d, key).ok())
+                    .flatten()
+            }),
+        },
+        Query::Text { id, page } => Event::Text {
+            id,
+            text: doc.and_then(|(_, d)| page_texts(d, page)),
+        },
+    }
+}
+
+/// Converts PDFium's rectangles (y upwards) into top-down ones.
+fn top_down(r: PdfRect, page_height: f32) -> Rect {
+    Rect {
+        x: r.left().value,
+        y: page_height - r.top().value,
+        width: r.width().value,
+        height: r.height().value,
+    }
+}
+
+fn page_chars(doc: &PdfDocument, page: usize) -> Result<Vec<TextChar>, PdfiumError> {
+    let page = doc.pages().get(page as PdfPageIndex)?;
+    let height = page.height().value;
+    let text = page.text()?;
+    Ok(text
+        .chars()
+        .iter()
+        .filter_map(|c| {
+            let ch = c.unicode_char()?;
+            // Generated line breaks and spaces have no box; they still
+            // separate words when text is copied.
+            let rect = c
+                .loose_bounds()
+                .map(|r| top_down(r, height))
+                .unwrap_or(Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 0.0,
+                    height: 0.0,
+                });
+            Some(TextChar { ch, rect })
+        })
+        .collect())
+}
+
+fn page_links(doc: &PdfDocument, index: usize) -> Result<Vec<Link>, PdfiumError> {
+    let page = doc.pages().get(index as PdfPageIndex)?;
+    let height = page.height().value;
+    let pages = doc.pages();
+    let mut out = Vec::new();
+    for link in page.links().iter() {
+        let Ok(rect) = link.rect() else {
+            continue;
+        };
+        let action = link.action();
+        let destination = link.destination().or_else(|| {
+            action
+                .as_ref()
+                .and_then(|a| a.as_local_destination_action()?.destination().ok())
+        });
+        let target = if let Some(dest) = destination {
+            let Ok(target_page) = dest.page_index() else {
+                continue;
+            };
+            let target_height = pages
+                .get(target_page)
+                .map(|p| p.height().value)
+                .unwrap_or(0.0);
+            let y = match dest.view_settings() {
+                Ok(PdfDestinationViewSettings::SpecificCoordinatesAndZoom(_, Some(y), _))
+                | Ok(PdfDestinationViewSettings::FitPageHorizontallyToWindow(Some(y))) => {
+                    Some(target_height - y.value)
+                }
+                Ok(PdfDestinationViewSettings::FitPageToRectangle(r)) => {
+                    Some(target_height - r.top().value)
+                }
+                _ => None,
+            };
+            LinkTarget::Page {
+                page: target_page as usize,
+                y,
+            }
+        } else if let Some(uri) = action
+            .as_ref()
+            .and_then(|a| a.as_uri_action().and_then(|u| u.uri().ok()))
+        {
+            LinkTarget::Uri(uri)
+        } else {
+            continue;
+        };
+        out.push(Link {
+            rect: top_down(rect, height),
+            target,
+        });
+    }
+    Ok(out)
+}
+
+fn search(doc: &PdfDocument, text: &str, match_case: bool, whole_word: bool) -> Vec<Hit> {
+    let options = PdfSearchOptions::new()
+        .match_case(match_case)
+        .match_whole_word(whole_word);
+    let mut hits = Vec::new();
+    for (index, page) in doc.pages().iter().enumerate() {
+        let height = page.height().value;
+        let Ok(page_text) = page.text() else {
+            continue;
+        };
+        let Ok(search) = page_text.search(text, &options) else {
+            continue;
+        };
+        while let Some(segments) = search.find_next() {
+            let rects = segments
+                .iter()
+                .map(|s| top_down(s.bounds(), height))
+                .collect();
+            hits.push(Hit { page: index, rects });
+            if hits.len() >= MAX_HITS {
+                return hits;
+            }
+        }
+    }
+    hits
+}
+
+/// The text of one page, or of every page separated by form feeds.
+fn page_texts(doc: &PdfDocument, page: Option<usize>) -> Option<String> {
+    let pages = doc.pages();
+    let text_of = |p: PdfPage| p.text().ok().map(|t| t.all());
+    match page {
+        Some(i) => text_of(pages.get(i as PdfPageIndex).ok()?),
+        None => Some(
+            pages
+                .iter()
+                .filter_map(text_of)
+                .collect::<Vec<_>>()
+                .join("\n\u{c}\n"),
+        ),
     }
 }
 
@@ -312,6 +613,105 @@ mod tests {
         assert_eq!(&px[4..7], &[228, 228, 228]);
         // Red stays red (lightness 50% is a fixed point).
         assert!(px[10] > px[8] && px[10] > px[9]);
+    }
+
+    /// A renderer with `tests/fixtures/links/links.pdf` loaded, if PDFium is available.
+    fn links_pdf() -> Option<(Renderer, mpsc::Receiver<Event>)> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let bytes = std::fs::read(root.join("tests/fixtures/links/links.pdf")).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let Ok(r) = Renderer::new(vec![root.join("vendor/pdfium")], move |e| {
+            let _ = tx.send(e);
+        }) else {
+            eprintln!("PDFium not available; skipping");
+            return None;
+        };
+        r.load(1, bytes);
+        match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
+            Event::Loaded { pages, .. } => assert_eq!(pages.len(), 2),
+            _ => panic!("expected Loaded"),
+        }
+        Some((r, rx))
+    }
+
+    #[test]
+    fn answers_queries() {
+        let Some((r, rx)) = links_pdf() else {
+            return;
+        };
+        let next = || rx.recv_timeout(Duration::from_secs(10)).unwrap();
+
+        r.query(Query::Links { page: 0 });
+        let Event::Links { page: 0, links, .. } = next() else {
+            panic!("expected Links")
+        };
+        assert!(
+            links
+                .iter()
+                .any(|l| matches!(l.target, LinkTarget::Page { page: 1, .. })),
+            "{links:?}"
+        );
+        assert!(
+            links
+                .iter()
+                .any(|l| l.target == LinkTarget::Uri("https://example.org".into()))
+        );
+        // Top-down coordinates: the links are near the top of the page.
+        assert!(links.iter().all(|l| l.rect.y < 300.0 && l.rect.width > 0.0));
+
+        r.query(Query::Search {
+            id: 7,
+            text: "needle".into(),
+            match_case: false,
+            whole_word: false,
+        });
+        let Event::Found { id: 7, hits, .. } = next() else {
+            panic!("expected Found")
+        };
+        assert_eq!(hits.iter().map(|h| h.page).collect::<Vec<_>>(), vec![0, 1]);
+
+        r.query(Query::PageText { page: 0 });
+        let Event::PageText { chars, .. } = next() else {
+            panic!("expected PageText")
+        };
+        let text: String = chars.iter().map(|c| c.ch).collect();
+        assert!(text.contains("The needle is here."), "{text}");
+
+        r.query(Query::Text { id: 3, page: None });
+        let Event::Text {
+            id: 3,
+            text: Some(all),
+        } = next()
+        else {
+            panic!("expected Text")
+        };
+        assert!(all.contains("Another needle"));
+
+        r.query(Query::Snapshot {
+            id: 9,
+            page: 1,
+            scale: 1.0,
+        });
+        let Event::Snapshot {
+            id: 9,
+            bitmap: Some(b),
+        } = next()
+        else {
+            panic!("expected Snapshot")
+        };
+        assert_eq!(b.width, 612);
+        r.query(Query::Snapshot {
+            id: 10,
+            page: 5,
+            scale: 1.0,
+        });
+        assert!(matches!(
+            next(),
+            Event::Snapshot {
+                id: 10,
+                bitmap: None
+            }
+        ));
     }
 
     /// Renders the sample PDF if PDFium and a compiled sample are available.
