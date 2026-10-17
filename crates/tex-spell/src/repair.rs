@@ -27,13 +27,14 @@ fn flag_type(aff: &str) -> FlagType {
 }
 
 /// Fix what can be fixed up front: numeric flags as Hunspell reads them
-/// (`17X` is 17), and `.dic` lines with an odd number of long-flag chars.
+/// (`17X` is 17), and `.dic` lines with an odd number of long-flag bytes.
 pub fn prepare(aff: &str, dic: &str) -> (String, String) {
     match flag_type(aff) {
         FlagType::Short => (aff.to_string(), dic.to_string()),
         FlagType::Long => (
             aff.to_string(),
-            map_dic(dic, |f| (f.chars().count() % 2 == 0).then(|| f.to_string())),
+            // Two bytes per flag, not two characters.
+            map_dic(dic, |f| (f.len() % 2 == 0).then(|| f.to_string())),
         ),
         FlagType::Numeric => (numeric_aff(aff), map_dic(dic, |f| Some(numeric_list(f)))),
     }
@@ -246,6 +247,17 @@ mod tests {
     fn drops_odd_long_flags() {
         let (_, dic) = prepare("FLAG long\n", "2\nhello/zz\nworld/m01 po:v\na\\/b/zz\n");
         assert_eq!(dic, "2\nhello/zz\na\\/b/zz\n");
+    }
+
+    #[test]
+    fn long_flags_are_counted_in_bytes() {
+        // Hunspell and spellbook read two bytes per flag: `é` is one flag,
+        // `éa` one and a half.
+        let (_, dic) = prepare("FLAG long\n", "2\nhello/é\nworld/éa\n");
+        assert_eq!(dic, "2\nhello/é\n");
+        let aff = "SET UTF-8\nFLAG long\nSFX é Y 1\nSFX é 0 s .\n";
+        let s = crate::Speller::new(aff, "1\nhello/é\n").unwrap();
+        assert!(s.check("hellos"));
     }
 
     #[test]
