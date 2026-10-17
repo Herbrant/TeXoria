@@ -379,4 +379,96 @@ mod tests {
         fs::write(&b, "").unwrap();
         assert!(!is_same_file(&a, &b));
     }
+
+    #[test]
+    fn scan_stops_at_its_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        for name in ["a", "b", "sub/c", "sub/d"] {
+            fs::write(dir.path().join(name), "").unwrap();
+        }
+        let mut budget = 3;
+        let tree = scan_dir(dir.path(), 0, &mut budget);
+        let count = |nodes: &[FileNode]| -> usize {
+            fn count(nodes: &[FileNode]) -> usize {
+                nodes
+                    .iter()
+                    .map(|n| 1 + n.children.as_deref().map_or(0, count))
+                    .sum()
+            }
+            count(nodes)
+        };
+        assert_eq!((count(&tree), budget), (3, 0));
+        let mut budget = 0;
+        assert!(scan_dir(dir.path(), 0, &mut budget).is_empty());
+        assert!(scan(&dir.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn sorts_names_without_case_then_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["b.tex", "B.TEX", "a.tex", "Été.tex", "zeta.tex"] {
+            // Two of them are the same file on a case-insensitive disk.
+            fs::write(dir.path().join(name), "").unwrap();
+        }
+        let tree = scan(dir.path());
+        let got = names(&tree);
+        if got.len() == 5 {
+            assert_eq!(got, ["a.tex", "B.TEX", "b.tex", "zeta.tex", "Été.tex"]);
+        } else {
+            assert_eq!(got.len(), 4);
+            assert_eq!(got[0], "a.tex");
+            assert!(got[1].eq_ignore_ascii_case("b.tex"));
+            assert_eq!(&got[2..], ["zeta.tex", "Été.tex"]);
+        }
+    }
+
+    #[test]
+    fn huge_files_are_not_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("huge.tex");
+        // Sparse: no 20 MB written.
+        File::create(&path)
+            .unwrap()
+            .set_len(MAX_TEXT_BYTES + 1)
+            .unwrap();
+        assert!(!looks_like_text(&path));
+        File::create(&path).unwrap().set_len(16).unwrap();
+        // NUL bytes.
+        assert!(!looks_like_text(&path));
+    }
+
+    #[test]
+    fn a_case_only_rename_is_the_same_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (lower, upper) = (dir.path().join("a.tex"), dir.path().join("A.tex"));
+        fs::write(&lower, "").unwrap();
+        // Same file exactly when the disk ignores case.
+        assert_eq!(is_same_file(&lower, &upper), upper.exists());
+        assert!(!is_same_file(&lower, &dir.path().join("gone.tex")));
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn new_entries_stay_inside_the_folder(name in "[a-z./\\\\ :]{0,12}") {
+                let dir = Path::new("/p/q");
+                if let Ok(path) = new_entry_path(dir, &name) {
+                    prop_assert!(path.starts_with(dir) && path != dir);
+                    prop_assert!(path.components().all(|c| c != Component::ParentDir));
+                }
+            }
+
+            #[test]
+            fn renames_stay_in_the_same_folder(name in "[a-z./\\\\ ]{0,12}") {
+                let file = Path::new("/p/q/a.tex");
+                if let Ok(path) = rename_target(file, &name) {
+                    prop_assert_eq!(path.parent(), file.parent());
+                }
+            }
+        }
+    }
 }
