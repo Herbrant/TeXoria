@@ -693,4 +693,115 @@ mod tests {
         assert_eq!(repo.rel_path(&abs).as_deref(), Some("a/b c.tex"));
         assert_eq!(repo.rel_path(Path::new("/elsewhere")), None);
     }
+
+    #[test]
+    fn untracked_patch_details() {
+        // Text that is not UTF-8 is binary; like git, only the first 8000
+        // bytes are looked at for a NUL.
+        assert!(untracked_patch("a.tex", b"caf\xe9\n").contains("Binary files"));
+        let mut late = vec![b'a'; 8000];
+        late.push(0);
+        assert!(untracked_patch("a.tex", &late).contains("@@ -0,0 +1 @@"));
+        late.insert(0, 0);
+        assert!(untracked_patch("a.tex", &late).contains("Binary files"));
+        let p = untracked_patch("a.tex", b"x\ny\n");
+        assert!(p.ends_with("+x\n+y\n"), "{p}");
+        assert!(!p.contains("No newline"));
+    }
+
+    #[test]
+    fn more_clone_names() {
+        for (url, want) in [
+            ("https://example.org/a/b.git/", Some("b")),
+            ("  /srv/git/paper.git  ", Some("paper")),
+            (r"C:\repos\paper", Some("paper")),
+            ("file:///srv/x", Some("x")),
+            ("host:paper.git", Some("paper")),
+            ("https://example.org/..", None),
+            ("https://example.org/.git", None),
+            ("https://example.org/..git", None),
+            ("/", None),
+        ] {
+            assert_eq!(clone_dir_name(url).as_deref(), want, "{url}");
+        }
+    }
+
+    #[test]
+    fn rel_path_of_the_root_and_outside() {
+        let repo = Repo::new(
+            Git::at("git"),
+            PathBuf::from("/r"),
+            PathBuf::from("/r/.git"),
+        );
+        assert_eq!(repo.rel_path(Path::new("/r")).as_deref(), Some(""));
+        assert_eq!(repo.rel_path(Path::new("/rr/a")), None);
+        assert_eq!(repo.abs_path(""), Path::new("/r"));
+        assert_eq!(repo.abs_path("a//b/"), Path::new("/r").join("a").join("b"));
+        assert_eq!(repo.git().program(), Path::new("git"));
+        assert_eq!(repo.root(), Path::new("/r"));
+        let with = repo.with_credential(Some(crate::Credential {
+            url: "https://x".into(),
+            username: "u".into(),
+            password: "p".into(),
+        }));
+        assert!(with.git().credential.is_some());
+    }
+
+    mod props {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        proptest! {
+            #[test]
+            fn clone_names_are_single_names(url in "\\PC{0,40}") {
+                if let Some(name) = clone_dir_name(&url) {
+                    prop_assert!(!name.is_empty() && name != "." && name != "..");
+                    prop_assert!(!name.contains(['/', '\\', ':']));
+                }
+            }
+
+            #[test]
+            fn untracked_patches_never_panic(
+                path in "[^\0\n]{1,20}",
+                contents in prop::collection::vec(any::<u8>(), 0..300),
+            ) {
+                let p = untracked_patch(&path, &contents);
+                let head = format!("diff --git a/{path} b/{path}\nnew file mode 100644\n");
+                prop_assert!(p.starts_with(&head));
+            }
+
+            #[test]
+            fn text_patches_add_every_line(lines in prop::collection::vec("[a-z ]{0,10}", 1..20)) {
+                let text = lines.join("\n") + "\n";
+                let p = untracked_patch("a.tex", text.as_bytes());
+                let added: Vec<&str> = p.lines().filter_map(|l| l.strip_prefix('+')).skip(1).collect();
+                prop_assert_eq!(added, lines);
+            }
+
+            #[test]
+            fn paths_round_trip(parts in prop::collection::vec("[a-zA-Z0-9 _é-][a-zA-Z0-9 ._é-]{0,8}", 1..5)) {
+                let repo = Repo::new(Git::at("git"), PathBuf::from("/r"), PathBuf::from("/r/.git"));
+                let rel = parts.join("/");
+                let abs = repo.abs_path(&rel);
+                prop_assert!(abs.starts_with("/r"));
+                prop_assert_eq!(repo.rel_path(&abs), Some(rel));
+            }
+
+            #[test]
+            fn only_plain_names_are_deletable(rel in "[a-zA-Z./\\\\:~ ]{0,16}") {
+                let repo = Repo::new(Git::at("git"), PathBuf::from("/nonexistent"), PathBuf::from("/nonexistent/.git"));
+                if let Some(path) = repo.deletable(&rel) {
+                    prop_assert!(path.starts_with("/nonexistent"));
+                    let names: Vec<_> = path.strip_prefix("/nonexistent").unwrap().components().collect();
+                    // No folder on the way exists here: a single name only.
+                    prop_assert_eq!(names.len(), 1);
+                    let std::path::Component::Normal(name) = names[0] else {
+                        return Err(TestCaseError::fail(format!("{path:?}")));
+                    };
+                    prop_assert!(!is_git_dir(&name.to_string_lossy()));
+                }
+            }
+        }
+    }
 }

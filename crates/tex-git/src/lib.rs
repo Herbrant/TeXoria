@@ -492,6 +492,253 @@ mod tests {
         assert!(matches!(err, Error::Invalid(_)), "{err:?}");
     }
 
+    fn credential(url: &str, username: &str, password: &str) -> Credential {
+        Credential {
+            url: url.into(),
+            username: username.into(),
+            password: password.into(),
+        }
+    }
+
+    #[test]
+    fn credentials_must_be_single_lines() {
+        let good = credential("https://git.overleaf.com", "git", "olp_x");
+        assert!(good.is_safe());
+        for bad in [
+            credential("", "git", "olp_x"),
+            credential("https://git.overleaf.com", "", "olp_x"),
+            credential("https://git.overleaf.com", "git", ""),
+            credential("https://git.overleaf.com\nhost=evil", "git", "olp_x"),
+            credential("https://git.overleaf.com", "git\nquit=1", "olp_x"),
+            credential("https://git.overleaf.com", "git", "olp_x\rquit=1"),
+            credential("https://git.overleaf.com", "git", "olp_x\0"),
+            credential("https://git.overleaf.com", "git", "olp_\u{7f}"),
+            credential("https://git.overleaf.com", "git", "olp_\u{85}x"),
+        ] {
+            assert!(!bad.is_safe(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn unsafe_credentials_only_stop_network_commands() {
+        let Some(found) = Git::find() else {
+            test_support::skip("GIT", "git not found");
+            return;
+        };
+        let git = Git::at(found.program()).credential(Some(credential("", "git", "x")));
+        // Never even started: the program does not exist.
+        let missing = Git::at("/nonexistent/git").credential(git.credential.clone());
+        let network = process::Options {
+            network: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            missing.run(Path::new("."), ["fetch"], network),
+            Err(Error::Invalid(_))
+        ));
+        assert!(git.version().unwrap().starts_with("git version"));
+    }
+
+    #[test]
+    fn classifies_failures_by_git_messages() {
+        let no_identity = [
+            "Author identity unknown\n\n*** Please tell me who you are.\n\nRun\n",
+            "fatal: no email was given and auto-detection is disabled\n\
+             *** Please tell me who you are.",
+            "fatal: empty ident name (for <a@b>) not allowed",
+        ];
+        for out in no_identity {
+            for cmd in ["commit", "pull", "rebase"] {
+                let e = classify(cmd.into(), out.into());
+                assert!(matches!(e, Error::NoIdentity), "{cmd} {out}: {e:?}");
+                assert_eq!(e.details(), None);
+            }
+        }
+
+        let rejected = [
+            " ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs",
+            " ! [rejected]        main -> main (non-fast-forward)",
+            "hint: Updates were rejected because the remote contains work that you do not\n\
+             hint: have locally. (fetch first)",
+        ];
+        for out in rejected {
+            let e = classify("push".into(), out.into());
+            assert!(matches!(e, Error::Rejected { .. }), "{out}: {e:?}");
+            assert_eq!(e.details(), Some(out));
+            // Only a push is rejected that way.
+            assert!(matches!(
+                classify("fetch".into(), out.into()),
+                Error::Failed { .. }
+            ));
+        }
+
+        let unreachable = [
+            "fatal: unable to access 'https://x/': Could not resolve host: x",
+            "ssh: Could not resolve hostname x: Name or service not known\n\
+             fatal: Couldn't resolve host",
+            "fatal: unable to access 'https://x/': Failed to connect to x port 443",
+            "fatal: unable to access 'https://x/': Couldn't connect to server",
+            "connect: Network is unreachable",
+            "ssh: connect to host x port 22: Connection timed out",
+            "ssh: connect to host x port 22: Operation timed out",
+            "ssh: connect to host x port 22: Connection refused",
+        ];
+        for out in unreachable {
+            for cmd in ["clone", "fetch", "pull", "push"] {
+                let e = classify(cmd.into(), out.into());
+                assert!(matches!(e, Error::Unreachable { .. }), "{cmd} {out}: {e:?}");
+                assert_eq!(e.details(), Some(out));
+            }
+            assert!(matches!(
+                classify("status".into(), out.into()),
+                Error::Failed { .. }
+            ));
+        }
+
+        let auth = [
+            "remote: Invalid username or password.\n\
+             fatal: Authentication failed for 'https://git.overleaf.com/x/'",
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+            "fatal: could not read Password for 'https://git@github.com': No such device",
+            "git@github.com: Permission denied (publickey).\n\
+             fatal: Could not read from remote repository.",
+        ];
+        for out in auth {
+            for cmd in ["clone", "fetch", "push", "ls-remote"] {
+                let e = classify(cmd.into(), out.into());
+                assert!(matches!(e, Error::Auth { .. }), "{cmd} {out}: {e:?}");
+                assert_eq!(e.details(), Some(out));
+            }
+        }
+
+        let e = classify(
+            "merge".into(),
+            "fatal: refusing to merge unrelated histories".into(),
+        );
+        assert!(matches!(&e, Error::Failed { command, .. } if command == "merge"));
+        assert_eq!(e.to_string(), "Refusing to merge unrelated histories");
+        assert_eq!(
+            e.details(),
+            Some("fatal: refusing to merge unrelated histories")
+        );
+        // Without a message, the command it was.
+        let e = classify("gc".into(), "\n".into());
+        assert_eq!(e.to_string(), "git gc failed");
+    }
+
+    #[test]
+    fn errors_without_details() {
+        for e in [
+            Error::Spawn(std::io::Error::other("x")),
+            Error::NoIdentity,
+            Error::NoRemote,
+            Error::Cancelled,
+            Error::TimedOut(5),
+            Error::Invalid("x".into()),
+        ] {
+            assert_eq!(e.details(), None, "{e:?}");
+            assert!(!e.to_string().is_empty());
+        }
+        assert_eq!(Error::TimedOut(5).to_string(), "Timed out after 5 s");
+    }
+
+    #[test]
+    fn failures_report_the_command_and_output() {
+        let Some(found) = Git::find() else {
+            test_support::skip("GIT", "git not found");
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let git = test_support::git::isolated_env(tmp.path())
+            .into_iter()
+            .fold(Git::at(found.program()), |git, (k, v)| git.env(k, v));
+        // Outside of any repository: GIT_CEILING_DIRECTORIES keeps git there.
+        let git = git.env("GIT_CEILING_DIRECTORIES", tmp.path());
+        let work = tmp.path().join("work");
+        std::fs::create_dir(&work).unwrap();
+        let err = git
+            .run(&work, ["--literal-pathspecs", "log"], Default::default())
+            .unwrap_err();
+        let Error::Failed { command, output } = &err else {
+            panic!("{err:?}");
+        };
+        assert_eq!(command, "log");
+        assert!(output.contains("not a git repository"), "{output}");
+        assert!(err.to_string().starts_with("Not a git repository"), "{err}");
+        let err = Git::at(tmp.path().join("no-git")).version().unwrap_err();
+        assert!(matches!(err, Error::Spawn(_)), "{err:?}");
+    }
+
+    #[test]
+    fn clone_refuses_options_and_existing_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Refused before git runs.
+        let git = Git::at(tmp.path().join("no-git"));
+        let cancel = Cancel::new();
+        for url in ["", "  ", "-uhttps://x", " --upload-pack=touch x"] {
+            let err = git
+                .clone_repo(url, &tmp.path().join("x"), &cancel)
+                .unwrap_err();
+            assert!(matches!(err, Error::Invalid(_)), "{url:?}: {err:?}");
+        }
+        let err = git
+            .clone_repo("https://example.org/x.git", tmp.path(), &cancel)
+            .unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)), "{err:?}");
+        assert!(!tmp.path().join("x").exists());
+    }
+
+    #[test]
+    fn builders() {
+        let git = Git::at("/opt/git/bin/git")
+            .network_timeout(None)
+            .env("A", "1");
+        assert_eq!(git.program(), Path::new("/opt/git/bin/git"));
+        assert_eq!(git.network_timeout, None);
+        assert_eq!(git.env, [("A".into(), "1".into())]);
+        assert!(git.credential.is_none());
+    }
+
+    #[test]
+    fn plain_paths() {
+        assert_eq!(plain(Path::new("/a/b")), Path::new("/a/b"));
+        #[cfg(windows)]
+        {
+            assert_eq!(plain(Path::new(r"\\?\C:\dir")), Path::new(r"C:\dir"));
+            // Only drive paths: a verbatim UNC path has no other spelling git takes.
+            let unc = Path::new(r"\\?\UNC\server\share");
+            assert_eq!(plain(unc), unc);
+            assert_eq!(plain(Path::new(r"C:\dir")), Path::new(r"C:\dir"));
+        }
+    }
+
+    #[test]
+    fn fallback_dirs_are_absolute() {
+        let dirs = fallback_dirs();
+        assert!(dirs.iter().all(|d| d.is_absolute()), "{dirs:?}");
+        if cfg!(target_os = "macos") {
+            assert_eq!(dirs[0], Path::new("/opt/homebrew/bin"));
+        }
+        if cfg!(unix) {
+            assert!(dirs.contains(&PathBuf::from("/usr/bin")));
+        }
+        if cfg!(windows) && std::env::var_os("ProgramFiles").is_some() {
+            assert!(dirs.iter().any(|d| d.ends_with(r"Git\cmd")), "{dirs:?}");
+        }
+    }
+
+    /// `/usr/bin/git` only counts with the developer tools behind it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_git_stub() {
+        let clt = has_clt();
+        if let Some(git) = Git::find()
+            && git.program() == Path::new("/usr/bin/git")
+        {
+            assert!(clt);
+        }
+    }
+
     #[test]
     fn credential_debug_hides_password() {
         let c = Credential {

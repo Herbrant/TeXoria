@@ -387,11 +387,264 @@ u UU N... 100644 100644 100644 100644 f1 f2 f3 main.tex\0\
     }
 
     #[test]
+    fn letters_and_labels() {
+        let letters: String = [
+            Change::Unmodified,
+            Change::Modified,
+            Change::Added,
+            Change::Deleted,
+            Change::Renamed,
+            Change::Copied,
+            Change::TypeChanged,
+            Change::Untracked,
+        ]
+        .map(Change::letter)
+        .concat();
+        assert_eq!(letters, "MADRCTU");
+        assert_eq!(Change::from_code(b'?'), Change::Unmodified);
+        let labels = [
+            Operation::None,
+            Operation::Merge,
+            Operation::Rebase,
+            Operation::CherryPick,
+            Operation::Revert,
+        ]
+        .map(Operation::label);
+        assert_eq!(labels, ["", "Merge", "Rebase", "Cherry-pick", "Revert"]);
+        assert_eq!(Operation::default(), Operation::None);
+    }
+
+    #[test]
     fn summarizes_errors() {
         assert_eq!(
             summary("hint: foo\nfatal: not a git repository\n").as_deref(),
             Some("Not a git repository")
         );
         assert_eq!(summary("\n\n"), None);
+    }
+
+    mod props {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        fn change(c: u8) -> Change {
+            Change::from_code(c)
+        }
+
+        /// A path as git prints it with `-z`: anything but NUL.
+        fn path() -> impl Strategy<Value = String> {
+            "[^\0]{1,24}"
+        }
+
+        #[derive(Debug, Clone)]
+        enum Rec {
+            Ordinary(u8, u8, String),
+            Renamed(u8, String, String),
+            Unmerged(String),
+            Untracked(String),
+        }
+
+        fn rec() -> impl Strategy<Value = Rec> {
+            let code = prop::sample::select(b".MADRCT".to_vec());
+            prop_oneof![
+                (code.clone(), code.clone(), path()).prop_map(|(x, y, p)| Rec::Ordinary(x, y, p)),
+                (prop::sample::select(b"RC".to_vec()), path(), path())
+                    .prop_map(|(x, p, o)| Rec::Renamed(x, p, o)),
+                path().prop_map(Rec::Unmerged),
+                path().prop_map(Rec::Untracked),
+            ]
+        }
+
+        proptest! {
+            #[test]
+            fn status_never_panics(out in prop::collection::vec(any::<u8>(), 0..512)) {
+                let _ = status(&out);
+            }
+
+            #[test]
+            fn status_of_records_never_panics(
+                recs in prop::collection::vec("[12u?#] [ -~]{0,40}", 0..8)
+            ) {
+                let _ = status(recs.join("\0").as_bytes());
+            }
+
+            #[test]
+            fn log_never_panics(out in prop::collection::vec(any::<u8>(), 0..512)) {
+                let _ = log(&out);
+            }
+
+            #[test]
+            fn branches_never_panic(out in prop::collection::vec(any::<u8>(), 0..512)) {
+                let _ = branches(&out);
+            }
+
+            #[test]
+            fn summary_never_panics(text in "\\PC*") {
+                if let Some(s) = summary(&text) {
+                    prop_assert!(!s.is_empty());
+                    prop_assert!(!s.starts_with("fatal: ") && !s.starts_with("hint:"));
+                }
+            }
+
+            #[test]
+            fn status_round_trip(
+                head in prop::option::of("[a-z][a-z/_-]{0,12}"),
+                oid in prop::option::of("[0-9a-f]{40}"),
+                upstream in prop::option::of("[a-z]{1,8}/[a-z]{1,8}"),
+                ab in (0u32..100_000, 0u32..100_000),
+                recs in prop::collection::vec(rec(), 0..8),
+            ) {
+                let mut out: Vec<String> = vec![
+                    format!("# branch.oid {}", oid.as_deref().unwrap_or("(initial)")),
+                    format!("# branch.head {}", head.as_deref().unwrap_or("(detached)")),
+                ];
+                if let Some(u) = &upstream {
+                    out.push(format!("# branch.upstream {u}"));
+                    out.push(format!("# branch.ab +{} -{}", ab.0, ab.1));
+                }
+                let mut want = Vec::new();
+                for r in &recs {
+                    let (line, entry) = match r {
+                        Rec::Ordinary(x, y, p) => (
+                            format!(
+                                "1 {}{} N... 100644 100644 100644 aaaa bbbb {p}",
+                                *x as char, *y as char
+                            ),
+                            Entry {
+                                path: p.clone(),
+                                orig_path: None,
+                                index: change(*x),
+                                worktree: change(*y),
+                                conflicted: false,
+                            },
+                        ),
+                        Rec::Renamed(x, p, o) => (
+                            format!(
+                                "2 {}. N... 100644 100644 100644 aaaa bbbb {}100 {p}\0{o}",
+                                *x as char, *x as char
+                            ),
+                            Entry {
+                                path: p.clone(),
+                                orig_path: Some(o.clone()),
+                                index: change(*x),
+                                worktree: Change::Unmodified,
+                                conflicted: false,
+                            },
+                        ),
+                        Rec::Unmerged(p) => (
+                            format!("u UU N... 100644 100644 100644 100644 a b c {p}"),
+                            Entry {
+                                path: p.clone(),
+                                orig_path: None,
+                                index: Change::Modified,
+                                worktree: Change::Modified,
+                                conflicted: true,
+                            },
+                        ),
+                        Rec::Untracked(p) => (
+                            format!("? {p}"),
+                            Entry {
+                                path: p.clone(),
+                                orig_path: None,
+                                index: Change::Unmodified,
+                                worktree: Change::Untracked,
+                                conflicted: false,
+                            },
+                        ),
+                    };
+                    out.push(line);
+                    want.push(entry);
+                }
+                let mut bytes = out.join("\0").into_bytes();
+                bytes.push(0);
+                let s = status(&bytes);
+                prop_assert_eq!(&s.branch, &head);
+                prop_assert_eq!(&s.oid, &oid);
+                prop_assert_eq!((s.ahead, s.behind), if upstream.is_some() { ab } else { (0, 0) });
+                prop_assert_eq!(&s.upstream, &upstream);
+                prop_assert_eq!(s.is_clean(), want.is_empty());
+                prop_assert_eq!(s.conflicts().count(), want.iter().filter(|e| e.conflicted).count());
+                prop_assert_eq!(s.entries, want);
+                prop_assert_eq!(s.operation, Operation::None);
+            }
+
+            #[test]
+            fn log_round_trip(
+                commits in prop::collection::vec(
+                    (
+                        "[0-9a-f]{40}",
+                        "[^\0\x1f]{0,12}",
+                        "[^\0\x1f]{0,12}",
+                        any::<i64>(),
+                        prop::collection::vec("[0-9a-f]{40}", 0..3),
+                        "([^\0]{0,20}[^\0\\s])?",
+                    ),
+                    0..6,
+                )
+            ) {
+                let out: String = commits
+                    .iter()
+                    .map(|(sha, author, email, time, parents, subject)| {
+                        format!(
+                            "\n{sha}\x1f{}\x1f{author}\x1f{email}\x1f{time}\x1f{}\x1f{subject}\0",
+                            &sha[..7],
+                            parents.join(" ")
+                        )
+                    })
+                    .collect();
+                let got = log(out.as_bytes());
+                prop_assert_eq!(got.len(), commits.len());
+                for (c, (sha, author, email, time, parents, subject)) in got.iter().zip(&commits) {
+                    prop_assert_eq!(&c.sha, sha);
+                    prop_assert_eq!(&c.short, &sha[..7]);
+                    prop_assert_eq!(&c.author, author);
+                    prop_assert_eq!(&c.email, email);
+                    prop_assert_eq!(c.time, *time);
+                    prop_assert_eq!(&c.parents, parents);
+                    prop_assert_eq!(&c.subject, subject);
+                }
+            }
+
+            #[test]
+            fn branches_round_trip(
+                refs in prop::collection::vec(
+                    (any::<bool>(), any::<bool>(), "[a-z][a-z0-9/_-]{0,12}", prop::option::of("[a-z]{1,6}/[a-z]{1,6}")),
+                    0..8,
+                )
+            ) {
+                let out: String = refs
+                    .iter()
+                    .map(|(current, remote, name, upstream)| {
+                        let refname = if *remote {
+                            format!("refs/remotes/origin/{name}")
+                        } else {
+                            format!("refs/heads/{name}")
+                        };
+                        let head = if *current { "*" } else { " " };
+                        format!("{head}\0{refname}\0{}\n", upstream.as_deref().unwrap_or(""))
+                    })
+                    .collect();
+                let want: Vec<Branch> = refs
+                    .iter()
+                    .filter(|(_, remote, name, _)| !(*remote && (name == "HEAD" || name.ends_with("/HEAD"))))
+                    .map(|(current, remote, name, upstream)| Branch {
+                        name: if *remote { format!("origin/{name}") } else { name.clone() },
+                        remote: *remote,
+                        current: *current,
+                        upstream: upstream.clone(),
+                    })
+                    .collect();
+                let got = branches(out.as_bytes());
+                for b in &got {
+                    if b.remote {
+                        prop_assert_eq!(format!("origin/{}", b.local_name()), b.name.clone());
+                    } else {
+                        prop_assert_eq!(b.local_name(), b.name.as_str());
+                    }
+                }
+                prop_assert_eq!(got, want);
+            }
+        }
     }
 }

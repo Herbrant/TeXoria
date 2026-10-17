@@ -255,4 +255,195 @@ mod tests {
             "https://latex.example.org/user/settings"
         );
     }
+
+    #[test]
+    fn token_lengths() {
+        assert!(!valid_token(&"a".repeat(7)));
+        assert!(valid_token(&"a".repeat(8)));
+        assert!(valid_token(&"a".repeat(512)));
+        assert!(!valid_token(&"a".repeat(513)));
+        assert!(valid_token("olp_!#$%&'()*+,-./:;<=>?@[]^_`{|}~"));
+        assert!(!valid_token("olp_abcdef\t"));
+        assert!(!valid_token("olp_abcdef\u{7f}"));
+    }
+
+    #[test]
+    fn hosts_with_ports_and_addresses() {
+        let servers = [
+            "https://[::1]:8443".to_string(),
+            "https://10.0.0.5".into(),
+            "localhost:8080".into(),
+        ];
+        let p = project(&format!("https://[::1]:8443/project/{ID}"), &servers).unwrap();
+        assert_eq!(p.server, "https://[::1]:8443");
+        assert_eq!(p.git_url, format!("https://[::1]:8443/git/{ID}"));
+        let p = remote(&format!("https://10.0.0.5/git/{ID}"), &servers).unwrap();
+        assert_eq!(p.git_url, format!("https://10.0.0.5/git/{ID}"));
+        // Without a scheme, a server is taken as HTTPS.
+        let p = remote(&format!("https://LOCALHOST:8080/git/{ID}"), &servers).unwrap();
+        assert_eq!(p.server, "https://localhost:8080");
+        // The port is part of the server.
+        assert_eq!(
+            remote(&format!("https://10.0.0.5:444/git/{ID}"), &servers),
+            None
+        );
+        assert_eq!(remote(&format!("https://[::1]/git/{ID}"), &servers), None);
+    }
+
+    #[test]
+    fn credentials_in_urls_are_dropped() {
+        // The host is what follows the last `@`.
+        let p = remote(&format!("https://git:olp_x@y@git.overleaf.com/{ID}"), &[]).unwrap();
+        assert_eq!(p.git_url, format!("https://git.overleaf.com/{ID}"));
+        assert_eq!(
+            remote(&format!("https://git.overleaf.com@evil.example/{ID}"), &[]),
+            None
+        );
+        let servers = ["https://latex.example.org".to_string()];
+        let p = remote(
+            &format!("https://user:pass@latex.example.org/git/{ID}?x#y"),
+            &servers,
+        )
+        .unwrap();
+        assert!(!p.git_url.contains("pass") && !p.git_url.contains('?'));
+    }
+
+    #[test]
+    fn server_pro_needs_https() {
+        let id = ID;
+        for server in [
+            "http://latex.example.org",
+            "ftp://latex.example.org",
+            "",
+            "a b",
+        ] {
+            let servers = [server.to_string()];
+            assert_eq!(
+                project(&format!("https://latex.example.org/git/{id}"), &servers),
+                None,
+                "{server}"
+            );
+        }
+        // An HTTP address of an HTTPS server is cloned over HTTPS.
+        let servers = ["https://latex.example.org".to_string()];
+        let p = project(&format!("http://latex.example.org/project/{id}"), &servers).unwrap();
+        assert_eq!(p.git_url, format!("https://latex.example.org/git/{id}"));
+        // Project pages are not remotes, and IDs must look like IDs.
+        assert_eq!(
+            remote(&format!("https://latex.example.org/project/{id}"), &servers),
+            None
+        );
+        for path in ["git/abc", "git/abc-def-ghi", "git", &format!("git/{id}/x")] {
+            assert_eq!(
+                project(&format!("https://latex.example.org/{path}"), &servers),
+                None,
+                "{path}"
+            );
+        }
+        assert_eq!(
+            project(&format!("https://www.overleaf.com/project/{id}x!"), &[]),
+            None
+        );
+        assert_eq!(
+            project(&format!("https://git.overleaf.com/a/{id}"), &[]),
+            None
+        );
+    }
+
+    mod props {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        fn check(p: &Project) -> Result<(), TestCaseError> {
+            prop_assert!(p.id.len() >= 6 && p.id.bytes().all(|b| b.is_ascii_alphanumeric()));
+            prop_assert!(p.server.starts_with("https://"), "{p:?}");
+            prop_assert_eq!(
+                &p.git_url,
+                &if p.server == CLOUD_GIT {
+                    format!("{CLOUD_GIT}/{}", p.id)
+                } else {
+                    format!("{}/git/{}", p.server, p.id)
+                }
+            );
+            let host = &p.server["https://".len()..];
+            prop_assert!(
+                !host.is_empty()
+                    && host
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-.:[]".contains(&b))
+            );
+            Ok(())
+        }
+
+        proptest! {
+            #[test]
+            fn any_input(input in "\\PC{0,60}", server in "\\PC{0,30}") {
+                let servers = [server];
+                if let Some(p) = project(&input, &servers) {
+                    check(&p)?;
+                }
+                if let Some(p) = remote(&input, &servers) {
+                    check(&p)?;
+                }
+            }
+
+            #[test]
+            fn url_like_input(
+                scheme in "(https?|HTTP|ftp)",
+                user in prop::option::of("[a-z:@_]{1,8}"),
+                host in prop_oneof![
+                    Just("git.overleaf.com".to_string()),
+                    Just("www.overleaf.com".to_string()),
+                    Just("latex.example.org".to_string()),
+                    Just("latex.example.org:8443".to_string()),
+                    Just("[::1]".to_string()),
+                    "[a-zA-Z0-9.:\\[\\]@\\\\=-]{1,20}",
+                ],
+                path in prop_oneof![
+                    "[a-zA-Z0-9]{4,10}",
+                    "project/[a-zA-Z0-9]{4,10}(/[a-z]{0,4})?",
+                    "git/[a-zA-Z0-9]{4,10}",
+                    "[a-z0-9/!._-]{0,30}",
+                ],
+                server in prop_oneof![
+                    Just("https://latex.example.org".to_string()),
+                    Just("latex.example.org:8443".to_string()),
+                    Just("http://latex.example.org".to_string()),
+                    Just("https://[::1]".to_string()),
+                    "(https?://)?[a-z0-9.:]{1,15}",
+                ],
+                tail in "([?#][a-z=&]{0,6})?",
+            ) {
+                let user = user.map(|u| format!("{u}@")).unwrap_or_default();
+                let input = format!("{scheme}://{user}{host}/{path}{tail}");
+                let servers = [server];
+                for p in [project(&input, &servers), remote(&input, &servers)]
+                    .into_iter()
+                    .flatten()
+                {
+                    check(&p)?;
+                }
+            }
+
+            #[test]
+            fn bare_ids(id in "[a-zA-Z0-9]{0,30}") {
+                match project(&id, &[]) {
+                    Some(p) => {
+                        prop_assert!(id.len() >= 6);
+                        check(&p)?;
+                    }
+                    None => prop_assert!(id.len() < 6),
+                }
+            }
+
+            #[test]
+            fn tokens_are_single_words(token in "\\PC{0,40}") {
+                if valid_token(&token) {
+                    prop_assert!(!token.chars().any(|c| c.is_whitespace() || c.is_control()));
+                    prop_assert!(token.is_ascii());
+                }
+            }
+        }
+    }
 }
