@@ -105,16 +105,21 @@ pub fn parse_bytes(log: &[u8], root: &Path) -> Vec<Diagnostic> {
         if let Some(c) = WARNING.captures(line) {
             let source = c.get(2).map(|m| m.as_str());
             let is_info = c.get(1).is_some_and(|m| m.as_str() == "LaTeX Font");
-            // Continuation lines are indented or prefixed with `(pkgname)`.
+            // Continuation lines are indented or prefixed with `(pkgname)`
+            // (`(Font)` for font warnings).
+            let prefix = match source {
+                Some(pkg) => Some(format!("({pkg})")),
+                None if is_info => Some("(Font)".to_string()),
+                None => None,
+            };
             let mut message = c[3].trim().to_string();
             let mut j = i + 1;
             while j < lines.len() {
                 let next = lines[j].as_str();
-                let cont = match source {
-                    Some(pkg) => next.strip_prefix(&format!("({pkg})")),
-                    None => None,
-                }
-                .or_else(|| next.strip_prefix("               "));
+                let cont = prefix
+                    .as_deref()
+                    .and_then(|p| next.strip_prefix(p))
+                    .or_else(|| next.strip_prefix("               "));
                 match cont {
                     Some(rest) if !next.trim().is_empty() => {
                         message.push(' ');
@@ -580,6 +585,30 @@ LaTeX Warning: Other on input line 9.
         assert_eq!(d.len(), 3, "{d:#?}");
         assert_eq!(d[1].file.as_deref(), Some(Path::new("/proj/chap.tex")));
         assert_eq!(d[2].file.as_deref(), Some(Path::new("/proj/main.tex")));
+    }
+
+    #[test]
+    fn font_warnings_are_info_with_their_continuation() {
+        for (name, shape) in [
+            ("pdflatex-mixed.log", "OT1/cmr"),
+            ("lualatex-mixed.log", "TU/lmr"),
+            ("xelatex-mixed.log", "TU/lmr"),
+            ("tectonic-mixed.log", "TU/lmr"),
+        ] {
+            let d = parse(&fixture(name), &root());
+            let font = d
+                .iter()
+                .find(|d| d.message.starts_with("Font shape"))
+                .unwrap_or_else(|| panic!("{name}: {d:#?}"));
+            assert_eq!(font.severity, Severity::Info);
+            assert_eq!(
+                font.message,
+                format!("Font shape `{shape}/bx/sc' undefined using `{shape}/bx/n' instead"),
+                "{name}"
+            );
+            assert_eq!(font.line, Some(6), "{name}");
+            assert_eq!(font.file.as_deref(), Some(Path::new("/proj/main.tex")));
+        }
     }
 
     #[test]
