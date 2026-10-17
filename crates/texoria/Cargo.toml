@@ -43,6 +43,7 @@ tex-fmt = { version = "0.5.7", default-features = false }
 
 [dev-dependencies]
 test-support.workspace = true
+proptest.workspace = true
 
 [build-dependencies]
 embed-resource = "3"

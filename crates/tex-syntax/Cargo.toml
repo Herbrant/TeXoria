@@ -11,3 +11,4 @@ codebook-tree-sitter-latex = "0.6.1"
 
 [dev-dependencies]
 test-support.workspace = true
+proptest.workspace = true

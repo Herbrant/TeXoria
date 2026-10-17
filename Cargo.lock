@@ -615,7 +615,16 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34ddef2995421ab6a5c779542c81ee77c115206f4ad9d5a8e05f4ff49716a3dd"
 dependencies = [
- "bit-vec",
+ "bit-vec 0.9.1",
+]
+
+[[package]]
+name = "bit-set"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56d87354e4229f54a44f7bf2435906a4656dba36026ab6eaca629a2c436a691c"
+dependencies = [
+ "bit-vec 0.10.1",
 ]
 
 [[package]]
@@ -623,6 +632,16 @@ name = "bit-vec"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
+
+[[package]]
+name = "bit-vec"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5727b15fa97d4f4fee0a3b7c3d550ed0269f54329207b86388de918604e31269"
+dependencies = [
+ "borsh",
+ "serde",
+]
 
 [[package]]
 name = "bit_field"
@@ -713,6 +732,30 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "piper",
+]
+
+[[package]]
+name = "borsh"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "553c5d846a6ba5150c65e3b1b8ec073bcf1abc20f9b7220de384a4443ea4e20a"
+dependencies = [
+ "borsh-derive",
+ "bytes",
+ "cfg_aliases",
+]
+
+[[package]]
+name = "borsh-derive"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12cdfe656708a01f89b451a7d36466e6fe6c414de0aa18fc54f864f6f9ca9f56"
+dependencies = [
+ "once_cell",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -4176,7 +4219,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2bf919621e7975acb27d881bae2fb993e0d45c8e0446e85e6272971e00dc8df"
 dependencies = [
  "arrayvec",
- "bit-set",
+ "bit-set 0.9.1",
  "bitflags 2.13.2",
  "cfg-if",
  "cfg_aliases",
@@ -4920,6 +4963,7 @@ version = "0.4.1"
 dependencies = [
  "log",
  "pdfium-render",
+ "proptest",
  "test-support",
  "thiserror 2.0.21",
 ]
@@ -5257,6 +5301,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "proptest"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8530004ccb15eae51c7e40009fbe317f341f804db54dc033eec1c50be28cfa0"
+dependencies = [
+ "bit-set 0.11.1",
+ "bit-vec 0.10.1",
+ "bitflags 2.13.2",
+ "chacha20",
+ "core_detect",
+ "num-traits",
+ "rand 0.10.3",
+ "rand_xorshift",
+ "regex-syntax",
+ "unarray",
+]
+
+[[package]]
 name = "pulp"
 version = "0.22.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5467,6 +5529,15 @@ name = "rand_pcg"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
+dependencies = [
+ "rand_core 0.10.1",
+]
+
+[[package]]
+name = "rand_xorshift"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60aa6af80be32871323012e02e6e65f8a7cc7890931ae421d217ad8fe0df2ccf"
 dependencies = [
  "rand_core 0.10.1",
 ]
@@ -6703,6 +6774,7 @@ name = "synctex"
 version = "0.4.1"
 dependencies = [
  "flate2",
+ "proptest",
  "tempfile",
  "test-support",
  "thiserror 2.0.21",
@@ -6856,6 +6928,7 @@ dependencies = [
  "getrandom 0.3.4",
  "libc",
  "log",
+ "proptest",
  "serde",
  "serde_json",
  "similar",
@@ -6871,6 +6944,7 @@ name = "tex-cite"
 version = "0.4.1"
 dependencies = [
  "anyhow",
+ "proptest",
  "serde",
  "serde_json",
  "test-support",
@@ -6884,6 +6958,7 @@ version = "0.4.1"
 dependencies = [
  "libc",
  "log",
+ "proptest",
  "tempfile",
  "test-support",
  "tex-log",
@@ -6895,6 +6970,7 @@ name = "tex-complete"
 version = "0.4.1"
 dependencies = [
  "nucleo-matcher",
+ "proptest",
  "serde",
  "serde_json",
  "tempfile",
@@ -6930,6 +7006,7 @@ version = "0.4.1"
 dependencies = [
  "libc",
  "log",
+ "proptest",
  "similar",
  "tempfile",
  "test-support",
@@ -6941,6 +7018,7 @@ dependencies = [
 name = "tex-log"
 version = "0.4.1"
 dependencies = [
+ "proptest",
  "regex",
  "test-support",
 ]
@@ -6949,6 +7027,7 @@ dependencies = [
 name = "tex-project"
 version = "0.4.1"
 dependencies = [
+ "proptest",
  "regex",
  "tempfile",
  "test-support",
@@ -6962,6 +7041,7 @@ dependencies = [
  "anyhow",
  "encoding_rs",
  "log",
+ "proptest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6979,6 +7059,7 @@ name = "tex-syntax"
 version = "0.4.1"
 dependencies = [
  "codebook-tree-sitter-latex",
+ "proptest",
  "test-support",
  "tree-sitter",
 ]
@@ -6992,6 +7073,7 @@ dependencies = [
  "log",
  "minisign",
  "minisign-verify",
+ "proptest",
  "semver",
  "sha2 0.10.9",
  "tar",
@@ -7004,6 +7086,7 @@ dependencies = [
 name = "tex-vim"
 version = "0.4.1"
 dependencies = [
+ "proptest",
  "test-support",
 ]
 
@@ -7021,6 +7104,7 @@ dependencies = [
  "log",
  "lsp-types",
  "pdf-view",
+ "proptest",
  "serde",
  "serde_json",
  "similar",
@@ -7476,6 +7560,12 @@ dependencies = [
  "tempfile",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "unarray"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
 
 [[package]]
 name = "unicase"
@@ -8042,8 +8132,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f519832254e56965a9940c4af57dcb75f702b6f6fa4a0b172f685395843a4d7"
 dependencies = [
  "arrayvec",
- "bit-set",
- "bit-vec",
+ "bit-set 0.9.1",
+ "bit-vec 0.9.1",
  "bitflags 2.13.2",
  "bytemuck",
  "cfg_aliases",
@@ -8114,7 +8204,7 @@ dependencies = [
  "android_system_properties",
  "arrayvec",
  "ash",
- "bit-set",
+ "bit-set 0.9.1",
  "bitflags 2.13.2",
  "block2 0.6.2",
  "bytemuck",

@@ -13,3 +13,4 @@ ureq = { version = "3", default-features = false, features = ["rustls", "json"] 
 
 [dev-dependencies]
 test-support.workspace = true
+proptest.workspace = true

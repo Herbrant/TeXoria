@@ -17,4 +17,5 @@ tar = "0.4"
 
 [dev-dependencies]
 test-support.workspace = true
+proptest.workspace = true
 minisign = "0.7"

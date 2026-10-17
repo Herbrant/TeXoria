@@ -8,3 +8,4 @@ license.workspace = true
 
 [dev-dependencies]
 test-support.workspace = true
+proptest.workspace = true
