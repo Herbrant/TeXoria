@@ -4920,6 +4920,7 @@ version = "0.4.1"
 dependencies = [
  "log",
  "pdfium-render",
+ "test-support",
  "thiserror 2.0.21",
 ]
 
@@ -6703,6 +6704,7 @@ version = "0.4.1"
 dependencies = [
  "flate2",
  "tempfile",
+ "test-support",
  "thiserror 2.0.21",
 ]
 
@@ -6841,6 +6843,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-support"
+version = "0.4.1"
+
+[[package]]
 name = "tex-agent"
 version = "0.4.1"
 dependencies = [
@@ -6854,6 +6860,7 @@ dependencies = [
  "serde_json",
  "similar",
  "tempfile",
+ "test-support",
  "tex-log",
  "tex-project",
  "which",
@@ -6866,6 +6873,7 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+ "test-support",
  "tex-project",
  "ureq",
 ]
@@ -6877,6 +6885,7 @@ dependencies = [
  "libc",
  "log",
  "tempfile",
+ "test-support",
  "tex-log",
  "which",
 ]
@@ -6889,6 +6898,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "test-support",
  "tex-project",
 ]
 
@@ -6922,6 +6932,7 @@ dependencies = [
  "log",
  "similar",
  "tempfile",
+ "test-support",
  "thiserror 2.0.21",
  "which",
 ]
@@ -6931,6 +6942,7 @@ name = "tex-log"
 version = "0.4.1"
 dependencies = [
  "regex",
+ "test-support",
 ]
 
 [[package]]
@@ -6939,6 +6951,7 @@ version = "0.4.1"
 dependencies = [
  "regex",
  "tempfile",
+ "test-support",
  "tex-syntax",
 ]
 
@@ -6954,6 +6967,7 @@ dependencies = [
  "sha2 0.10.9",
  "spellbook",
  "tempfile",
+ "test-support",
  "tex-syntax",
  "tree-sitter",
  "ureq",
@@ -6965,6 +6979,7 @@ name = "tex-syntax"
 version = "0.4.1"
 dependencies = [
  "codebook-tree-sitter-latex",
+ "test-support",
  "tree-sitter",
 ]
 
@@ -6981,12 +6996,16 @@ dependencies = [
  "sha2 0.10.9",
  "tar",
  "tempfile",
+ "test-support",
  "ureq",
 ]
 
 [[package]]
 name = "tex-vim"
 version = "0.4.1"
+dependencies = [
+ "test-support",
+]
 
 [[package]]
 name = "texoria"
@@ -7009,6 +7028,7 @@ dependencies = [
  "synctex",
  "sys-locale",
  "tempfile",
+ "test-support",
  "tex-agent",
  "tex-cite",
  "tex-compile",

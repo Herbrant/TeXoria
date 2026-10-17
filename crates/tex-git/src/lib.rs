@@ -429,6 +429,7 @@ mod tests {
     #[test]
     fn credential_replaces_helpers_for_its_url_only() {
         let Some(found) = Git::find() else {
+            test_support::skip("GIT", "git not found");
             return;
         };
         let tmp = tempfile::tempdir().unwrap();

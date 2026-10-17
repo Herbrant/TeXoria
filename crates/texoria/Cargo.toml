@@ -41,6 +41,9 @@ similar.workspace = true
 # Format Document.
 tex-fmt = { version = "0.5.7", default-features = false }
 
+[dev-dependencies]
+test-support.workspace = true
+
 [build-dependencies]
 embed-resource = "3"
 

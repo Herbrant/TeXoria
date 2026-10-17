@@ -11,4 +11,5 @@ serde_json.workspace = true
 nucleo-matcher = "0.3"
 
 [dev-dependencies]
+test-support.workspace = true
 tempfile.workspace = true

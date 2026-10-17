@@ -7,18 +7,14 @@ use tex_git::{Cancel, CommitOptions, Error, Git, Operation, Repo, SyncOutcome};
 
 /// git with the user's own configuration out of the way.
 fn git(home: &Path) -> Option<Git> {
-    let found = Git::find()?;
-    let config = home.join("gitconfig");
-    std::fs::write(
-        &config,
-        "[user]\n\tname = Test\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n",
-    )
-    .unwrap();
+    let Some(found) = Git::find() else {
+        test_support::skip("GIT", "git not found");
+        return None;
+    };
     Some(
-        Git::at(found.program())
-            .env("GIT_CONFIG_GLOBAL", &config)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", home),
+        test_support::git::isolated_env(home)
+            .into_iter()
+            .fold(Git::at(found.program()), |git, (k, v)| git.env(k, v)),
     )
 }
 
@@ -37,7 +33,6 @@ fn commit_all(repo: &Repo, msg: &str) {
 fn init_stage_commit_log_show() {
     let tmp = tempfile::tempdir().unwrap();
     let Some(git) = git(tmp.path()) else {
-        eprintln!("git not found; skipping");
         return;
     };
     let repo = git.init(&tmp.path().join("paper")).unwrap();
@@ -371,7 +366,6 @@ fn excluded_build_artifacts_stay_local() {
 fn discovery_stays_in_the_trusted_folder() {
     let tmp = tempfile::tempdir().unwrap();
     let Some(git) = git(tmp.path()) else {
-        eprintln!("git not found; skipping");
         return;
     };
     let outer = git.init(&tmp.path().join("outer")).unwrap();

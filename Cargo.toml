@@ -44,6 +44,10 @@ tex-cite = { path = "crates/tex-cite" }
 tex-vim = { path = "crates/tex-vim" }
 pdf-view = { path = "crates/pdf-view" }
 
+# Tests only
+test-support = { path = "crates/test-support" }
+proptest = { version = "1", default-features = false, features = ["std", "bit-set"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

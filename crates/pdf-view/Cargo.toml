@@ -8,3 +8,6 @@ license.workspace = true
 pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_latest", "thread_safe"] }
 log.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+test-support.workspace = true

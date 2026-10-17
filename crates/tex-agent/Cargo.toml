@@ -21,5 +21,6 @@ getrandom = "0.3"
 libc = "0.2"
 
 [dev-dependencies]
+test-support.workspace = true
 tempfile.workspace = true
 futures-executor = "0.3"

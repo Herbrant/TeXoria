@@ -1,0 +1,9 @@
+[package]
+name = "test-support"
+description = "Helpers shared by the workspace's tests (never a regular dependency)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

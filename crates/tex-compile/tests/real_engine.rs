@@ -1,5 +1,6 @@
 //! End-to-end compile of the sample project with whatever engine the host
-//! has. Skipped (passes trivially) when no TeX engine is installed.
+//! has. Skipped (passes trivially) when no TeX engine is installed, unless
+//! `TEXORIA_REQUIRE_TEX=1` (`TEXORIA_REQUIRE_TECTONIC=1` for Tectonic).
 
 use std::path::Path;
 use std::sync::mpsc;
@@ -30,7 +31,7 @@ fn vendor_tectonic() -> std::path::PathBuf {
 #[test]
 fn compiles_sample_project() {
     let Some(engine) = detect(None).into_iter().next() else {
-        eprintln!("no TeX engine found; skipping");
+        test_support::skip("TEX", "no TeX engine found");
         return;
     };
     compile_sample(engine);
@@ -45,14 +46,14 @@ fn compiles_sample_with_tectonic() {
         .into_iter()
         .find(|e| matches!(e.kind, tex_compile::EngineKind::Tectonic { .. }))
     else {
-        eprintln!("tectonic not available; skipping");
+        test_support::skip("TECTONIC", "tectonic not available");
         return;
     };
     compile_sample(engine);
 }
 
 fn compile_sample(engine: tex_compile::Engine) {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample");
+    let src = test_support::fixtures().join("sample");
     let dir = tempfile::tempdir().unwrap();
     copy_dir(&src, dir.path());
 

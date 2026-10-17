@@ -8,3 +8,6 @@ license.workspace = true
 # Must match the tree-sitter major used by gpui-component.
 tree-sitter = "0.26"
 codebook-tree-sitter-latex = "0.6.1"
+
+[dev-dependencies]
+test-support.workspace = true

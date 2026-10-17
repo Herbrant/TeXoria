@@ -674,17 +674,25 @@ mod tests {
         assert_eq!(text_of(&chars, 1..9), "bc");
     }
 
+    /// A renderer on the repository's `vendor/pdfium`, if PDFium is available.
+    fn renderer(on_event: impl Fn(Event) + Send + 'static) -> Option<Renderer> {
+        let vendor = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/pdfium");
+        match Renderer::new(vec![vendor], on_event) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                test_support::skip("PDFIUM", &format!("PDFium not available ({e})"));
+                None
+            }
+        }
+    }
+
     /// A renderer with `tests/fixtures/links/links.pdf` loaded, if PDFium is available.
     fn links_pdf() -> Option<(Renderer, mpsc::Receiver<Event>)> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let bytes = std::fs::read(root.join("tests/fixtures/links/links.pdf")).unwrap();
+        let bytes = std::fs::read(test_support::fixtures().join("links/links.pdf")).unwrap();
         let (tx, rx) = mpsc::channel();
-        let Ok(r) = Renderer::new(vec![root.join("vendor/pdfium")], move |e| {
+        let r = renderer(move |e| {
             let _ = tx.send(e);
-        }) else {
-            eprintln!("PDFium not available; skipping");
-            return None;
-        };
+        })?;
         r.load(1, bytes);
         match rx.recv_timeout(Duration::from_secs(10)).unwrap() {
             Event::Loaded { pages, .. } => assert_eq!(pages.len(), 2),
@@ -773,20 +781,14 @@ mod tests {
         ));
     }
 
-    /// Renders the sample PDF if PDFium and a compiled sample are available.
+    /// Renders the first page of `tests/fixtures/links/links.pdf` if PDFium is available.
     #[test]
-    fn renders_sample_pdf() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let pdf = root.join("tests/fixtures/sample/.texoria/build/main.pdf");
-        let Ok(bytes) = std::fs::read(&pdf) else {
-            eprintln!("sample PDF not built; skipping");
-            return;
-        };
+    fn renders_a_page() {
+        let bytes = std::fs::read(test_support::fixtures().join("links/links.pdf")).unwrap();
         let (tx, rx) = mpsc::channel();
-        let Ok(r) = Renderer::new(vec![root.join("vendor/pdfium")], move |e| {
+        let Some(r) = renderer(move |e| {
             let _ = tx.send(e);
         }) else {
-            eprintln!("PDFium not available; skipping");
             return;
         };
         r.load(1, bytes);

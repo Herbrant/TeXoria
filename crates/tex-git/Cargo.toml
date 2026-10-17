@@ -14,4 +14,5 @@ which.workspace = true
 libc = "0.2"
 
 [dev-dependencies]
+test-support.workspace = true
 tempfile.workspace = true

@@ -16,4 +16,5 @@ minisign-verify = "0.3"
 tar = "0.4"
 
 [dev-dependencies]
+test-support.workspace = true
 minisign = "0.7"
