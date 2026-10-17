@@ -457,4 +457,272 @@ Underfull \\vbox (badness 10000) detected at line 40
         assert_eq!(d[0].line, Some(4));
         assert_eq!(d[0].message, "Missing $ inserted");
     }
+
+    fn fixture(name: &str) -> String {
+        let path = test_support::fixtures().join("logs").join(name);
+        String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned()
+    }
+
+    #[test]
+    fn real_clean_log_has_no_diagnostics() {
+        // The sample project's own build: it must stay clean (see AGENTS.md).
+        let log = fixture("pdflatex-sample-clean.log");
+        assert!(log.starts_with("This is pdfTeX"));
+        assert_eq!(parse(&log, &root()), vec![]);
+        assert!(!needs_shell_escape(&log));
+    }
+
+    #[test]
+    fn empty_and_blank_logs() {
+        assert_eq!(parse("", &root()), vec![]);
+        assert_eq!(parse("\n\n\r\n", &root()), vec![]);
+        assert_eq!(unwrap_lines(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn crlf_logs_parse_like_lf_ones() {
+        for name in ["pdflatex-undefined-cs.log", "pdflatex-sample-clean.log"] {
+            let lf = fixture(name);
+            let crlf = lf.replace('\n', "\r\n");
+            assert_eq!(parse(&crlf, &root()), parse(&lf, &root()), "{name}");
+        }
+    }
+
+    #[test]
+    fn class_and_module_warnings() {
+        let log = "\
+(./main.tex
+Class beamer Warning: Frame too tall on input line 9.
+
+Module foo Warning: Something odd
+(foo)                spanning lines on input line 11.
+)
+";
+        let d = parse(log, &root());
+        assert_eq!(d.len(), 2, "{d:#?}");
+        assert_eq!(d[0].message, "beamer: Frame too tall");
+        assert_eq!(d[0].line, Some(9));
+        assert_eq!(d[1].message, "foo: Something odd spanning lines");
+        assert_eq!(d[1].line, Some(11));
+        assert!(d.iter().all(|d| d.severity == Severity::Warning));
+    }
+
+    #[test]
+    fn missing_files_are_info() {
+        let d = parse("(./main.tex\nNo file main.toc.\n)\n", &root());
+        assert_eq!(
+            d,
+            vec![Diagnostic {
+                severity: Severity::Info,
+                file: None,
+                line: None,
+                message: "No file main.toc".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn repeated_messages_are_reported_once() {
+        let warning = "LaTeX Warning: Reference `x' on page 1 undefined on input line 3.\n\n";
+        let log = format!("(./main.tex\n{warning}{warning}(./a.tex\n{warning})\n)\n");
+        let d = parse(&log, &root());
+        // Same message, line and file: once; another file: kept.
+        assert_eq!(d.len(), 2, "{d:#?}");
+        assert_eq!(d[1].file.as_deref(), Some(Path::new("/proj/a.tex")));
+    }
+
+    #[test]
+    fn error_without_line_context() {
+        let log = "\
+(./main.tex
+! Emergency stop.
+<*> main.tex
+
+*** (job aborted, no legal \\end found)
+
+)
+";
+        let d = parse(log, &root());
+        assert_eq!(d.len(), 1, "{d:#?}");
+        assert_eq!(d[0].message, "Emergency stop");
+        assert_eq!(d[0].line, None);
+        assert_eq!(d[0].file.as_deref(), Some(Path::new("/proj/main.tex")));
+    }
+
+    #[test]
+    fn back_to_back_errors() {
+        let log = "\
+(./main.tex
+! Missing number, treated as zero.
+! Illegal unit of measure (pt inserted).
+l.5 \\hskip x
+
+)
+";
+        let d = parse(log, &root());
+        assert_eq!(d.len(), 2, "{d:#?}");
+        // The first error stops at the second one: no `l.N` of its own.
+        assert_eq!(d[0].message, "Missing number, treated as zero");
+        assert_eq!(d[0].line, None);
+        assert_eq!(d[1].message, "Illegal unit of measure (pt inserted)");
+        assert_eq!(d[1].line, Some(5));
+
+        let log = "./a.tex:1: First.\n./a.tex:2: Second.\nl.2 x\n";
+        let d = parse(log, &root());
+        assert_eq!(d.len(), 2, "{d:#?}");
+        assert_eq!((d[0].line, d[1].line), (Some(1), Some(2)));
+    }
+
+    #[test]
+    fn line_context_on_the_last_line() {
+        let d = parse(
+            "(./main.tex\n! Undefined control sequence.\nl.9 \\oops",
+            &root(),
+        );
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].line, Some(9));
+        assert_eq!(d[0].message, "Undefined control sequence \\oops");
+    }
+
+    #[test]
+    fn line_context_is_looked_for_only_nearby() {
+        let filler = "help text\n".repeat(15);
+        let log = format!("(./main.tex\n! Something wrong.\n{filler}l.40 x\n)\n");
+        let d = parse(&log, &root());
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].line, None, "{d:#?}");
+    }
+
+    #[test]
+    fn unbalanced_closing_parens_are_harmless() {
+        let d = parse(")))\n! Oops.\nl.1 x\n", &root());
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].file, None);
+        assert_eq!(d[0].line, Some(1));
+    }
+
+    #[test]
+    fn natural_line_of_wrap_width() {
+        // TeX breaks a line as soon as it is 79 columns wide, so a natural line
+        // of exactly that width is followed by an empty one: joining it with
+        // that (and only that) gives the line back.
+        let natural = "B".repeat(WRAP_WIDTH);
+        let log = format!("{natural}\n\n! Oops.\nl.2 x\n");
+        assert_eq!(
+            unwrap_lines(&log),
+            vec![natural.as_str(), "! Oops.", "l.2 x"]
+        );
+        assert_eq!(parse(&log, &root())[0].line, Some(2));
+    }
+
+    #[test]
+    fn file_line_error_with_an_absolute_path() {
+        let log = "(/tmp/p/main.tex\n/tmp/p/main.tex:3: Undefined control sequence.\nl.3 \\x\n";
+        let d = parse(log, &root());
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].line, Some(3));
+        #[cfg(unix)]
+        assert_eq!(d[0].file.as_deref(), Some(Path::new("/tmp/p/main.tex")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths() {
+        let log = "\
+(C:\\p\\main.tex
+C:\\p\\main.tex:3: Undefined control sequence.
+l.3 \\x
+
+(C:/p/sub/intro.tex
+! Oops.
+l.4 y
+))
+";
+        let d = parse(log, Path::new("D:\\elsewhere"));
+        assert_eq!(d.len(), 2, "{d:#?}");
+        assert_eq!(d[0].file.as_deref(), Some(Path::new("C:\\p\\main.tex")));
+        assert_eq!(d[0].line, Some(3));
+        assert_eq!(d[1].file.as_deref(), Some(Path::new("C:/p/sub/intro.tex")));
+    }
+
+    #[test]
+    fn what_looks_like_a_path() {
+        for yes in [
+            "./main.tex",
+            "/usr/share/a.sty",
+            "chapters\\x.tex",
+            "main.tex",
+        ] {
+            assert!(looks_like_path(yes), "{yes}");
+        }
+        for no in ["", "see", "e.g.,", "x.toolongextension", "a.b-c", "C:x.tex"] {
+            assert!(!looks_like_path(no), "{no}");
+        }
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Lines in the shapes the parser looks for, plus noise.
+        fn log_line() -> impl Strategy<Value = String> {
+            prop_oneof![
+                Just("(./main.tex".to_string()),
+                Just("(./chapters/intro.tex".to_string()),
+                Just(")".to_string()),
+                Just(String::new()),
+                Just("! Undefined control sequence.".to_string()),
+                Just("l.3 \\foo".to_string()),
+                Just("./main.tex:7: LaTeX Error: Oops.".to_string()),
+                Just("LaTeX Warning: Reference `a' undefined on input line 4.".to_string()),
+                Just("LaTeX Font Warning: Font shape `x' undefined".to_string()),
+                Just("Package pkg Warning: Hmm".to_string()),
+                Just("(pkg)                more on input line 9.".to_string()),
+                Just("               continued".to_string()),
+                Just("Overfull \\hbox (1.0pt too wide) in paragraph at lines 1--2".to_string()),
+                Just("[]\\OT1/cmr/m/n/10 (text".to_string()),
+                Just("No file main.aux.".to_string()),
+                "[a-zé()\\\\./ ]{79}",
+                "[^\r\n]{0,100}",
+            ]
+        }
+
+        fn log() -> impl Strategy<Value = String> {
+            prop::collection::vec(log_line(), 0..40).prop_map(|l| l.join("\n"))
+        }
+
+        proptest! {
+            #[test]
+            fn never_panics(text in "\\PC*") {
+                let _ = parse(&text, &root());
+                let _ = needs_shell_escape(&text);
+            }
+
+            #[test]
+            fn never_panics_on_log_shapes(text in log()) {
+                for d in parse(&text, &root()) {
+                    prop_assert!(!d.message.contains('\n'));
+                    prop_assert!(d.line.is_none_or(|l| l < 1000));
+                }
+            }
+
+            #[test]
+            fn crlf_is_lf(text in log()) {
+                prop_assert_eq!(parse(&text.replace('\n', "\r\n"), &root()), parse(&text, &root()));
+            }
+
+            #[test]
+            fn dedup_is_idempotent(text in log()) {
+                let once = parse(&text, &root());
+                let set: std::collections::HashSet<_> = once.iter().collect();
+                prop_assert_eq!(set.len(), once.len());
+                prop_assert_eq!(dedup(once.clone()), once);
+            }
+
+            #[test]
+            fn looks_like_path_never_panics(token in "\\PC*") {
+                let _ = looks_like_path(&token);
+            }
+        }
+    }
 }
