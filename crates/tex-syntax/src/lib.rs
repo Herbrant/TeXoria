@@ -766,6 +766,246 @@ See \ref{eq:e} and \cite{knuth, lamport}.
         assert_eq!(idx.labels[0].name, "x");
     }
 
+    fn names(v: &[KeyRef]) -> Vec<&str> {
+        v.iter().map(|k| k.name.as_str()).collect()
+    }
+
+    #[test]
+    fn outline_kinds_nest_and_floats_sit_below_sections() {
+        use OutlineKind::*;
+        let kinds = [
+            Part,
+            Chapter,
+            Section,
+            Subsection,
+            Subsubsection,
+            Paragraph,
+            Subparagraph,
+            Figure,
+        ];
+        for pair in kinds.windows(2) {
+            assert!(pair[0].depth() < pair[1].depth(), "{pair:?}");
+        }
+        assert_eq!(Figure.depth(), Table.depth());
+        let floats: Vec<_> = [kinds.as_slice(), &[Table]]
+            .concat()
+            .into_iter()
+            .filter(|k| k.is_float())
+            .collect();
+        assert_eq!(floats, [Figure, Table]);
+    }
+
+    #[test]
+    fn indexes_every_outline_kind() {
+        let src = "\\part{P}\\chapter{C}\\paragraph{G}\\subparagraph*{S}\n\
+                   \\subsubsection{  Many \n words }\n\
+                   \\begin{table}\\caption{T}\\end{table}\n\
+                   \\begin{figure*}\\begin{subfigure}{x}\\caption{in}\\end{subfigure}\
+                   \\caption{out}\\end{figure*}\n\
+                   \\begin{wrapfigure}{r}{3cm}x\\end{wrapfigure}\\begin{wraptable}{l}{1cm}\\caption{t}\\end{wraptable}";
+        let idx = Index::from_text(src);
+        let outline: Vec<_> = idx
+            .outline
+            .iter()
+            .map(|o| (o.kind, o.title.as_str(), o.starred, o.line))
+            .collect();
+        use OutlineKind::*;
+        assert_eq!(
+            outline,
+            [
+                (Part, "P", false, 0),
+                (Chapter, "C", false, 0),
+                (Paragraph, "G", false, 0),
+                (Subparagraph, "S", true, 0),
+                (Subsubsection, "Many words", false, 1),
+                (Table, "T", false, 3),
+                // The caption of a nested float is its own.
+                (Figure, "out", false, 4),
+                (Figure, "in", false, 4),
+                // No caption.
+                (Figure, "", false, 5),
+                (Table, "t", false, 5),
+            ]
+        );
+        for item in &idx.outline {
+            assert!(src[item.byte..].starts_with('\\'), "{item:?}");
+        }
+    }
+
+    #[test]
+    fn label_context_is_the_innermost_environment_or_the_section() {
+        let src = "\\label{top}\\begin{document}\\label{doc}\n\
+                   \\section{S}\\label{s}\\begin{equation}\\label{eq}\\end{equation}\\label{after}\n\
+                   \\begin{align*}\\label{al}\\begin{itemize}\\item\\label{it}\\end{itemize}\\end{align*}\n\
+                   \\end{document}";
+        let idx = Index::from_text(src);
+        let labels: Vec<_> = idx
+            .labels
+            .iter()
+            .map(|l| (l.name.as_str(), l.context.as_deref(), l.line))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("top", None, 0),
+                // `document` is not a context.
+                ("doc", None, 0),
+                ("s", Some("S"), 1),
+                ("eq", Some("equation"), 1),
+                ("after", Some("S"), 1),
+                ("al", Some("align*"), 2),
+                ("it", Some("itemize"), 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn indexes_every_include_kind() {
+        let src = "\\include{a}\\subfile{ b }\n\\addbibresource{refs.bib}\\bibliography{x,y}\n\
+                   \\includegraphics[width=1cm]{img/p}";
+        let idx = Index::from_text(src);
+        let inc: Vec<_> = idx
+            .includes
+            .iter()
+            .map(|i| {
+                (
+                    i.kind.clone(),
+                    i.path.as_str(),
+                    i.line,
+                    &src[i.range.clone()],
+                )
+            })
+            .collect();
+        use IncludeKind::*;
+        assert_eq!(
+            inc,
+            [
+                (Tex, "a", 0, "a"),
+                (Tex, "b", 0, "b"),
+                (Bib, "refs.bib", 1, "refs.bib"),
+                (Bib, "x", 1, "x"),
+                (Bib, "y", 1, "y"),
+                (Graphics, "img/p", 2, "img/p"),
+            ]
+        );
+    }
+
+    #[test]
+    fn indexes_command_and_environment_definitions() {
+        let src = "\\renewcommand\\bar[2]{x}\n\\def\\baz#1{x}\\let\\qux\\relax\n\
+                   \\newcommand{\\big}[300]{x}\\newcommand{\\nn}[x]{x}\\newcommand{{\\w}}{x}\n\
+                   \\newenvironment{ proof* }[1]{a}{b}\\newtheorem{thm}[section]{Theorem}";
+        let idx = Index::from_text(src);
+        let cmds: Vec<_> = idx
+            .commands
+            .iter()
+            .map(|c| (c.name.as_str(), c.argc, c.line, &src[c.range.clone()]))
+            .collect();
+        assert_eq!(
+            cmds,
+            [
+                ("\\bar", 2, 0, "\\bar"),
+                ("\\baz", 0, 1, "\\baz"),
+                ("\\qux", 0, 1, "\\qux"),
+                // An argument count that is not a number, or too large, counts as none.
+                ("\\big", 0, 2, "\\big"),
+                ("\\nn", 0, 2, "\\nn"),
+                ("\\w", 0, 2, "\\w"),
+            ]
+        );
+        assert_eq!(names(&idx.environments), ["proof*", "thm"]);
+        let env = &idx.environments[0];
+        assert_eq!(
+            (&src[env.range.clone()], env.line, env.command.as_str()),
+            ("proof*", 3, "\\newenvironment")
+        );
+        assert_eq!(idx.environments[1].command, "\\newtheorem");
+    }
+
+    #[test]
+    fn records_package_uses_and_citation_keys() {
+        let src =
+            "\\usepackage{ a , b }\n\\cite[p.~3]{k}\\cite{}\\citep{a,,b}\n\\eqref{eq}\\cref{x, y}";
+        let idx = Index::from_text(src);
+        assert_eq!(idx.packages, ["a", "b"]);
+        let uses: Vec<_> = idx
+            .package_uses
+            .iter()
+            .map(|k| (&src[k.range.clone()], k.line, k.command.as_str()))
+            .collect();
+        assert_eq!(uses, [("a", 0, "\\usepackage"), ("b", 0, "\\usepackage")]);
+        // Empty keys are skipped.
+        assert_eq!(names(&idx.citations), ["k", "a", "b"]);
+        assert_eq!(idx.citations[1].command, "\\citep");
+        assert_eq!(idx.citations[1].line, 1);
+        assert_eq!(names(&idx.references), ["eq", "x", "y"]);
+        assert_eq!(idx.references[2].command, "\\cref");
+    }
+
+    #[test]
+    fn empty_text_has_an_empty_index() {
+        assert_eq!(Index::from_text(""), Index::default());
+        assert_eq!(Index::from_text("just words"), Index::default());
+    }
+
+    #[test]
+    fn positions_count_bytes_and_crlf_lines() {
+        let src = "é ü\r\n\\label{ñ}\r\n% \\label{commented}\r\n\\ref{ñ}\\section{日本}";
+        let idx = Index::from_text(src);
+        assert_eq!(idx.labels.len(), 1);
+        let l = &idx.labels[0];
+        assert_eq!((&src[l.range.clone()], l.line), ("ñ", 1));
+        let r = &idx.references[0];
+        assert_eq!((&src[r.range.clone()], r.line), ("ñ", 3));
+        assert_eq!(idx.outline[0].title, "日本");
+        assert_eq!(idx.outline[0].line, 3);
+    }
+
+    #[test]
+    fn reads_polyglossia_arguments() {
+        let lang = |s: &str| polyglossia_language(s);
+        assert_eq!(
+            lang(" [ variant = uk , x=y ] { english } rest"),
+            Some(MainLanguage {
+                name: "english".into(),
+                variant: Some("uk".into())
+            })
+        );
+        assert_eq!(
+            lang("[babelshorthands]{german}"),
+            Some(MainLanguage {
+                name: "german".into(),
+                variant: None
+            })
+        );
+        assert_eq!(lang("{}"), None);
+        assert_eq!(lang("{  }"), None);
+        assert_eq!(lang("[variant=uk{english}"), None);
+        assert_eq!(lang("{english"), None);
+        assert_eq!(lang(""), None);
+        let idx = Index::from_text("\\setmainlanguage{}\\setmainlanguage[variant=uk");
+        assert_eq!(idx.main_language, None);
+    }
+
+    #[test]
+    fn reads_braced_arguments_after_options() {
+        fn arg(s: &str) -> Option<(&str, &str)> {
+            braced_after_options(s, 0).map(|(t, r)| (t, &s[r]))
+        }
+        assert_eq!(arg(" [a] [b]\n{ key }"), Some(("key", "key")));
+        assert_eq!(arg("{a{b}c}"), Some(("a{b}c", "a{b}c")));
+        assert_eq!(arg("{}"), None);
+        assert_eq!(arg("{ }"), None);
+        assert_eq!(arg("{unclosed"), None);
+        assert_eq!(arg("[unclosed{key}"), None);
+        assert_eq!(arg("no group"), None);
+        assert_eq!(arg(""), None);
+        // From the middle of a text.
+        let s = "ab{cd}";
+        assert_eq!(braced_after_options(s, 2), Some(("cd", 3..5)));
+        assert_eq!(braced_after_options(s, 6), None);
+    }
+
     #[test]
     fn incremental_reparse_is_consistent() {
         let tree = parse(DOC, None).unwrap();
