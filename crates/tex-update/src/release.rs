@@ -154,7 +154,7 @@ impl Release {
         let sums = std::str::from_utf8(sums).context("SHA256SUMS is not text")?;
         Ok(Self {
             version,
-            sums: parse_sums(sums),
+            sums: parse_sums(sums)?,
         })
     }
 
@@ -165,16 +165,23 @@ impl Release {
 }
 
 /// `sha256sum` output: `<hex>  <name>`, or `<hex> *<name>` for binary mode.
-fn parse_sums(text: &str) -> HashMap<String, String> {
-    text.lines()
-        .filter_map(|line| {
-            let (hash, name) = line.split_once(char::is_whitespace)?;
-            let name = name.trim_start();
-            let name = name.strip_prefix('*').unwrap_or(name);
-            let valid = hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit());
-            (valid && !name.is_empty()).then(|| (name.to_string(), hash.to_ascii_lowercase()))
-        })
-        .collect()
+/// A name listed with two different hashes is an error.
+fn parse_sums(text: &str) -> Result<HashMap<String, String>> {
+    let mut sums = HashMap::new();
+    let entries = text.lines().filter_map(|line| {
+        let (hash, name) = line.split_once(char::is_whitespace)?;
+        let name = name.trim_start();
+        let name = name.strip_prefix('*').unwrap_or(name);
+        let valid = hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit());
+        (valid && !name.is_empty()).then(|| (name.to_string(), hash.to_ascii_lowercase()))
+    });
+    for (name, hash) in entries {
+        if sums.get(&name).is_some_and(|h| *h != hash) {
+            bail!("SHA256SUMS lists {name} with two different hashes");
+        }
+        sums.insert(name, hash);
+    }
+    Ok(sums)
 }
 
 #[cfg(test)]
@@ -245,6 +252,26 @@ nothex  ignored
         let v = Version::new(1, 0, 0);
         let err = Release::verify(v, SUMS.as_bytes(), &sig, &source(&public).key).unwrap_err();
         assert!(err.to_string().contains("texoria 0.9.0"), "{err}");
+    }
+
+    /// A signed list naming one file with two hashes is not ours to pick
+    /// from (`install.sh` would refuse it too).
+    #[test]
+    fn rejects_conflicting_hashes() {
+        let (public, sign) = keys();
+        let a = "0".repeat(64);
+        let b = "1".repeat(64);
+        let v = Version::new(1, 0, 0);
+        let key = source(&public).key;
+        let sums = format!("{a}  x.dmg\n{b}  y.dmg\n{b} *x.dmg\n");
+        let sig = sign(sums.as_bytes(), "texoria 1.0.0");
+        let err = Release::verify(v.clone(), sums.as_bytes(), &sig, &key).unwrap_err();
+        assert!(err.to_string().contains("x.dmg"), "{err}");
+        // The same hash twice is harmless.
+        let sums = format!("{a}  x.dmg\n{}  x.dmg\n", a.to_uppercase());
+        let sig = sign(sums.as_bytes(), "texoria 1.0.0");
+        let r = Release::verify(v, sums.as_bytes(), &sig, &key).unwrap();
+        assert_eq!(r.sha256("x.dmg"), Some(a.as_str()));
     }
 
     #[test]
