@@ -31,8 +31,9 @@ pub struct Diagnostic {
     pub message: String,
 }
 
+// Lazy: the file is the first `name.ext:N: `, the message may have others.
 static FILE_LINE_ERROR: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(.+\.[A-Za-z0-9]+):(\d+): (.*)$").unwrap());
+    LazyLock::new(|| Regex::new(r"^(.+?\.[A-Za-z0-9]+):(\d+): (.*)$").unwrap());
 static LINE_CONTEXT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^l\.(\d+) ?(.*)$").unwrap());
 static WARNING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:(LaTeX|LaTeX Font)|(?:Package|Class|Module) (\S+)) Warning: (.*)$").unwrap()
@@ -74,7 +75,7 @@ pub fn parse_bytes(log: &[u8], root: &Path) -> Vec<Diagnostic> {
         let line = lines[i].as_str();
 
         // `-file-line-error` style: `./main.tex:12: Undefined control sequence.`
-        if let Some(c) = FILE_LINE_ERROR.captures(line) {
+        if let Some(c) = file_line_error(line) {
             let (detail, next) = error_detail(&lines, i + 1);
             out.push(Diagnostic {
                 severity: Severity::Error,
@@ -260,11 +261,18 @@ fn error_detail(lines: &[String], start: usize) -> (Option<String>, usize) {
             };
             return (token, next);
         }
-        if lines[j].starts_with("! ") || FILE_LINE_ERROR.is_match(&lines[j]) {
+        if lines[j].starts_with("! ") || file_line_error(&lines[j]).is_some() {
             return (token, j);
         }
     }
     (token, start)
+}
+
+/// A `-file-line-error` message: `./main.tex:12: Undefined control sequence.`
+fn file_line_error(line: &str) -> Option<regex::Captures<'_>> {
+    FILE_LINE_ERROR
+        .captures(line)
+        .filter(|c| !c[1].contains("://"))
 }
 
 fn join_message(msg: &str, detail: Option<&str>) -> String {
@@ -609,6 +617,24 @@ LaTeX Warning: Other on input line 9.
             assert_eq!(font.line, Some(6), "{name}");
             assert_eq!(font.file.as_deref(), Some(Path::new("/proj/main.tex")));
         }
+    }
+
+    #[test]
+    fn file_line_error_shapes() {
+        // The file is the first `name.ext:N: `, not one in the message.
+        let log = "./main.tex:4: Package foo Error: in bar.cfg:12: bad key.\nl.4 x\n";
+        let d = parse(log, &root());
+        assert_eq!(d.len(), 1, "{d:#?}");
+        assert_eq!(d[0].file.as_deref(), Some(Path::new("/proj/main.tex")));
+        assert_eq!(d[0].line, Some(4));
+        assert_eq!(d[0].message, "Package foo Error: in bar.cfg:12: bad key");
+
+        // A URL with a port is not a file.
+        let d = parse(
+            "(./main.tex\nhttp://example.org:8080: connected\n)\n",
+            &root(),
+        );
+        assert_eq!(d, vec![]);
     }
 
     #[test]
