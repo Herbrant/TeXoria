@@ -2020,7 +2020,7 @@ fn detail(content: &[acp::ToolCallContent]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detail, inside, read_text, remove_added, writable};
+    use super::{detail, inside, read_text, writable};
     use tex_agent::acp;
 
     #[test]
@@ -2053,6 +2053,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn undo_removes_added_files_only_inside_the_project() {
+        use super::remove_added;
         let dir = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         let d = std::fs::canonicalize(dir.path()).unwrap();
