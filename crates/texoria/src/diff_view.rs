@@ -1,7 +1,7 @@
 //! The diff tab: a working-tree change, a conflicted file, a commit or what a
 //! coding agent changed, shown with gpui-kit's read-only diff viewer.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui_kit::component::diff::{
     Diff, DiffChangeIndicator, DiffEvent, DiffFile, DiffFileStatus, DiffHoverHighlight,
@@ -514,7 +514,7 @@ fn files_for(source: &DiffSource, text: &str) -> Result<Vec<DiffFile>, String> {
     Ok(files
         .into_iter()
         .map(|f| {
-            if is_latex(f.path()) {
+            if crate::paths::is_latex(Path::new(f.path().as_ref())) {
                 f.with_language(latex::LANGUAGE)
             } else {
                 f
@@ -523,16 +523,9 @@ fn files_for(source: &DiffSource, text: &str) -> Result<Vec<DiffFile>, String> {
         .collect())
 }
 
-fn is_latex(path: &str) -> bool {
-    path.rsplit_once('.')
-        .is_some_and(|(_, ext)| matches!(ext, "tex" | "sty" | "cls" | "ltx" | "dtx"))
-}
-
 #[cfg(test)]
 mod tests {
     use gpui_kit::component::diff::{DiffFile, DiffFileStatus};
-
-    use super::is_latex;
 
     #[test]
     fn untracked_patches_parse() {
@@ -545,11 +538,5 @@ mod tests {
 
         let files = DiffFile::parse(&tex_git::untracked_patch("fig.pdf", b"%PDF\0")).unwrap();
         assert!(files[0].is_binary());
-    }
-
-    #[test]
-    fn latex_files_get_latex_highlighting() {
-        assert!(is_latex("a/main.tex") && is_latex("x.sty"));
-        assert!(!is_latex("refs.bib") && !is_latex("Makefile"));
     }
 }

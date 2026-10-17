@@ -2304,7 +2304,7 @@ impl Workspace {
         let Some(b) = self
             .buffers
             .get(self.active)
-            .filter(|b| !self.diff_active && !self.agent_busy && is_tex(&b.path))
+            .filter(|b| !self.diff_active && !self.agent_busy && crate::paths::is_latex(&b.path))
         else {
             return;
         };
@@ -3251,7 +3251,7 @@ impl Workspace {
         let Some(b) = self.buffers.get(self.active).filter(|_| !self.diff_active) else {
             return;
         };
-        if self.agent_busy || !is_tex(&b.path) {
+        if self.agent_busy || !crate::paths::is_latex(&b.path) {
             return;
         }
         let editor = b.editor.clone();
@@ -3281,7 +3281,10 @@ impl Workspace {
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings.format_on_save
             && !self.agent_busy
-            && let Some(b) = self.buffers.get(self.active).filter(|b| is_tex(&b.path))
+            && let Some(b) = self
+                .buffers
+                .get(self.active)
+                .filter(|b| crate::paths::is_latex(&b.path))
         {
             let text = b.editor.read(cx).text().to_string();
             match edit::format_latex(&text, &b.path, self.project_dir().as_deref()) {
@@ -3471,7 +3474,7 @@ impl Workspace {
             return;
         };
         let off = self.settings.spell_language(&b.path) == Some(SpellLanguage::OFF);
-        if !self.settings.grammar_check || off || !is_tex(&b.path) {
+        if !self.settings.grammar_check || off || !crate::paths::is_latex(&b.path) {
             b.grammar.clear(cx);
             return;
         }
@@ -5142,12 +5145,6 @@ impl Render for Workspace {
 }
 
 /// A LaTeX source (not a `.bib`, `.cls` is fine).
-fn is_tex(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| matches!(e, "tex" | "ltx" | "sty" | "cls" | "dtx"))
-}
-
 /// Replace a buffer's text with its formatted version as one undoable edit,
 /// keeping the cursor on the same line.
 fn apply_format(editor: &Entity<EditorState>, new: String, window: &mut Window, cx: &mut App) {
@@ -5311,7 +5308,7 @@ fn find_main_file(dir: &Path) -> Option<PathBuf> {
         .ok()?
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "tex"))
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("tex")))
         .filter(|p| tex_project::read_regular(p).is_some_and(|s| s.contains("\\documentclass")))
         .collect();
     candidates.sort();

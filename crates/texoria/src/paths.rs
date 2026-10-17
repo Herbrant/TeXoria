@@ -19,6 +19,14 @@ pub fn plain(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Whether `path` is LaTeX source, by its extension in any case (`.TEX` from old systems).
+pub fn is_latex(path: &Path) -> bool {
+    const EXTENSIONS: [&str; 5] = ["tex", "ltx", "sty", "cls", "dtx"];
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
 /// `\\?\C:\dir` as `C:\dir` and `\\?\UNC\server\share` as `\\server\share`.
 fn unverbatim(path: &str) -> Option<String> {
     let rest = path.strip_prefix(r"\\?\")?;
@@ -33,6 +41,24 @@ fn unverbatim(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latex_sources() {
+        for p in [
+            "main.tex",
+            "a/b/MAIN.TEX",
+            "x.sty",
+            "x.cls",
+            "x.ltx",
+            "pkg.dtx",
+            "a.b.Tex",
+        ] {
+            assert!(is_latex(Path::new(p)), "{p}");
+        }
+        for p in ["refs.bib", "Makefile", "tex", ".tex.bak", "notes.txt"] {
+            assert!(!is_latex(Path::new(p)), "{p}");
+        }
+    }
 
     #[test]
     fn verbatim_paths_lose_their_prefix() {

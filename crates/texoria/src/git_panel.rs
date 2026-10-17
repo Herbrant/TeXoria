@@ -2036,6 +2036,10 @@ fn main_remote<'a>(status: &Status, remotes: &'a [String]) -> Option<&'a str> {
 /// submodules). Found without running git, which must not run before the
 /// user trusts that folder.
 pub fn repo_top(dir: &Path) -> Option<PathBuf> {
+    // A relative path would end with the empty one, the current folder's.
+    if !dir.is_absolute() {
+        return None;
+    }
     dir.ancestors()
         .find(|d| d.join(".git").exists())
         .map(Path::to_path_buf)
@@ -2244,5 +2248,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(repo_top(&sub), Some(dir.path().join("paper")));
+        // Tests run in crates/texoria, two folders below this repository's .git: a relative
+        // path is never resolved against the current folder.
+        assert_eq!(repo_top(std::path::Path::new("../..")), None);
+        assert_eq!(repo_top(std::path::Path::new("")), None);
     }
 }
