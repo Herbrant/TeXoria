@@ -687,13 +687,14 @@ impl SettingsWindow {
         let t = self.target.clone();
         let git = t.get(cx, |s| s.trusted_projects.clone());
         let rc = t.get(cx, |s| s.rc_allowed.clone().unwrap_or_default());
+        let shell = t.get(cx, |s| s.shell_escape_allowed.clone());
         let agents = t.get(cx, |s| s.agent_projects.clone());
         SettingPage::new("Trusted Projects")
             .resettable(false)
             .description(
-                "A project's Git configuration and latexmkrc can run programs, and coding \
-                 agents read and change its files, so TeXoria asks before letting them. \
-                 Removing a folder makes TeXoria ask again.",
+                "A project's Git configuration, latexmkrc and documents with shell escape can \
+                 run programs, and coding agents read and change its files, so TeXoria asks \
+                 before letting them. Removing a folder makes TeXoria ask again.",
             )
             .groups([
                 SettingGroup::new().title("Git").item(path_list(
@@ -718,6 +719,15 @@ impl SettingsWindow {
                                 }
                             })
                         }
+                    },
+                )),
+                SettingGroup::new().title("Shell escape").item(path_list(
+                    "shell-escape",
+                    shell,
+                    "No project may run programs while it builds yet.",
+                    {
+                        let t = t.clone();
+                        move |dir, cx| t.set(cx, |s| s.shell_escape_allowed.retain(|p| *p != dir))
                     },
                 )),
                 SettingGroup::new().title("Coding agents").item(path_list(

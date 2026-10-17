@@ -45,11 +45,12 @@ Open the Settings window with ⌘, (Ctrl+,). Every change applies right away.
 
 ## Trusted projects
 
-A project's Git configuration and its `latexmkrc` can run programs, and coding agents read and
-change its files, so TeXoria asks before letting them (see [Git](git.md#trusting-a-project),
-[latexmkrc](preview.md#latexmkrc) and [Coding agents](agents.md#the-agent-panel)). This page
-lists the folders you allowed, separately for Git, for `latexmkrc` and for agents. Remove a
-folder and TeXoria will ask again.
+A project's Git configuration, its `latexmkrc` and documents built with shell escape can run
+programs, and coding agents read and change its files, so TeXoria asks before letting them (see
+[Git](git.md#trusting-a-project), [latexmkrc](preview.md#latexmkrc),
+[Shell escape](preview.md#shell-escape) and [Coding agents](agents.md#the-agent-panel)). This
+page lists the folders you allowed, separately for Git, for `latexmkrc`, for shell escape and for
+agents. Remove a folder and TeXoria will ask again.
 
 ## Updates
 

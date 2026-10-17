@@ -31,6 +31,9 @@ pub struct Settings {
     /// written before it was split from `trusted_projects`.
     #[serde(default)]
     pub rc_allowed: Option<Vec<PathBuf>>,
+    /// Project directories whose documents may run programs while they
+    /// build (shell escape).
+    pub shell_escape_allowed: Vec<PathBuf>,
     /// Show diffs side by side instead of in one column.
     pub diff_split: bool,
     /// `git pull --rebase` instead of merging.
@@ -145,6 +148,7 @@ impl Default for Settings {
             sessions: Vec::new(),
             trusted_projects: Vec::new(),
             rc_allowed: Some(Vec::new()),
+            shell_escape_allowed: Vec::new(),
             diff_split: false,
             pull_rebase: false,
             git_timeout_secs: 120,
@@ -292,6 +296,17 @@ impl Settings {
     pub fn allow_rc(&mut self, dir: PathBuf) {
         if !self.allows_rc(&dir) {
             self.rc_allowed.get_or_insert_default().push(dir);
+        }
+    }
+
+    /// Whether documents in `dir` may run programs (exact path, like trust).
+    pub fn allows_shell_escape(&self, dir: &Path) -> bool {
+        self.shell_escape_allowed.iter().any(|p| p == dir)
+    }
+
+    pub fn allow_shell_escape(&mut self, dir: PathBuf) {
+        if !self.allows_shell_escape(&dir) {
+            self.shell_escape_allowed.push(dir);
         }
     }
 

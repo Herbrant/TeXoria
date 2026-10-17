@@ -43,6 +43,9 @@ pub struct Job {
     /// Build even if the outputs look up to date (latexmk `-g`): they may
     /// not be the engine's.
     pub force: bool,
+    /// Let the document run programs (`\write18`: minted, svg, pythontex),
+    /// for projects the user trusts.
+    pub shell_escape: bool,
 }
 
 impl Job {
@@ -59,6 +62,7 @@ impl Job {
             out_dir,
             allow_project_rc: false,
             force: false,
+            shell_escape: false,
         }
     }
 
@@ -133,6 +137,9 @@ impl Engine {
                 if job.force {
                     c.arg("-g");
                 }
+                if job.shell_escape {
+                    c.arg("-shell-escape");
+                }
                 c.arg(flavor.latexmk_flag())
                     .args(["-interaction=nonstopmode", "-file-line-error", "-synctex=1"])
                     .arg(format!("-outdir={}", job.out_dir.display()))
@@ -147,10 +154,11 @@ impl Engine {
                     "--synctex",
                     "--keep-logs",
                     "--keep-intermediates",
-                ])
-                .arg("--outdir")
-                .arg(&job.out_dir)
-                .arg(file);
+                ]);
+                if job.shell_escape {
+                    c.args(["-Z", "shell-escape"]);
+                }
+                c.arg("--outdir").arg(&job.out_dir).arg(file);
                 c
             }
             EngineKind::Custom { program, args } => {
@@ -484,6 +492,30 @@ mod tests {
         assert!(!args.iter().any(|a| a == "-norc" || a == "-r" || a == "-g"));
         job.force = true;
         assert!(args_of(&engine.command(&job)).iter().any(|a| a == "-g"));
+    }
+
+    #[test]
+    fn shell_escape_only_when_asked() {
+        let tectonic = Engine {
+            kind: EngineKind::Tectonic {
+                binary: "tectonic".into(),
+            },
+            extra_path: vec![],
+        };
+        let mut job = Job::for_root("/p/main.tex");
+        for engine in [latexmk(Flavor::LuaLatex), tectonic.clone()] {
+            let args = args_of(&engine.command(&job));
+            assert!(!args.iter().any(|a| a.contains("shell-escape")), "{args:?}");
+        }
+        job.shell_escape = true;
+        assert!(
+            args_of(&latexmk(Flavor::LuaLatex).command(&job)).contains(&"-shell-escape".into())
+        );
+        let args = args_of(&tectonic.command(&job));
+        assert!(
+            args.windows(2).any(|w| w == ["-Z", "shell-escape"]),
+            "{args:?}"
+        );
     }
 
     #[test]

@@ -44,6 +44,8 @@ pub struct Output {
     pub pdf_written: bool,
     pub synctex: Option<PathBuf>,
     pub diagnostics: Vec<Diagnostic>,
+    /// The document wanted to run programs (see `Job::shell_escape`).
+    pub needs_shell_escape: bool,
     pub elapsed: Duration,
 }
 
@@ -319,6 +321,7 @@ impl Worker {
     /// `timed_out`: the run was killed after this long.
     fn finish_with(&self, run: Running, mut status: Status, timed_out: Option<Duration>) {
         let job = run.job;
+        let job_shell_escape = job.shell_escape;
         let mut log = Vec::new();
         if let Ok(f) = File::open(job.artifact("log")) {
             let _ = f.take(MAX_LOG_BYTES).read_to_end(&mut log);
@@ -365,6 +368,7 @@ impl Worker {
             job,
             status,
             diagnostics,
+            needs_shell_escape: !job_shell_escape && tex_log::needs_shell_escape(&log_text),
             elapsed: run.started.elapsed(),
         };
         (self.on_event)(Event::Finished(out));

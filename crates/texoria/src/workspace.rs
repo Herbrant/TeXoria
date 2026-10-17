@@ -150,6 +150,8 @@ pub struct Workspace {
     show_diagnostics: bool,
     /// The project has a `latexmkrc` that is ignored until the user trusts it.
     untrusted_rc: bool,
+    /// The last run wanted shell escape, which the project does not allow.
+    wants_shell_escape: bool,
     /// A PDF already in the build folder may be shown: TeXoria built it, or
     /// the project was opened before. One that came with the project (a
     /// clone, an archive) could be crafted for the PDF renderer.
@@ -307,6 +309,7 @@ impl Workspace {
             cloning: None,
             show_diagnostics: false,
             untrusted_rc: false,
+            wants_shell_escape: false,
             show_old_pdf: false,
             refused_close: false,
             fixups: Rc::new(RefCell::new(Vec::new())),
@@ -411,6 +414,12 @@ impl Workspace {
         }
         if self.settings.trusted_projects != old.trusted_projects {
             self.sync_git(cx);
+        }
+        if self.settings.shell_escape_allowed != old.shell_escape_allowed
+            && let Some(job) = self.job()
+            && job.shell_escape != old.allows_shell_escape(job.work_dir())
+        {
+            self.build(cx);
         }
         if self.settings.rc_allowed != old.rc_allowed
             && let Some(job) = self.job()
@@ -643,6 +652,7 @@ impl Workspace {
             self.answer_waiters(ToolResult::error("Another document was opened."));
             let job = self.job().expect("root is set");
             self.untrusted_rc = !job.allow_project_rc && job.has_project_rc();
+            self.wants_shell_escape = false;
             self.close_diff(cx);
             self.sync_git(cx);
             self.sync_agent(cx);
@@ -1994,6 +2004,7 @@ impl Workspace {
     fn job(&self) -> Option<Job> {
         let mut job = Job::for_root(self.root.as_ref()?);
         job.allow_project_rc = self.settings.allows_rc(job.work_dir());
+        job.shell_escape = self.settings.allows_shell_escape(job.work_dir());
         Some(job)
     }
 
@@ -2010,6 +2021,15 @@ impl Workspace {
         self.settings.save();
         self.sync_git(cx);
         cx.notify();
+    }
+
+    /// Let the project's documents run programs, and build again.
+    fn allow_shell_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dir) = self.project_dir() else {
+            return;
+        };
+        self.wants_shell_escape = false;
+        self.update_settings(|s| s.allow_shell_escape(dir), window, cx);
     }
 
     fn allow_rc(&mut self, cx: &mut Context<Self>) {
@@ -2096,6 +2116,7 @@ impl Workspace {
                 let report = self.build_report(out.status, out.elapsed);
                 self.answer_build(out.id, ToolResult::ok(report));
                 self.agent.update(cx, |a, cx| a.set_errors(errors, cx));
+                self.wants_shell_escape = out.needs_shell_escape;
                 self.show_old_pdf |= out.pdf_written;
                 if let Some(pdf) = out.pdf.filter(|_| self.show_old_pdf) {
                     self.pdf.update(cx, |p, cx| p.load(pdf, out.synctex, cx));
@@ -3660,6 +3681,31 @@ impl Workspace {
             )
     }
 
+    fn render_shell_escape_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        h_flex()
+            .gap_3()
+            .px_3()
+            .py_1p5()
+            .text_sm()
+            .bg(theme.warning.opacity(0.12))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(Icon::new(Glyph::Warning).xsmall().text_color(theme.warning))
+            .child(div().flex_1().text_color(theme.foreground).child(
+                "This document runs programs while it builds (shell escape, for minted, svg, \
+                 pythontex…). Allow it only if you trust where the project comes from.",
+            ))
+            .child(
+                Button::new("allow-shell-escape")
+                    .warning()
+                    .label("Allow Shell Escape")
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.allow_shell_escape(window, cx)),
+                    ),
+            )
+    }
+
     /// Editing is paused while the agent works.
     fn render_agent_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -4236,6 +4282,9 @@ impl Render for Workspace {
                 .size_full()
                 .bg(theme.background)
                 .when(self.untrusted_rc, |d| d.child(self.render_trust_banner(cx)))
+                .when(self.wants_shell_escape, |d| {
+                    d.child(self.render_shell_escape_banner(cx))
+                })
                 .when(self.agent_busy, |d| d.child(self.render_agent_banner(cx)))
                 .when(self.buffers.len() > 1 || self.diff.is_some(), |d| {
                     d.child(self.render_tabs(cx))

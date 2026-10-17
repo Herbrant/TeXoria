@@ -50,6 +50,16 @@ the system's rc files, and shows a banner when the project has its own. Choose *
 in the banner to use it for that project. You can revoke the permission in
 [Settings](settings.md#trusted-projects).
 
+## Shell escape
+
+Some packages run programs while the document builds: `minted` (Pygments), `svg` (Inkscape),
+`pythontex`, TikZ externalization, `gnuplottex`… They need *shell escape*, which lets the
+document run any command, so it is off by default. When a build fails because a package needed
+it, TeXoria shows a banner: choose *Allow Shell Escape* to build that project with
+`-shell-escape` (latexmk) or `-Z shell-escape` (Tectonic) from then on. Allow it only for
+projects you trust (a coding agent that edits the document could then run commands through the
+build too). You can revoke the permission in [Settings](settings.md#trusted-projects).
+
 ## Build files
 
 Everything the engine produces goes to `.texoria/build` next to the root file, which TeXoria

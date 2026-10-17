@@ -47,6 +47,16 @@ static MISSING_FILE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^No file (.
 
 /// Parse a complete log. `root` is the directory the engine was run from;
 /// relative file names are resolved against it.
+/// Whether the log says the document needs to run programs (minted, svg,
+/// pythontex, TikZ externalization…) and could not.
+pub fn needs_shell_escape(log: &str) -> bool {
+    let log = log.to_ascii_lowercase();
+    log.contains("-shell-escape")
+        || log.contains("shell escape")
+        || log.contains("shell-escape")
+        || (log.contains("runsystem(") && log.contains("disabled"))
+}
+
 pub fn parse(log: &str, root: &Path) -> Vec<Diagnostic> {
     let lines = unwrap_lines(log);
     let mut out: Vec<Diagnostic> = Vec::new();
@@ -304,6 +314,23 @@ fn looks_like_path(token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tells_when_shell_escape_is_needed() {
+        assert!(needs_shell_escape(
+            "! Package minted Error: You must invoke LaTeX with the -shell-escape flag."
+        ));
+        assert!(needs_shell_escape(
+            "Package svg Error: You didn't enable `shell escape' (or `write18')"
+        ));
+        assert!(needs_shell_escape(
+            "runsystem(inkscape a.svg)...disabled (restricted)."
+        ));
+        assert!(!needs_shell_escape(
+            "runsystem(repstopdf a.eps)...executed safely (allowed)."
+        ));
+        assert!(!needs_shell_escape("Output written on main.pdf (1 page)."));
+    }
 
     #[test]
     fn real_pdflatex_log() {
