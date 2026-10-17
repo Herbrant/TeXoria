@@ -646,6 +646,7 @@ fn darken(bgra: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ops::Range;
     use std::path::Path;
     use std::sync::mpsc;
     use std::time::Duration;
@@ -863,8 +864,8 @@ mod tests {
         };
         let chars: Vec<_> = "ab\r\ncd".chars().map(ch).collect();
         assert_eq!(text_of(&chars, 0..6), "ab\ncd");
-        assert_eq!(text_of(&chars, 4..2), "");
-        assert_eq!(text_of(&chars, 9..1), "");
+        assert_eq!(text_of(&chars, Range { start: 4, end: 2 }), "");
+        assert_eq!(text_of(&chars, Range { start: 9, end: 1 }), "");
         assert_eq!(text_of(&chars, 7..9), "");
         assert_eq!(text_of(&[], 0..1), "");
     }
