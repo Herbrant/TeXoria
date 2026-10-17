@@ -216,10 +216,15 @@ impl<'a> Walk<'a> {
             let mut c2 = group.walk();
             for item in group.children_by_field_name(inner, &mut c2) {
                 let raw = self.src(item);
-                let t = raw.trim();
+                // Paths keep the comments of a list split over lines: leave them out.
+                let blank = blank_comments(raw);
+                let t = blank.trim();
                 if !t.is_empty() {
-                    let start = item.start_byte() + (raw.len() - raw.trim_start().len());
-                    out.push((t.to_string(), start..start + t.len(), Self::line(item)));
+                    let lead = blank.len() - blank.trim_start().len();
+                    let name = &raw[lead..lead + t.len()];
+                    let start = item.start_byte() + lead;
+                    let line = Self::line(item) + raw[..lead].matches('\n').count() as u32;
+                    out.push((name.to_string(), start..start + t.len(), line));
                 }
             }
         }
@@ -469,9 +474,10 @@ impl<'a> Walk<'a> {
                     }
                     "\\bibitem" => {
                         if let Some((key, range)) = braced_after_options(self.text, after) {
+                            let below = self.text[after..range.start].matches('\n').count();
                             index.bibitems.push(KeyRef {
                                 name: key.to_string(),
-                                line: Self::line(node),
+                                line: Self::line(node) + below as u32,
                                 range,
                                 command: name.to_string(),
                             });
@@ -594,6 +600,30 @@ fn group_end(b: &[u8], open: usize) -> Option<usize> {
         k += 1;
     }
     None
+}
+
+/// `s` with its `%` comments replaced by spaces, byte for byte.
+fn blank_comments(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.contains('%') {
+        return s.into();
+    }
+    let mut out = s.as_bytes().to_vec();
+    let mut i = 0;
+    while i < out.len() {
+        match out[i] {
+            b'\\' => i += 1,
+            b'%' => {
+                while i < out.len() && out[i] != b'\n' {
+                    out[i] = b' ';
+                    i += 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // Whole characters were replaced, up to a newline or the end.
+    String::from_utf8(out).expect("UTF-8").into()
 }
 
 /// The outline kind of a float environment's name.
@@ -1058,6 +1088,28 @@ See \ref{eq:e} and \cite{knuth, lamport}.
         assert_eq!(arg("[\\]]{key}"), Some(("key", "key")));
         let src = "\\bibitem{a\\}b} A.\n\\bibitem[{[1]}]{c} C.";
         assert_eq!(names(&Index::from_text(src).bibitems), ["a\\}b", "c"]);
+    }
+
+    #[test]
+    fn list_items_leave_out_comments() {
+        let src = "\\usepackage{amsmath, % math\n  amssymb,\n%  graphicx,\n  50\\%pkg}\n\
+                   \\input{ch % chapter\n}\\bibliography{\n  refs}";
+        let idx = Index::from_text(src);
+        assert_eq!(idx.packages, ["amsmath", "amssymb", "50\\%pkg"]);
+        let uses: Vec<_> = idx
+            .package_uses
+            .iter()
+            .map(|k| (&src[k.range.clone()], k.line))
+            .collect();
+        assert_eq!(uses, [("amsmath", 0), ("amssymb", 1), ("50\\%pkg", 3)]);
+        let inc: Vec<_> = idx
+            .includes
+            .iter()
+            .map(|i| (i.path.as_str(), &src[i.range.clone()]))
+            .collect();
+        assert_eq!(inc, [("ch", "ch"), ("refs", "refs")]);
+        let idx = Index::from_text("\\bibitem{\n  k}\\cite{\n%c\n a}");
+        assert_eq!((idx.bibitems[0].line, idx.citations[0].line), (1, 3));
     }
 
     #[test]
