@@ -218,8 +218,19 @@ pub(crate) fn kill_tree(child: &mut Child) {
     }
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // By its full path, never one found elsewhere, and without a console.
+        let taskkill = std::env::var_os("SystemRoot")
+            .map(|root| {
+                std::path::PathBuf::from(root)
+                    .join("System32")
+                    .join("taskkill.exe")
+            })
+            .unwrap_or_else(|| "taskkill.exe".into());
+        let _ = Command::new(taskkill)
             .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
