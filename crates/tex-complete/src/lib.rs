@@ -584,29 +584,27 @@ pub fn expand_snippet(snippet: &str) -> (String, usize) {
 /// The innermost `\begin{x}` without a matching `\end{x}` in `text`.
 fn innermost_open_env(text: &str) -> Option<String> {
     let mut stack: Vec<&str> = Vec::new();
-    let mut rest = text;
-    let mut offset = 0;
-    while let Some(i) = rest.find('\\') {
-        let after = &rest[i + 1..];
-        let (is_begin, tail) = if let Some(t) = after.strip_prefix("begin{") {
-            (true, t)
-        } else if let Some(t) = after.strip_prefix("end{") {
-            (false, t)
-        } else {
-            offset += i + 1;
-            rest = &text[offset..];
-            continue;
-        };
-        if let Some(close) = tail.find('}') {
-            let name = &tail[..close];
-            if is_begin {
-                stack.push(name);
-            } else if let Some(pos) = stack.iter().rposition(|n| *n == name) {
-                stack.truncate(pos);
+    for line in text.split('\n') {
+        // Environments in comments neither open nor close.
+        let mut rest = &line[..comment_start(line).unwrap_or(line.len())];
+        while let Some(i) = rest.find('\\') {
+            rest = &rest[i + 1..];
+            let (is_begin, tail) = if let Some(t) = rest.strip_prefix("begin{") {
+                (true, t)
+            } else if let Some(t) = rest.strip_prefix("end{") {
+                (false, t)
+            } else {
+                continue;
+            };
+            if let Some(close) = tail.find('}') {
+                let name = &tail[..close];
+                if is_begin {
+                    stack.push(name);
+                } else if let Some(pos) = stack.iter().rposition(|n| *n == name) {
+                    stack.truncate(pos);
+                }
             }
         }
-        offset += i + 1;
-        rest = &text[offset..];
     }
     stack.pop().map(str::to_string)
 }
@@ -969,6 +967,19 @@ mod tests {
         assert!(matches!(context(&t, o), Some(Context::Command { .. })));
         let (t, o) = at("x\\\\%\\ref{a|}");
         assert_eq!(nav::symbol_at(&t, o), None);
+    }
+
+    #[test]
+    fn end_ignores_environments_in_comments() {
+        let (t, o) = at("\\begin{a}\n% \\begin{b}\nx % \\end{a}\n\\end{|");
+        let items = complete(&t, o, None, "  ");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].insert, "a}");
+        // An escaped percent sign is text.
+        assert_eq!(
+            innermost_open_env("\\begin{a}50\\% \\begin{b}"),
+            Some("b".into())
+        );
     }
 
     #[test]
