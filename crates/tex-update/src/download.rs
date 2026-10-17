@@ -172,54 +172,10 @@ fn copy_verified(
 
 #[cfg(test)]
 mod tests {
-    use std::io::BufRead;
-    use std::net::TcpListener;
+    use test_support::http::{Response, serve_paths};
 
     use super::*;
     use crate::release::tests::keys;
-
-    /// Serve `files` (path → body) over HTTP until the test ends.
-    fn serve(files: Vec<(String, Vec<u8>)>) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let mut stream = stream.unwrap();
-                let mut line = String::new();
-                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
-                reader.read_line(&mut line).unwrap();
-                loop {
-                    let mut h = String::new();
-                    reader.read_line(&mut h).unwrap();
-                    if h.trim().is_empty() {
-                        break;
-                    }
-                }
-                let path = line.split_whitespace().nth(1).unwrap_or("").to_string();
-                let resp = match files.iter().find(|(p, _)| *p == path) {
-                    Some((_, body)) => {
-                        let mut r = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            body.len()
-                        )
-                        .into_bytes();
-                        r.extend_from_slice(body);
-                        r
-                    }
-                    None if path.ends_with("/latest") => b"HTTP/1.1 302 Found\r\n\
-                        Location: http://example.com/releases/tag/v9.0.0\r\n\
-                        Content-Length: 0\r\nConnection: close\r\n\r\n"
-                        .to_vec(),
-                    None => {
-                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                            .to_vec()
-                    }
-                };
-                stream.write_all(&resp).unwrap();
-            }
-        });
-        format!("http://{addr}/releases")
-    }
 
     fn sha256(data: &[u8]) -> String {
         Sha256::digest(data)
@@ -240,17 +196,20 @@ mod tests {
         let sums = format!("{}  {asset}\n", sha256(&body));
         let (public, sign) = keys();
         let sig = sign(sums.as_bytes(), "texoria 9.0.0");
-        let base = serve(vec![
+        let asset_path = format!("/releases/download/v9.0.0/{asset}");
+        let server = serve_paths(vec![
+            ("/releases/download/v9.0.0/SHA256SUMS", Response::ok(sums)),
             (
-                "/releases/download/v9.0.0/SHA256SUMS".into(),
-                sums.into_bytes(),
+                "/releases/download/v9.0.0/SHA256SUMS.minisig",
+                Response::ok(sig),
             ),
+            (&asset_path, Response::ok(body.clone())),
             (
-                "/releases/download/v9.0.0/SHA256SUMS.minisig".into(),
-                sig.into_bytes(),
+                "/releases/latest",
+                Response::redirect("http://example.com/releases/tag/v9.0.0"),
             ),
-            (format!("/releases/download/v9.0.0/{asset}"), body.clone()),
         ]);
+        let base = format!("{}/releases", server.url());
         let source = Source::with_key(&base, &public).unwrap();
 
         assert_eq!(source.latest_version().unwrap(), version);
@@ -263,6 +222,10 @@ mod tests {
         assert_eq!(seen, body.len() as u64);
         assert_eq!(fs::read(&update.file).unwrap(), body);
         assert!(update.staging.path().starts_with(dir.path()));
+        let agent = server.requests()[0]
+            .header("user-agent")
+            .map(str::to_string);
+        assert_eq!(agent.as_deref(), Some(crate::USER_AGENT));
 
         // A file that does not match the list is refused.
         let other = Release::verify(
