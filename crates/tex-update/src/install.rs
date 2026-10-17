@@ -64,7 +64,10 @@ impl InstallKind {
         let Ok(exe) = std::env::current_exe().and_then(|e| e.canonicalize()) else {
             return Self::Manual("TeXoria could not find where it is installed.");
         };
-        let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+        let exe = plain(exe);
+        let var = |name| std::env::var_os(name).map(PathBuf::from);
+        let appdir = var("APPDIR").and_then(|d| d.canonicalize().ok());
+        let appimage = running_appimage(&exe, var("APPIMAGE"), appdir.as_deref());
         Self::classify(&exe, std::env::consts::OS, appimage.as_deref(), &Disk)
     }
 
@@ -146,9 +149,11 @@ impl InstallKind {
                 let prefix = dir
                     .parent()
                     .filter(|_| dir.file_name() == Some("bin".as_ref()));
+                // The update is unpacked in the prefix itself (see `staging_parent`).
                 match prefix {
                     Some(prefix)
                         if fs.exists(&prefix.join("lib/texoria"))
+                            && fs.writable(prefix)
                             && fs.writable(dir)
                             && fs.writable(&prefix.join("lib")) =>
                     {
@@ -209,6 +214,30 @@ impl InstallKind {
             Self::Managed(_) | Self::Manual(_) | Self::Dev => None,
         }
     }
+}
+
+/// `$APPIMAGE`, if it is the AppImage this executable runs from. The
+/// variable is inherited by every program an AppImage starts (a terminal, a
+/// file manager...), so a copy installed otherwise may see another app's.
+/// The runtime also sets `$APPDIR`, where the image is mounted.
+fn running_appimage(
+    exe: &Path,
+    appimage: Option<PathBuf>,
+    appdir: Option<&Path>,
+) -> Option<PathBuf> {
+    appimage.filter(|_| appdir.is_some_and(|d| exe.starts_with(d)))
+}
+
+/// `\\?\C:\dir` as `C:\dir`. `canonicalize` returns such verbatim paths on
+/// Windows, which the installer would take as its folder (`/D=`).
+fn plain(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix(r"\\?\"))
+        && rest.as_bytes().get(1) == Some(&b':')
+    {
+        return PathBuf::from(rest);
+    }
+    path
 }
 
 #[cfg(test)]
@@ -324,6 +353,7 @@ mod tests {
     #[test]
     fn linux_layouts() {
         let fs = Fake::default()
+            .with("/home/me/.local", true)
             .with("/home/me/.local/bin", true)
             .with("/home/me/.local/lib", true)
             .with("/home/me/.local/lib/texoria", true)
@@ -355,6 +385,28 @@ mod tests {
             classify("/home/me/x/bin/texoria", "linux", &fs),
             InstallKind::Manual(_)
         ));
+        // A prefix where the update cannot be unpacked.
+        let fs = Fake::default()
+            .with("/srv/me", false)
+            .with("/srv/me/bin", true)
+            .with("/srv/me/lib", true)
+            .with("/srv/me/lib/texoria", true);
+        assert!(matches!(
+            classify("/srv/me/bin/texoria", "linux", &fs),
+            InstallKind::Manual(_)
+        ));
+    }
+
+    #[test]
+    fn appimage_of_another_app() {
+        let exe = Path::new("/tmp/.mount_TeXori/usr/bin/texoria");
+        let file = || Some(PathBuf::from("/home/me/Apps/TeXoria.AppImage"));
+        let mount = Path::new("/tmp/.mount_TeXori");
+        assert_eq!(running_appimage(exe, file(), Some(mount)), file());
+        // Started from a terminal that an AppImage started.
+        let deb = Path::new("/usr/bin/texoria");
+        assert_eq!(running_appimage(deb, file(), Some(mount)), None);
+        assert_eq!(running_appimage(exe, file(), None), None);
     }
 
     #[test]

@@ -90,6 +90,12 @@ impl Update {
 }
 
 impl Relaunch {
+    /// Whether [`Relaunch::spawn`] runs the installer (Windows): until then,
+    /// nothing is installed.
+    pub fn installs(&self) -> bool {
+        !self.forwards_args
+    }
+
     /// Start the new version (with `args`, where possible) once this process
     /// has exited. The caller should quit right after.
     pub fn spawn(&self, args: impl IntoIterator<Item = OsString>) -> Result<()> {
@@ -130,25 +136,100 @@ exec "$@""#;
         Ok(())
     }
 
+    /// The installer closes every `texoria.exe` without asking (the NSIS
+    /// template's passive mode): PowerShell waits for this process to exit,
+    /// asks to close the other windows, which would lose their unsaved edits,
+    /// and only then starts it.
     #[cfg(windows)]
     fn spawn_with(&self, _extra: Vec<OsString>) -> Result<()> {
         use std::os::windows::process::CommandExt;
 
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        let mut cmd = Command::new(&self.program);
-        let (last, rest) = self.args.split_last().expect("installer arguments");
-        cmd.args(rest);
-        // NSIS reads `/D=` raw: quoting would become part of the path.
-        cmd.raw_arg(last);
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-            .spawn()
-            .with_context(|| format!("starting {}", self.program.display()))?;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let powershell = Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+        // `Start-Process` passes a single argument string as is: NSIS reads
+        // `/D=` raw, and quoting would become part of the path.
+        let mut args = OsString::new();
+        for (i, a) in self.args.iter().enumerate() {
+            if i > 0 {
+                args.push(" ");
+            }
+            args.push(a);
+        }
+        let spawn = |flags: u32| {
+            Command::new(&powershell)
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                ])
+                .args(["-WindowStyle", "Hidden", "-EncodedCommand"])
+                .arg(encode_command(WINDOWS_SCRIPT))
+                .env("TEXORIA_UPDATE_PID", std::process::id().to_string())
+                .env("TEXORIA_UPDATE_INSTALLER", &self.program)
+                .env("TEXORIA_UPDATE_ARGS", &args)
+                .env("TEXORIA_UPDATE_MESSAGE", OTHER_WINDOWS)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(flags)
+                .spawn()
+        };
+        // Out of the app's job, if it is in one that ends its processes with
+        // it; not every job allows that.
+        let flags = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+        spawn(flags | CREATE_BREAKAWAY_FROM_JOB)
+            .or_else(|_| spawn(flags))
+            .with_context(|| format!("starting {}", powershell.display()))?;
         Ok(())
     }
+}
+
+/// Run by [`Relaunch::spawn`] on Windows, with its values in the environment
+/// (no quoting). The agents' `texoria.exe --mcp-bridge` (`tex_agent::mcp`)
+/// end with the app, so they are not waited for. Popup 0x35: Retry/Cancel,
+/// warning icon; 4 is Retry.
+#[cfg(any(windows, test))]
+const WINDOWS_SCRIPT: &str = r#"$ErrorActionPreference = 'SilentlyContinue'
+Wait-Process -Id ([int]$env:TEXORIA_UPDATE_PID)
+while ($true) {
+    $open = @(Get-CimInstance Win32_Process -Filter "Name = 'texoria.exe'" |
+        Where-Object { $_.CommandLine -notlike '*--mcp-bridge*' })
+    if ($open.Count -eq 0) { break }
+    $answer = (New-Object -ComObject WScript.Shell).Popup($env:TEXORIA_UPDATE_MESSAGE, 0, 'TeXoria', 0x35)
+    if ($answer -ne 4) { exit 1 }
+}
+Start-Process -FilePath $env:TEXORIA_UPDATE_INSTALLER -ArgumentList $env:TEXORIA_UPDATE_ARGS
+"#;
+
+#[cfg(windows)]
+const OTHER_WINDOWS: &str = "TeXoria is still open in another window. Close it to install \
+    the update: the installer would close it without saving.\n\nThe update is not installed \
+    if you cancel; TeXoria offers it again.";
+
+/// `-EncodedCommand`'s format: Base64 of the UTF-16LE text.
+#[cfg(any(windows, test))]
+fn encode_command(script: &str) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | (*b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// Copy the app out of the disk image, check its signature, and swap it in.
@@ -237,12 +318,15 @@ fn install_tarball(tarball: &Path, prefix: &Path, staging: &Path) -> Result<()> 
         restore();
         return Err(e).context("replacing the program");
     }
+    // The new version is in place by now: failing here would report an update
+    // that went through as failed.
     let share = usr.join("share");
-    if share.is_dir() {
-        copy_tree(&share, &prefix.join("share"), &|p| {
+    if share.is_dir()
+        && let Err(e) = copy_tree(&share, &prefix.join("share"), &|p| {
             p.starts_with(share.join("applications"))
         })
-        .context("copying the icons")?;
+    {
+        log::warn!("copying the icons of the update: {e:#}");
     }
     Ok(())
 }
@@ -406,6 +490,16 @@ mod tests {
         assert!(update(kind, "t.tar.gz", &archive).install().is_err());
         assert_eq!(fs::read_to_string(p.join("bin/texoria")).unwrap(), "old");
         assert!(p.join("lib/texoria").is_dir());
+    }
+
+    #[test]
+    fn encodes_powershell_commands() {
+        // [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(...))
+        assert_eq!(encode_command(""), "");
+        assert_eq!(encode_command("ab"), "YQBiAA==");
+        assert_eq!(encode_command("abc"), "YQBiAGMA");
+        assert_eq!(encode_command("é"), "6QA=");
+        assert!(WINDOWS_SCRIPT.contains("$env:TEXORIA_UPDATE_ARGS"));
     }
 
     #[test]

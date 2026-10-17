@@ -2199,14 +2199,22 @@ impl Workspace {
                 let args = self.root.iter().map(|p| p.clone().into_os_string());
                 match relaunch.spawn(args) {
                     Ok(()) => cx.quit(),
-                    Err(e) => window.push_notification(
-                        Notification::error(format!(
-                            "The new version is installed, but could not be started: {e:#}. \
-                             Quit and open TeXoria again."
-                        ))
-                        .title("Restart TeXoria"),
-                        cx,
-                    ),
+                    Err(e) => {
+                        let (title, message) = if relaunch.installs() {
+                            ("Could not install the update", format!("{e:#}"))
+                        } else {
+                            (
+                                "Restart TeXoria",
+                                format!(
+                                    "The new version is installed, but could not be started: \
+                                     {e:#}. Quit and open TeXoria again."
+                                ),
+                            )
+                        };
+                        self.updater
+                            .update(cx, |u, cx| u.relaunch_failed(relaunch, cx));
+                        window.push_notification(Notification::error(message).title(title), cx);
+                    }
                 }
             }
         }
@@ -2261,6 +2269,10 @@ impl Workspace {
                 format!("Save everything and restart into TeXoria {v}").into(),
             ),
             UpdateState::Installing(v) => (format!("Installing {v}…").into(), "".into()),
+            UpdateState::Elsewhere(v) => (
+                "Updating in another window".into(),
+                format!("Another TeXoria window is downloading or installing {v}").into(),
+            ),
         };
         let icon = match updater.state() {
             UpdateState::Downloading { .. } | UpdateState::Installing(_) => Glyph::Spinner,
@@ -2277,9 +2289,13 @@ impl Workspace {
                 .on_click(cx.listener(move |this, _, window, cx| match &state {
                     UpdateState::Available(_) => this.updater.update(cx, |u, cx| u.download(cx)),
                     UpdateState::Downloading { .. } => {
-                        this.updater.update(cx, |u, _| u.cancel_download())
+                        this.updater.update(cx, |u, cx| u.cancel_download(cx))
                     }
                     UpdateState::Ready(_) => this.restart_to_update(window, cx),
+                    UpdateState::Elsewhere(v) => {
+                        let v = v.clone();
+                        this.updater.update(cx, |u, cx| u.notify_available(v, cx))
+                    }
                     _ => {}
                 }))
                 .into_any_element(),

@@ -48,7 +48,8 @@ folder and TeXoria will ask again.
 
 | Setting | Default | |
 |---|---|---|
-| Check for updates | On | Look for a new release at startup, at most once a day. **Check for Updates…** in the TeXoria menu looks right away. See [Updating](installation.md#updating). |
+| Check for updates | On | Look for a new release at startup, at most once a day. See [Updating](installation.md#updating). |
+| Check now | | Look for a new release right away (on macOS, also **Check for Updates…** in the TeXoria menu); the answer appears in the main window. |
 
 ## Where files are stored
 

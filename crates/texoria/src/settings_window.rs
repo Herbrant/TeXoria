@@ -653,17 +653,36 @@ impl SettingsWindow {
                 "This copy was built from source.".to_string()
             }
         });
-        SettingPage::new("Updates").groups([SettingGroup::new().title("Updates").item(
-            SettingItem::new(
-                "Check for updates",
-                bool_field(&t, |s| s.check_updates, |s, v| s.check_updates = v)
-                    .default_value(Settings::default().check_updates),
+        // Windows and Linux have no menu bar: this is their Check for Updates….
+        let updater = t.read(cx, |w| Some(w.updater().downgrade()));
+        let check = SettingItem::new(
+            "Check now",
+            SettingField::render(move |_, _, _| {
+                let updater = updater.clone();
+                Button::new("check-updates")
+                    .small()
+                    .label("Check Now")
+                    .on_click(move |_, _, cx| {
+                        if let Some(u) = updater.as_ref().and_then(WeakEntity::upgrade) {
+                            u.update(cx, |u, cx| u.check(true, cx));
+                        }
+                    })
+            }),
+        )
+        .description("The answer appears in the main window.");
+        SettingPage::new("Updates").groups([SettingGroup::new()
+            .title("Updates")
+            .item(
+                SettingItem::new(
+                    "Check for updates",
+                    bool_field(&t, |s| s.check_updates, |s, v| s.check_updates = v)
+                        .default_value(Settings::default().check_updates),
+                )
+                .description(format!(
+                    "Look for a new release at startup, at most once a day. {how}"
+                )),
             )
-            .description(format!(
-                "Look for a new release at startup, at most once a day. \
-                 Check for Updates… in the TeXoria menu looks right away. {how}"
-            )),
-        )])
+            .item(check)])
     }
 }
 

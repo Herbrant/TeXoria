@@ -7,10 +7,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::*;
-use tex_update::{InstallKind, Relaunch, Source, Update, Version};
+use tex_update::{InstallKind, Lock, Relaunch, Source, Update, Version};
 
 /// Between two automatic checks.
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// How often to look whether another window is done with its update.
+const WATCH_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateState {
@@ -23,9 +25,13 @@ pub enum UpdateState {
         done: u64,
         total: Option<u64>,
     },
-    /// Downloaded and verified: installed on restart.
+    /// Downloaded and verified: installed by "Restart to Update" (dropped on
+    /// quit).
     Ready(Version),
     Installing(Version),
+    /// Another running copy is downloading or installing it (it holds the
+    /// [`Lock`]); available again once it is done, failed or quit.
+    Elsewhere(Version),
 }
 
 pub enum UpdaterEvent {
@@ -48,8 +54,13 @@ pub struct Updater {
     kind: InstallKind,
     state: UpdateState,
     update: Option<Update>,
+    /// Held from the download to the restart, so that the other running
+    /// copies leave the update alone.
+    lock: Option<Lock>,
     cancel: Arc<AtomicBool>,
     task: Task<()>,
+    /// Waits for the copy that holds the lock, in [`UpdateState::Elsewhere`].
+    watch: Task<()>,
 }
 
 impl Updater {
@@ -60,8 +71,10 @@ impl Updater {
             kind,
             state: UpdateState::Idle,
             update: None,
+            lock: None,
             cancel: Arc::new(AtomicBool::new(false)),
             task: Task::ready(()),
+            watch: Task::ready(()),
         }
     }
 
@@ -94,7 +107,8 @@ impl Updater {
             UpdateState::Available(v)
             | UpdateState::Downloading { version: v, .. }
             | UpdateState::Ready(v)
-            | UpdateState::Installing(v) => {
+            | UpdateState::Installing(v)
+            | UpdateState::Elsewhere(v) => {
                 if manual {
                     let v = v.clone();
                     self.notify_available(v, cx);
@@ -124,7 +138,7 @@ impl Updater {
                 match latest {
                     Ok(v) if tex_update::is_newer(tex_update::CURRENT, &v) => {
                         log::info!("TeXoria {v} is available");
-                        this.state = UpdateState::Available(v.clone());
+                        this.set_available(v.clone(), cx);
                         if manual {
                             this.notify_available(v, cx);
                         }
@@ -159,10 +173,50 @@ impl Updater {
         });
     }
 
+    /// `version` can be downloaded, unless another window is already at it.
+    fn set_available(&mut self, version: Version, cx: &mut Context<Self>) {
+        if self.kind.self_updating() && Lock::busy() {
+            self.wait_elsewhere(version, cx);
+        } else {
+            self.state = UpdateState::Available(version);
+        }
+    }
+
+    /// Another window holds the lock: look now and then until it lets go.
+    /// Its process releasing the lock when it ends, a window that crashed or
+    /// was killed does not keep this one waiting.
+    fn wait_elsewhere(&mut self, version: Version, cx: &mut Context<Self>) {
+        log::info!("another window is updating to {version}");
+        self.state = UpdateState::Elsewhere(version);
+        self.watch = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(WATCH_INTERVAL).await;
+                let done = this.update(cx, |this, cx| {
+                    let UpdateState::Elsewhere(v) = &this.state else {
+                        return true;
+                    };
+                    if Lock::busy() {
+                        return false;
+                    }
+                    this.state = UpdateState::Available(v.clone());
+                    cx.notify();
+                    true
+                });
+                if done.unwrap_or(true) {
+                    break;
+                }
+            }
+        });
+    }
+
     /// Tell about `version`: what to do for this kind of installation.
     pub fn notify_available(&self, version: Version, cx: &mut Context<Self>) {
         let message = match self.kind.instructions() {
             Some(how) => how.to_string(),
+            None if matches!(self.state, UpdateState::Elsewhere(_)) => {
+                "Another TeXoria window is downloading or installing it: restart from there."
+                    .to_string()
+            }
             None => "Click “Update” in the status bar to download it; TeXoria then restarts \
                      into the new version."
                 .to_string(),
@@ -184,6 +238,17 @@ impl Updater {
         if !self.kind.self_updating() {
             self.notify_available(version, cx);
             return;
+        }
+        match Lock::try_acquire() {
+            Ok(Some(lock)) => self.lock = Some(lock),
+            Ok(None) => {
+                self.wait_elsewhere(version.clone(), cx);
+                self.notify_available(version, cx);
+                cx.notify();
+                return;
+            }
+            // Not worth refusing the update over.
+            Err(e) => log::warn!("the update lock: {e:#}"),
         }
         self.state = UpdateState::Downloading {
             version: version.clone(),
@@ -229,6 +294,7 @@ impl Updater {
                     }
                     Err(e) => {
                         this.state = UpdateState::Available(version);
+                        this.lock = None;
                         if !this.cancel.load(Ordering::Relaxed) {
                             log::warn!("downloading the update: {e:#}");
                             cx.emit(UpdaterEvent::Notify {
@@ -246,8 +312,17 @@ impl Updater {
         });
     }
 
-    pub fn cancel_download(&mut self) {
+    pub fn cancel_download(&mut self, cx: &mut Context<Self>) {
+        let UpdateState::Downloading { version, .. } = &self.state else {
+            return;
+        };
         self.cancel.store(true, Ordering::Relaxed);
+        // A stalled read only returns with its timeout: do not wait for it.
+        // The download stops at its next read, and its file is removed.
+        self.state = UpdateState::Available(version.clone());
+        self.lock = None;
+        self.task = Task::ready(());
+        cx.notify();
     }
 
     /// Put the downloaded release in place; [`UpdaterEvent::Installed`] follows.
@@ -269,6 +344,7 @@ impl Updater {
                         log::warn!("installing the update: {e:#}");
                         // The download is gone: start over from it.
                         this.state = UpdateState::Available(version);
+                        this.lock = None;
                         cx.emit(UpdaterEvent::Notify {
                             error: true,
                             title: "Could not install the update".into(),
@@ -281,6 +357,22 @@ impl Updater {
             })
             .ok();
         });
+    }
+
+    /// The relaunch of [`UpdaterEvent::Installed`] could not start.
+    pub fn relaunch_failed(&mut self, relaunch: &Relaunch, cx: &mut Context<Self>) {
+        let UpdateState::Installing(version) = &self.state else {
+            return;
+        };
+        // Nothing is installed until the installer runs: start over. Otherwise
+        // the new version is in place, for the next start.
+        self.state = if relaunch.installs() {
+            UpdateState::Available(version.clone())
+        } else {
+            UpdateState::Idle
+        };
+        self.lock = None;
+        cx.notify();
     }
 }
 

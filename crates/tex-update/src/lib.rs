@@ -4,11 +4,13 @@
 //! [`Source::latest_version`] finds the newest release, [`Source::release`]
 //! fetches its `SHA256SUMS` and checks the release workflow's minisign
 //! signature, [`download`] gets the package matching the [`InstallKind`] and
-//! checks its hash, and [`Update::install`] puts it in place.
+//! checks its hash, and [`Update::install`] puts it in place. [`Lock`] keeps
+//! two running copies from updating at the same time.
 
 mod apply;
 mod download;
 mod install;
+mod lock;
 mod release;
 
 use std::time::Duration;
@@ -16,6 +18,7 @@ use std::time::Duration;
 pub use apply::Relaunch;
 pub use download::{Update, download};
 pub use install::{InstallKind, Manager, Probe};
+pub use lock::Lock;
 pub use release::{RELEASES, Release, Source, URL_VAR, is_newer};
 pub use semver::Version;
 

@@ -17,7 +17,8 @@ use crate::release::{Release, Source};
 
 /// The packages are ~30–60 MB.
 const MAX_SIZE: u64 = 1 << 30;
-/// Between two reads of the body, not for the whole download.
+/// For the response to start. ureq has no limit between two reads of the
+/// body: a stalled transfer only ends with `timeout_recv_body`.
 const STALL: Duration = Duration::from_secs(60);
 /// Prefix of the staging folders.
 pub(crate) const STAGING: &str = ".texoria-update-";
@@ -85,7 +86,8 @@ pub fn download(
 }
 
 /// A new folder next to what the update replaces. Folders left by an update
-/// that was interrupted (the app was killed) are removed first.
+/// that was interrupted (the app was killed) are removed first: the caller
+/// holds the [`crate::Lock`], so no other running copy is using them.
 fn staging_dir(kind: &InstallKind) -> Result<TempDir> {
     let parent = kind
         .staging_parent()

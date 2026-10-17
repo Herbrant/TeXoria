@@ -243,7 +243,11 @@ texoria ─┬─ tex-compile ── tex-log
   matches it. The download goes to a `.texoria-update-*` folder next to its target (same file
   system), removed if anything fails; the install renames the new copy over the old one
   (macOS: `hdiutil` + `ditto` + `codesign --verify` first), and `Relaunch` waits for the app's
-  PID to exit before starting it again. Windows runs `setup.exe /P /R /NS /D=<dir>` instead.
+  PID to exit before starting it again. Windows runs `setup.exe /P /R /NS /D=<dir>` instead,
+  from a PowerShell script (`apply.rs`) that waits for the app to exit and asks to close the other
+  `texoria.exe` windows first, since the NSIS template's passive mode kills them without saving.
+  `Lock` (an OS file lock in the temp folder, released when its process dies) lets one running
+  copy at a time download and install; the others show `UpdateState::Elsewhere` and poll it.
   Asset names are those of `release.yml`. `TEXORIA_UPDATE_URL` replaces the releases URL (and,
   in debug builds only, `TEXORIA_UPDATE_KEY` the key) to test against a local server.
   In the app, `updater.rs` holds the state shown in the status bar; the workspace saves

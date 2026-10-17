@@ -87,18 +87,22 @@ Use the quick install above, or one of the release's portable builds:
 ## Updating
 
 TeXoria looks for a new release when it starts, at most once a day (turn it off in
-[Settings](settings.md#updates)), and right away with **Check for Updates…** in the TeXoria menu.
+[Settings](settings.md#updates)), and right away with **Check Now** in the same settings page or,
+on macOS, **Check for Updates…** in the TeXoria menu.
 When there is one, the status bar shows it on the right. What happens next depends on how you
 installed TeXoria:
 
 | Installed with | How it updates |
 |---|---|
 | `.dmg`, install script (macOS) | **Update to X.Y.Z** downloads the release; **Restart to Update** saves your files, replaces `TeXoria.app` and reopens the project |
-| Windows installer | The same; the installer runs without questions once TeXoria has quit, and starts it again |
+| Windows installer | The same; the installer runs without questions once TeXoria has quit, and starts it again. If TeXoria is open in other windows, you are asked to close them first (the installer would close them without saving) |
 | AppImage | The same; the AppImage file is replaced |
 | Install script (Linux) | The same; `bin/texoria` and `lib/texoria` under the prefix are replaced |
 | Homebrew | `brew upgrade --cask texoria` |
 | AUR, `.deb`, `.rpm` | Your package manager |
+
+Only one window updates at a time: while one downloads or installs the update, the others show
+**Updating in another window**, and offer the update again if that window quits or fails.
 
 Before installing anything, TeXoria checks that the release's `SHA256SUMS` is signed with the
 project's release key (a [minisign](https://jedisct1.github.io/minisign/) key whose public half
