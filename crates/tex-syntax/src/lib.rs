@@ -1132,4 +1132,157 @@ See \ref{eq:e} and \cite{knuth, lamport}.
             "Introduction"
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+        use proptest::sample::select;
+
+        /// Pieces of LaTeX, including broken ones, that touch every part of the index.
+        const PIECES: &[&str] = &[
+            "\\label{",
+            "\\ref{",
+            "\\cref{",
+            "\\cite{",
+            "\\cite[p.~3]{",
+            "\\bibitem{",
+            "\\bibitem[x]{",
+            "\\input{",
+            "\\include{",
+            "\\addbibresource{",
+            "\\bibliography{",
+            "\\includegraphics[w]{",
+            "\\usepackage{",
+            "\\usepackage[main=x]{",
+            "\\section{",
+            "\\section*{",
+            "\\caption{",
+            "\\newcommand{\\",
+            "\\renewcommand\\",
+            "\\def\\",
+            "\\let\\",
+            "\\newenvironment{",
+            "\\newtheorem{",
+            "\\graphicspath{{",
+            "\\setmainlanguage[",
+            "\\documentclass[",
+            "\\begin{figure}",
+            "\\end{figure}",
+            "\\begin{equation}",
+            "\\end{equation}",
+            "\\begin{document}",
+            "\\end{document}",
+            "{",
+            "}",
+            "[",
+            "]",
+            ",",
+            "=",
+            " ",
+            "  ",
+            "\n",
+            "\r\n",
+            "%",
+            "\\\\",
+            "\\{",
+            "\\}",
+            "#1",
+            "[1]",
+            "a",
+            "key",
+            "é",
+            "日本",
+            "x:y",
+            "\0",
+            "\t",
+        ];
+
+        fn latex() -> impl Strategy<Value = String> {
+            proptest::collection::vec(select(PIECES), 0..40).prop_map(|v| v.concat())
+        }
+
+        fn row(text: &str, byte: usize) -> u32 {
+            text[..byte].matches('\n').count() as u32
+        }
+
+        fn check(text: &str, idx: &Index) -> Result<(), TestCaseError> {
+            let keys = [
+                &idx.citations,
+                &idx.references,
+                &idx.bibitems,
+                &idx.environments,
+                &idx.package_uses,
+            ];
+            for k in keys.into_iter().flatten() {
+                prop_assert_eq!(&text[k.range.clone()], k.name.as_str());
+                prop_assert_eq!(k.line, row(text, k.range.start));
+            }
+            for l in &idx.labels {
+                prop_assert_eq!(&text[l.range.clone()], l.name.as_str());
+                prop_assert!(l.line <= row(text, l.range.start));
+            }
+            for i in &idx.includes {
+                prop_assert_eq!(&text[i.range.clone()], i.path.as_str());
+                prop_assert!(i.line <= row(text, i.range.start));
+            }
+            for c in &idx.commands {
+                prop_assert_eq!(&text[c.range.clone()], c.name.as_str());
+                prop_assert!(c.name.starts_with('\\'));
+            }
+            for o in &idx.outline {
+                prop_assert_eq!(o.line, row(text, o.byte));
+            }
+            Ok(())
+        }
+
+        /// The tree-sitter point of a byte offset.
+        fn point(text: &str, byte: usize) -> tree_sitter::Point {
+            let line_start = text[..byte].rfind('\n').map_or(0, |i| i + 1);
+            tree_sitter::Point::new(row(text, byte) as usize, byte - line_start)
+        }
+
+        proptest! {
+            #[test]
+            fn ranges_and_rows_match_the_text(text in latex()) {
+                check(&text, &Index::from_text(&text))?;
+            }
+
+            #[test]
+            fn never_panics_on_any_text(text in any::<String>()) {
+                check(&text, &Index::from_text(&text))?;
+            }
+
+            #[test]
+            fn incremental_reparse_matches_a_fresh_parse(
+                text in latex(),
+                edits in proptest::collection::vec(
+                    (any::<proptest::sample::Index>(), any::<proptest::sample::Index>(),
+                     select(PIECES)),
+                    1..4,
+                ),
+            ) {
+                let mut text = text;
+                let mut tree = parse(&text, None).unwrap();
+                for (a, b, piece) in edits {
+                    let bounds: Vec<usize> =
+                        (0..=text.len()).filter(|&i| text.is_char_boundary(i)).collect();
+                    let (a, b) = (*a.get(&bounds), *b.get(&bounds));
+                    let (start, end) = (a.min(b), a.max(b));
+                    let mut new = text.clone();
+                    new.replace_range(start..end, piece);
+                    tree.edit(&tree_sitter::InputEdit {
+                        start_byte: start,
+                        old_end_byte: end,
+                        new_end_byte: start + piece.len(),
+                        start_position: point(&text, start),
+                        old_end_position: point(&text, end),
+                        new_end_position: point(&new, start + piece.len()),
+                    });
+                    tree = parse(&new, Some(&tree)).unwrap();
+                    text = new;
+                    prop_assert_eq!(Index::build(&tree, &text), Index::from_text(&text));
+                }
+            }
+        }
+    }
 }
