@@ -69,6 +69,8 @@ impl Agent {
         cmd.args(&spec.args)
             .current_dir(cwd)
             .env("PATH", process::search_path())
+            // Windows: no program from the project before those on `PATH`.
+            .env("NoDefaultCurrentDirectoryInExePath", "1")
             .envs(spec.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

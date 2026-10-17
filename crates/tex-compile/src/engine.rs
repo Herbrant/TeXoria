@@ -153,8 +153,13 @@ impl Engine {
             }
         };
         cmd.current_dir(job.work_dir());
-        if !self.extra_path.is_empty() {
-            cmd.env("PATH", prepend_path(&self.extra_path));
+        // The engine runs in the project, which may come from anywhere: a
+        // `pdflatex` or `bibtex` planted there must never be what runs.
+        cmd.env("PATH", prepend_path(&self.extra_path));
+        if cfg!(windows) {
+            // cmd.exe (latexmk's `system`) looks in the current directory
+            // before `PATH` unless this is set.
+            cmd.env("NoDefaultCurrentDirectoryInExePath", "1");
         }
         cmd
     }
@@ -194,10 +199,16 @@ fn latexmk_rc_files() -> Vec<PathBuf> {
     files
 }
 
+/// `dirs`, then the process's `PATH`, without empty or relative entries:
+/// those name the current directory (the project) on Unix.
 fn prepend_path(dirs: &[PathBuf]) -> OsString {
     let current = std::env::var_os("PATH").unwrap_or_default();
-    let all = dirs.iter().cloned().chain(std::env::split_paths(&current));
-    std::env::join_paths(all).unwrap_or(current)
+    let all = dirs
+        .iter()
+        .cloned()
+        .chain(std::env::split_paths(&current))
+        .filter(|d| d.is_absolute());
+    std::env::join_paths(all).unwrap_or_default()
 }
 
 /// Discover every usable engine, best first: system TeX (more complete and
@@ -403,6 +414,21 @@ mod tests {
             let args = args_of(&engine.command(&job));
             assert!(args.iter().all(|a| !a.starts_with("-pdflatex")), "{args:?}");
         }
+    }
+
+    #[test]
+    fn path_never_names_the_project() {
+        let job = Job::for_root("/p/main.tex");
+        let cmd = latexmk(Flavor::PdfLatex).command(&job);
+        let path = cmd
+            .get_envs()
+            .find(|(k, _)| *k == "PATH")
+            .and_then(|(_, v)| v)
+            .expect("PATH is set");
+        assert!(std::env::split_paths(path).all(|d| d.is_absolute()));
+        let dirs = [PathBuf::from("."), PathBuf::from("bin")];
+        let joined = prepend_path(&dirs);
+        assert!(std::env::split_paths(&joined).all(|d| d.is_absolute()));
     }
 
     #[test]

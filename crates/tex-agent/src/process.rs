@@ -29,7 +29,9 @@ pub fn search_path() -> OsString {
         }
         dirs.extend(well_known_dirs());
         let mut seen = std::collections::HashSet::new();
-        dirs.retain(|d| !d.as_os_str().is_empty() && seen.insert(d.clone()));
+        // Agents run in the project: a relative entry (`.`) would let a
+        // `node` planted there run instead of the real one.
+        dirs.retain(|d| d.is_absolute() && seen.insert(d.clone()));
         std::env::join_paths(dirs).unwrap_or_default()
     })
     .clone()
@@ -210,8 +212,9 @@ mod tests {
     fn search_path_keeps_the_process_path() {
         let path = search_path();
         let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+        assert!(dirs.iter().all(|d| d.is_absolute()));
         let current = std::env::var_os("PATH").unwrap_or_default();
-        for d in std::env::split_paths(&current).filter(|d| !d.as_os_str().is_empty()) {
+        for d in std::env::split_paths(&current).filter(|d| d.is_absolute()) {
             assert!(dirs.contains(&d), "{} missing", d.display());
         }
     }

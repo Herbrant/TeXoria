@@ -280,7 +280,16 @@ impl Git {
             // Inherited from a parent git process, these would redirect us.
             .env_remove("GIT_DIR")
             .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE");
+            .env_remove("GIT_INDEX_FILE")
+            // Hooks and helpers run in the working tree: never a program
+            // from it in place of one on `PATH` (cmd.exe, a relative entry).
+            .env("NoDefaultCurrentDirectoryInExePath", "1");
+        if let Some(path) = std::env::var_os("PATH") {
+            let dirs = std::env::split_paths(&path).filter(|d| d.is_absolute());
+            if let Ok(clean) = std::env::join_paths(dirs) {
+                c.env("PATH", clean);
+            }
+        }
         for (k, v) in &self.env {
             c.env(k, v);
         }
