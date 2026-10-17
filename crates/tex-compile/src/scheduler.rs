@@ -322,16 +322,16 @@ impl Worker {
     fn finish_with(&self, run: Running, mut status: Status, timed_out: Option<Duration>) {
         let job = run.job;
         let job_shell_escape = job.shell_escape;
+        // A cancelled run has nothing to say: its log, if any, is partial or
+        // an earlier run's.
         let mut log = Vec::new();
-        if let Ok(f) = File::open(job.artifact("log")) {
+        if status != Status::Cancelled
+            && let Ok(f) = File::open(job.artifact("log"))
+        {
             let _ = f.take(MAX_LOG_BYTES).read_to_end(&mut log);
         }
         let log_text = String::from_utf8_lossy(&log);
-        let mut diagnostics = if status == Status::Cancelled {
-            Vec::new()
-        } else {
-            tex_log::parse_bytes(&log, job.work_dir())
-        };
+        let mut diagnostics = tex_log::parse_bytes(&log, job.work_dir());
         if let Some(limit) = timed_out {
             diagnostics.insert(
                 0,

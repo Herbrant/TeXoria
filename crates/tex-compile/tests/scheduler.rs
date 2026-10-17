@@ -499,3 +499,19 @@ fn an_existing_gitignore_is_kept() {
     run_once(fake(&[]), &job);
     assert_eq!(std::fs::read_to_string(ignore).unwrap(), "mine\n");
 }
+
+#[test]
+fn a_cancelled_run_reports_nothing_from_the_log() {
+    let (_dir, job) = project();
+    let log = "log=! Package minted Error: You must invoke LaTeX with the -shell-escape flag.\\n";
+    assert!(run_once(fake(&[log]), &job).needs_shell_escape);
+    let events = Events::default();
+    let compiler = Compiler::new(fake(&["sleep=30000"]), Duration::ZERO, events.sink());
+    compiler.request_now(job);
+    events.wait_started(1);
+    compiler.cancel();
+    let out = events.wait_finished(1);
+    assert_eq!(out.status, Status::Cancelled);
+    assert!(out.diagnostics.is_empty());
+    assert!(!out.needs_shell_escape);
+}
