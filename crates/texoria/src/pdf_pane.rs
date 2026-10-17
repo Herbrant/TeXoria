@@ -19,6 +19,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use pdf_view::{
     Bitmap, Event as RenderEvent, Hit, Link, LinkTarget, PageSize, Query, RenderKey, Renderer,
+    TextChar,
 };
 use synctex::{Rect, SyncTex};
 
@@ -42,7 +43,8 @@ actions!(
         GoToPage,
         FitPage,
         FindInPdf,
-        CloseFind
+        CloseFind,
+        CopyText
     ]
 );
 
@@ -64,6 +66,14 @@ pub enum PdfPaneEvent {
 struct Shown {
     key: RenderKey,
     image: Arc<RenderImage>,
+}
+
+/// Text selected by dragging on a page, between two points (PDF points).
+struct Selection {
+    page: usize,
+    anchor: (f32, f32),
+    head: (f32, f32),
+    dragging: bool,
 }
 
 /// The find bar: its field and what it found.
@@ -116,6 +126,10 @@ pub struct PdfPane {
     asked_links: HashSet<usize>,
     find: Option<Find>,
     find_seq: u64,
+    /// The characters of the pages asked for so far (to select text).
+    texts: HashMap<usize, Vec<TextChar>>,
+    asked_text: HashSet<usize>,
+    selection: Option<Selection>,
     /// The "go to page" field of the toolbar, while it is open.
     page_input: Option<Entity<InputState>>,
     _page_input: Option<Subscription>,
@@ -173,6 +187,9 @@ impl PdfPane {
             asked_links: HashSet::new(),
             find: None,
             find_seq: 0,
+            texts: HashMap::new(),
+            asked_text: HashSet::new(),
+            selection: None,
             page_input: None,
             _page_input: None,
             _events: events,
@@ -226,6 +243,9 @@ impl PdfPane {
                 self.doc_generation = generation;
                 self.links.clear();
                 self.asked_links.clear();
+                self.texts.clear();
+                self.asked_text.clear();
+                self.selection = None;
                 // Hits move with the text.
                 self.search(Duration::ZERO, cx);
                 self.synctex = self.pending_synctex.take();
@@ -293,9 +313,16 @@ impl PdfPane {
                     self.reveal_hit(cx);
                 }
             }
-            RenderEvent::PageText { .. }
-            | RenderEvent::Snapshot { .. }
-            | RenderEvent::Text { .. } => {}
+            RenderEvent::PageText {
+                generation,
+                page,
+                chars,
+            } => {
+                if generation == self.doc_generation {
+                    self.texts.insert(page, chars);
+                }
+            }
+            RenderEvent::Snapshot { .. } | RenderEvent::Text { .. } => {}
         }
         cx.notify();
     }
@@ -677,10 +704,93 @@ impl PdfPane {
         true
     }
 
+    /// The page under a window position, and the position in its points;
+    /// `page` forces that page (a drag that left it).
+    fn page_point(
+        &self,
+        position: Point<Pixels>,
+        page: Option<usize>,
+    ) -> Option<(usize, f32, f32)> {
+        let zoom = self.zoom_factor();
+        let (rects, _) = self.layout(zoom);
+        let p = position - self.scroll.bounds().origin - self.scroll.offset();
+        let (i, r) = match page {
+            Some(i) => (i, *rects.get(i)?),
+            None => rects
+                .iter()
+                .copied()
+                .enumerate()
+                .find(|(_, r)| r.contains(&p))?,
+        };
+        let x = f32::from(p.x - r.origin.x) / zoom;
+        let y = f32::from(p.y - r.origin.y) / zoom;
+        Some((i, x, y))
+    }
+
+    /// The characters selected, as a range of the page's text.
+    fn selected_range(&self) -> Option<(usize, std::ops::Range<usize>)> {
+        let s = self.selection.as_ref()?;
+        let chars = self.texts.get(&s.page)?;
+        let a = pdf_view::nearest_char(chars, s.anchor.0, s.anchor.1)?;
+        let b = pdf_view::nearest_char(chars, s.head.0, s.head.1)?;
+        Some((s.page, a.min(b)..a.max(b) + 1))
+    }
+
+    fn copy_text(&mut self, cx: &mut Context<Self>) {
+        let Some((page, range)) = self.selected_range() else {
+            return;
+        };
+        let text = pdf_view::text_of(&self.texts[&page], range);
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
+    fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.selection.as_ref().filter(|s| s.dragging) else {
+            return;
+        };
+        if ev.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        if let Some((_, x, y)) = self.page_point(ev.position, Some(s.page)) {
+            let s = self.selection.as_mut().unwrap();
+            s.head = (x, y);
+            cx.notify();
+        }
+    }
+
+    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s) = &mut self.selection {
+            s.dragging = false;
+            // A click, not a drag: nothing selected.
+            if s.anchor == s.head {
+                self.selection = None;
+            }
+            cx.notify();
+        }
+    }
+
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // Before an inverse search, which moves the focus to the editor.
         window.focus(&self.focus, cx);
         if !ev.modifiers.secondary() && ev.click_count < 2 {
+            // Start selecting text.
+            self.selection = self
+                .page_point(ev.position, None)
+                .map(|(page, x, y)| Selection {
+                    page,
+                    anchor: (x, y),
+                    head: (x, y),
+                    dragging: true,
+                });
+            if let Some(page) = self.selection.as_ref().map(|s| s.page)
+                && self.asked_text.insert(page)
+                && let Some(r) = &self.renderer
+            {
+                r.query(Query::PageText { page });
+            }
+            cx.notify();
             return;
         }
         let Some(st) = self.synctex.clone() else {
@@ -938,6 +1048,8 @@ impl Render for PdfPane {
 
         let theme = cx.theme();
         let highlight_color = theme.primary.opacity(0.28);
+        let selection_color = theme.selection;
+        let selected = self.selected_range();
         let current_hit = theme.warning.opacity(0.55);
         let other_hit = theme.warning.opacity(0.25);
         let shadow_page = theme.is_dark();
@@ -993,6 +1105,25 @@ impl Render for PdfPane {
                             }
                         })),
                 );
+            }
+            if let Some((_, range)) = selected.as_ref().filter(|(p, _)| *p == i)
+                && let Some(chars) = self.texts.get(&i)
+            {
+                for c in &chars[range.clone()] {
+                    let r = c.rect;
+                    if r.width <= 0.0 || r.height <= 0.0 {
+                        continue;
+                    }
+                    page = page.child(
+                        div()
+                            .absolute()
+                            .left(px(r.x * zoom))
+                            .top(px(r.y * zoom))
+                            .w(px(r.width * zoom))
+                            .h(px(r.height * zoom))
+                            .bg(selection_color),
+                    );
+                }
             }
             if let Some(f) = &self.find {
                 for (k, hit) in f.hits.iter().enumerate().filter(|(_, h)| h.page == i) {
@@ -1054,7 +1185,15 @@ impl Render for PdfPane {
             .on_action(cx.listener(|this, _: &GoToPage, window, cx| this.prompt_page(window, cx)))
             .on_action(cx.listener(|this, _: &FitPage, _, cx| this.fit_page(cx)))
             .on_action(cx.listener(|this, _: &FindInPdf, window, cx| this.open_find(window, cx)))
-            .on_action(cx.listener(|this, _: &CloseFind, window, cx| this.close_find(window, cx)))
+            .on_action(cx.listener(|this, _: &CloseFind, window, cx| {
+                if this.find.is_some() {
+                    this.close_find(window, cx)
+                } else {
+                    this.selection = None;
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CopyText, _, cx| this.copy_text(cx)))
             .relative()
             .size_full()
             .bg(canvas_bg)
@@ -1065,6 +1204,8 @@ impl Render for PdfPane {
                     .overflow_scroll()
                     .track_scroll(&self.scroll)
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+                    .on_mouse_move(cx.listener(Self::on_mouse_move))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| {
                         if !(ev.modifiers.secondary() || ev.modifiers.control) {
                             return;

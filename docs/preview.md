@@ -43,6 +43,11 @@ Once you have clicked the preview, ⌘F (Ctrl+F) opens a find bar at the top of 
 ⇧↵ (or the arrows) go to the next and previous one, the button next to them matches the case,
 and Esc closes the bar. The search runs again when the PDF is rebuilt.
 
+## Copying text
+
+Drag across a page to select its text, then press ⌘C (Ctrl+C) to copy it; a click elsewhere or
+Esc clears the selection. A selection stays within one page.
+
 ## Links
 
 Links in the PDF work as in a PDF reader: those made by `hyperref` (`\ref`, `\cite`, the table

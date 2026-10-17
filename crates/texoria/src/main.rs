@@ -99,6 +99,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-g", pdf_pane::GoToPage, Some("PdfPane")),
         KeyBinding::new("secondary-f", pdf_pane::FindInPdf, Some("PdfPane")),
         KeyBinding::new("escape", pdf_pane::CloseFind, Some("PdfPane")),
+        KeyBinding::new("secondary-c", pdf_pane::CopyText, Some("PdfPane")),
         KeyBinding::new("secondary-1", ToggleOutline, None),
         KeyBinding::new("secondary-shift-e", ToggleFiles, None),
         KeyBinding::new("secondary-shift-m", ToggleDiagnostics, None),
