@@ -117,11 +117,14 @@ fn node_version(bin: &Path) -> Vec<u32> {
 
 /// The `PATH` an interactive login shell sets up (Homebrew, nvm, …).
 #[cfg(unix)]
+const MARK: &str = "__TEXORIA_PATH__";
+
+#[cfg(unix)]
 fn login_shell_path() -> Option<OsString> {
     use std::io::Read;
     use std::os::unix::ffi::OsStringExt;
+    use std::sync::mpsc;
 
-    const MARK: &str = "__TEXORIA_PATH__";
     let shell = std::env::var_os("SHELL")
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "/bin/sh".into());
@@ -134,28 +137,49 @@ fn login_shell_path() -> Option<OsString> {
     isolate(&mut cmd);
     let mut child = cmd.spawn().ok()?;
     let mut stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut out = Vec::new();
-        let _ = stdout.read_to_end(&mut out);
-        out
-    });
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() < SHELL_TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(20))
-            }
-            _ => {
-                log::warn!("{}: no PATH from the login shell", shell.to_string_lossy());
-                kill_tree(&mut child);
-                return None;
+    // Read as it comes, and stop at the second mark rather than at the end of
+    // the output: a job the rc files start in the background keeps the pipe
+    // open long after the shell is gone.
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = stdout.read(&mut buf) {
+            if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                break;
             }
         }
+    });
+    let deadline = Instant::now() + SHELL_TIMEOUT;
+    let mut out = Vec::new();
+    let path = loop {
+        if let Some(path) = between_marks(&out) {
+            break Some(path.to_vec());
+        }
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(chunk) => out.extend(chunk),
+            Err(_) => break None,
+        }
+    };
+    if !matches!(child.try_wait(), Ok(Some(_))) {
+        kill_tree(&mut child);
     }
-    let out = String::from_utf8(reader.join().ok()?).ok()?;
-    let path = out.split(MARK).nth(1)?;
-    (!path.is_empty()).then(|| OsString::from_vec(path.as_bytes().to_vec()))
+    match path {
+        Some(path) if !path.is_empty() => Some(OsString::from_vec(path)),
+        _ => {
+            log::warn!("{}: no PATH from the login shell", shell.to_string_lossy());
+            None
+        }
+    }
+}
+
+/// What the shell printed between the two marks, once both arrived.
+#[cfg(unix)]
+fn between_marks(out: &[u8]) -> Option<&[u8]> {
+    let mark = MARK.as_bytes();
+    let find = |hay: &[u8]| hay.windows(mark.len()).position(|w| w == mark);
+    let start = find(out)? + mark.len();
+    let len = find(&out[start..])?;
+    Some(&out[start..start + len])
 }
 
 /// Unix: a new session, so nothing waits on the terminal TeXoria was started
@@ -217,6 +241,15 @@ mod tests {
         for d in std::env::split_paths(&current).filter(|d| d.is_absolute()) {
             assert!(dirs.contains(&d), "{} missing", d.display());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_is_read_between_the_marks() {
+        let out = format!("motd\n{MARK}/usr/bin:/bin{MARK}more");
+        assert_eq!(between_marks(out.as_bytes()), Some(&b"/usr/bin:/bin"[..]));
+        assert_eq!(between_marks(format!("{MARK}/usr/b").as_bytes()), None);
+        assert_eq!(between_marks(b"nothing"), None);
     }
 
     #[test]
