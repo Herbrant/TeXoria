@@ -65,10 +65,18 @@ fn finds_the_main_file_of_a_folder() {
 
 #[test]
 fn package_names() {
-    for ok in ["amsmath", "biblatex-chicago", "l3kernel", "pgf_v3", "tikz.code"] {
+    for ok in [
+        "amsmath",
+        "biblatex-chicago",
+        "l3kernel",
+        "pgf_v3",
+        "tikz.code",
+    ] {
         assert!(is_package_name(ok), "{ok}");
     }
-    for bad in ["", "-h", "..", "../x", "a/b", "a b", "x?y=1", "é", "a#b", "%2e%2e"] {
+    for bad in [
+        "", "-h", "..", "../x", "a/b", "a b", "x?y=1", "é", "a#b", "%2e%2e",
+    ] {
         assert!(!is_package_name(bad), "{bad}");
     }
 }
@@ -114,7 +122,7 @@ fn file_uris() {
 fn opens_a_project_folder(cx: &mut TestAppContext) {
     let dir = testing::fixture_copy("sample");
     let (_, workspace) = testing::open(cx, Some(dir.path().to_path_buf()), testing::startup());
-    let main = std::fs::canonicalize(dir.path().join("main.tex")).unwrap();
+    let main = paths::canonical(&dir.path().join("main.tex"));
     workspace.read_with(cx, |ws, _| {
         assert_eq!(ws.root.as_ref(), Some(&main));
         assert_eq!(ws.buffers.len(), 1);

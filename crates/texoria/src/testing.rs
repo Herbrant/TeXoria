@@ -13,12 +13,14 @@ pub fn init(cx: &mut TestAppContext) {
     cx.update(crate::init);
 }
 
-/// What a test workspace starts from: default settings, no engine, no PDFium.
+/// What a test workspace starts from: default settings, no engine, no PDFium, and no tool
+/// server for agents (its threads would wake the test scheduler from outside).
 pub fn startup() -> Startup {
     Startup {
         settings: Settings::default(),
         engines: Vec::new(),
         pdfium_dirs: Vec::new(),
+        tool_server: false,
     }
 }
 
@@ -61,5 +63,47 @@ fn copy_dir(from: &Path, to: &Path) {
         } else {
             std::fs::copy(&path, to.join(name)).unwrap();
         }
+    }
+}
+
+/// git with the user's and the system's configuration out of the way, in a temporary folder
+/// (also git's `HOME`) for the repositories of a test.
+pub struct GitSandbox {
+    pub git: tex_git::Git,
+    /// The temporary folder, canonical.
+    pub dir: PathBuf,
+    env: Vec<(&'static str, PathBuf)>,
+    _tmp: tempfile::TempDir,
+}
+
+impl GitSandbox {
+    /// `None` (the test then passes trivially) when git is not installed.
+    pub fn new() -> Option<GitSandbox> {
+        let Some(found) = tex_git::Git::find() else {
+            test_support::skip("GIT", "git not found");
+            return None;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let env = test_support::git::isolated_env(tmp.path());
+        let git = (env.iter()).fold(tex_git::Git::at(found.program()), |g, (k, v)| g.env(k, v));
+        let dir = crate::paths::canonical(tmp.path());
+        Some(GitSandbox {
+            git,
+            dir,
+            env,
+            _tmp: tmp,
+        })
+    }
+
+    /// git run in `dir` for the states a test sets up; it must succeed. Its output.
+    #[track_caller]
+    pub fn run(&self, dir: &Path, args: &[&str]) -> String {
+        let mut cmd = std::process::Command::new(self.git.program());
+        cmd.current_dir(dir).args(args).env("LC_ALL", "C");
+        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
+        let out = cmd.output().unwrap();
+        let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
+        assert!(out.status.success(), "git {args:?}: {}", text(&out.stderr));
+        text(&out.stdout)
     }
 }

@@ -739,8 +739,9 @@ mod tests {
             ("ch.tex", ""),
             ("big.tex", "\\documentclass{book}\\input{ch}"),
         ]);
+        // Windows refuses set_len on a file opened only to append.
         let big = std::fs::OpenOptions::new()
-            .append(true)
+            .write(true)
             .open(dir.path().join("big.tex"))
             .unwrap();
         big.set_len(files::MAX_TEXT_BYTES + 1).unwrap();

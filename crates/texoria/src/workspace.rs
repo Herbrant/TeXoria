@@ -186,6 +186,8 @@ pub struct Startup {
     pub settings: Settings,
     pub engines: Vec<tex_compile::Engine>,
     pub pdfium_dirs: Vec<PathBuf>,
+    /// Serve TeXoria's tools to coding agents (a loopback port and its own threads).
+    pub tool_server: bool,
 }
 
 impl Startup {
@@ -194,6 +196,7 @@ impl Startup {
             settings: Settings::load(),
             engines: tex_compile::detect(dev_vendor_dir("tectonic").as_deref()),
             pdfium_dirs: pdfium_dirs(),
+            tool_server: true,
         }
     }
 }
@@ -213,6 +216,7 @@ impl Workspace {
             mut settings,
             engines,
             pdfium_dirs,
+            tool_server,
         } = startup;
         if let Some(error) = settings.load_error.take() {
             window.defer(cx, move |window, cx| {
@@ -298,9 +302,13 @@ impl Workspace {
 
         // The agents reach TeXoria's tools through `texoria --mcp-bridge`.
         let (tools, tool_calls) = AppTools::new();
-        let server = mcp::Server::start(Arc::new(tools))
-            .inspect_err(|e| log::warn!("starting the tool server for agents: {e}"))
-            .ok();
+        let server = tool_server
+            .then(|| {
+                mcp::Server::start(Arc::new(tools))
+                    .inspect_err(|e| log::warn!("starting the tool server for agents: {e}"))
+                    .ok()
+            })
+            .flatten();
         let bridge = std::env::current_exe().ok();
         let configs = server
             .iter()
