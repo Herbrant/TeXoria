@@ -13,7 +13,8 @@ use gpui_kit::gpui;
 #[test]
 fn ids_and_labels() {
     let path = Path::new("/project/ch/intro.tex");
-    assert_eq!(item_id(path).as_ref(), path.to_string_lossy());
+    let spelled: PathBuf = path.components().collect();
+    assert_eq!(item_id(path).as_ref(), spelled.to_string_lossy());
     // The same row whichever separators a path was built with.
     let folder = Path::new("/project");
     assert_eq!(
