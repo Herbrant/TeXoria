@@ -171,12 +171,17 @@ pub const KNOWN: &[Known] = &[
 /// The installed agents, known ones first. Blocking: it may ask the login
 /// shell for its `PATH`.
 pub fn detect(custom: &[CustomAgent]) -> Vec<AgentSpec> {
-    let mut found: Vec<AgentSpec> = KNOWN.iter().filter_map(installed).collect();
-    found.extend(custom.iter().filter_map(custom_spec));
+    detect_with(custom, &process::find)
+}
+
+/// [`detect`], with programs looked up by `find`.
+fn detect_with(custom: &[CustomAgent], find: &dyn Fn(&str) -> Option<PathBuf>) -> Vec<AgentSpec> {
+    let mut found: Vec<AgentSpec> = KNOWN.iter().filter_map(|k| installed(k, find)).collect();
+    found.extend(custom.iter().filter_map(|c| custom_spec(c, find)));
     found
 }
 
-fn installed(known: &Known) -> Option<AgentSpec> {
+fn installed(known: &Known, find: &dyn Fn(&str) -> Option<PathBuf>) -> Option<AgentSpec> {
     let spec = |program: PathBuf, args: Vec<String>| AgentSpec {
         id: known.id.to_string(),
         name: known.name.to_string(),
@@ -187,18 +192,18 @@ fn installed(known: &Known) -> Option<AgentSpec> {
     };
     known.launch.iter().find_map(|launch| match launch {
         Native { program, args } => {
-            let program = process::find(program)?;
+            let program = find(program)?;
             Some(spec(program, args.iter().map(|a| a.to_string()).collect()))
         }
         Npx { cli, package } => {
-            process::find(cli)?;
-            let npx = process::find("npx")?;
+            find(cli)?;
+            let npx = find("npx")?;
             Some(spec(npx, vec!["-y".into(), package.to_string()]))
         }
     })
 }
 
-fn custom_spec(agent: &CustomAgent) -> Option<AgentSpec> {
+fn custom_spec(agent: &CustomAgent, find: &dyn Fn(&str) -> Option<PathBuf>) -> Option<AgentSpec> {
     let command = agent.command.trim();
     if command.is_empty() {
         return None;
@@ -207,7 +212,7 @@ fn custom_spec(agent: &CustomAgent) -> Option<AgentSpec> {
     let program = if as_path.is_absolute() {
         as_path.is_file().then_some(as_path)
     } else {
-        process::find(command)
+        find(command)
     }?;
     let name = match agent.name.trim() {
         "" => command.to_string(),
@@ -226,6 +231,14 @@ fn custom_spec(agent: &CustomAgent) -> Option<AgentSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::process::tests::executable;
+    use std::path::Path;
+
+    /// Programs looked up in `dir` only.
+    fn finder(dir: &Path) -> impl Fn(&str) -> Option<PathBuf> {
+        let path = dir.as_os_str().to_owned();
+        move |name| process::find_in(name, path.clone())
+    }
 
     #[test]
     fn ids_are_unique() {
@@ -236,26 +249,103 @@ mod tests {
     }
 
     #[test]
+    fn finds_installed_agents_known_ones_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let find = finder(dir.path());
+        assert!(detect_with(&[], &find).is_empty());
+
+        let gemini = executable(dir.path(), "gemini");
+        let custom = CustomAgent {
+            name: " Mine ".into(),
+            command: " gemini ".into(),
+            args: vec!["--x".into()],
+        };
+        let found = detect_with(std::slice::from_ref(&custom), &find);
+        let ids: Vec<&str> = found.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["gemini", "custom:Mine"]);
+        assert_eq!(found[0].program, gemini);
+        assert_eq!(found[0].args, ["--acp"]);
+        assert!(found[0].login_hint.as_deref().unwrap().contains("gemini"));
+        assert_eq!(
+            (found[1].name.as_str(), &found[1].args),
+            ("Mine", &custom.args)
+        );
+        assert_eq!(found[1].login_hint, None);
+    }
+
+    #[test]
+    fn adapters_need_both_the_cli_and_npx() {
+        let claude = KNOWN.iter().find(|k| k.id == "claude").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let find = finder(dir.path());
+        executable(dir.path(), "claude");
+        assert_eq!(installed(claude, &find), None, "no npx");
+        let npx = executable(dir.path(), "npx");
+        let spec = installed(claude, &find).unwrap();
+        assert_eq!(spec.program, npx);
+        assert_eq!(spec.args[0], "-y");
+        assert!(spec.args[1].starts_with("@agentclientprotocol/claude-agent-acp@"));
+
+        let dir = tempfile::tempdir().unwrap();
+        executable(dir.path(), "npx");
+        assert_eq!(installed(claude, &finder(dir.path())), None, "no cli");
+        // The native adapter comes first.
+        let native = executable(dir.path(), "claude-agent-acp");
+        executable(dir.path(), "claude");
+        let spec = installed(claude, &finder(dir.path())).unwrap();
+        assert_eq!((spec.program, spec.args), (native, Vec::<String>::new()));
+    }
+
+    #[test]
     fn custom_agents_need_an_existing_program() {
+        let empty = tempfile::tempdir().unwrap();
+        let find = finder(empty.path());
         let missing = CustomAgent {
             name: "Mine".into(),
             command: "surely-not-an-installed-agent-xyz".into(),
             args: vec![],
         };
-        assert!(custom_spec(&missing).is_none());
-        assert!(custom_spec(&CustomAgent::default()).is_none());
+        assert!(custom_spec(&missing, &find).is_none());
+        assert!(custom_spec(&CustomAgent::default(), &find).is_none());
+        let blank = CustomAgent {
+            command: "  ".into(),
+            ..CustomAgent::default()
+        };
+        assert!(custom_spec(&blank, &find).is_none());
 
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("agent");
         std::fs::write(&exe, "").unwrap();
-        let spec = custom_spec(&CustomAgent {
-            name: String::new(),
-            command: exe.to_string_lossy().into_owned(),
-            args: vec!["--acp".into()],
-        })
+        let spec = custom_spec(
+            &CustomAgent {
+                name: String::new(),
+                command: exe.to_string_lossy().into_owned(),
+                args: vec!["--acp".into()],
+            },
+            &find,
+        )
         .unwrap();
         assert_eq!(spec.program, exe);
         assert_eq!(spec.args, ["--acp"]);
-        assert!(spec.id.starts_with("custom:"));
+        assert_eq!(spec.id, format!("custom:{}", exe.display()));
+        // An absolute path that is not a file.
+        let folder = CustomAgent {
+            command: dir.path().to_string_lossy().into_owned(),
+            ..CustomAgent::default()
+        };
+        assert!(custom_spec(&folder, &find).is_none());
+    }
+
+    #[test]
+    fn custom_agents_round_trip_through_settings() {
+        let agent = CustomAgent {
+            name: "Mine".into(),
+            command: "my-agent".into(),
+            args: vec!["acp".into()],
+        };
+        let json = serde_json::to_string(&agent).unwrap();
+        assert_eq!(serde_json::from_str::<CustomAgent>(&json).unwrap(), agent);
+        let partial: CustomAgent = serde_json::from_str(r#"{"command":"x"}"#).unwrap();
+        assert_eq!((partial.name.as_str(), partial.args.len()), ("", 0));
     }
 }
