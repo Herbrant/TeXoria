@@ -2,6 +2,7 @@
 //! from the menu, the download, and the install that the workspace finishes
 //! by restarting into the new version.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -61,12 +62,25 @@ pub struct Updater {
     task: Task<()>,
     /// Waits for the copy that holds the lock, in [`UpdateState::Elsewhere`].
     watch: Task<()>,
+    /// Where releases come from.
+    source: SourceFn,
+    /// The lock file of updates; `None`: the user's ([`Lock::try_acquire`]).
+    lock_path: Option<PathBuf>,
 }
+
+/// Makes the [`Source`] of a check or a download.
+pub type SourceFn = Arc<dyn Fn() -> anyhow::Result<Source> + Send + Sync>;
 
 impl Updater {
     pub fn new(_: &mut Context<Self>) -> Self {
         let kind = InstallKind::detect();
         log::info!("installation: {kind:?}");
+        Self::with(kind, Arc::new(Source::new), None)
+    }
+
+    /// An updater of a `kind` of installation, with releases from `source`
+    /// and its lock at `lock_path` (tests use their own).
+    pub fn with(kind: InstallKind, source: SourceFn, lock_path: Option<PathBuf>) -> Self {
         Self {
             kind,
             state: UpdateState::Idle,
@@ -75,6 +89,23 @@ impl Updater {
             cancel: Arc::new(AtomicBool::new(false)),
             task: Task::ready(()),
             watch: Task::ready(()),
+            source,
+            lock_path,
+        }
+    }
+
+    /// Whether another copy holds the lock of updates.
+    fn lock_busy(&self) -> bool {
+        match &self.lock_path {
+            Some(path) => Lock::busy_at(path),
+            None => Lock::busy(),
+        }
+    }
+
+    fn try_lock(&self) -> anyhow::Result<Option<Lock>> {
+        match &self.lock_path {
+            Some(path) => Lock::try_acquire_at(path),
+            None => Lock::try_acquire(),
         }
     }
 
@@ -130,7 +161,8 @@ impl Updater {
         }
         self.state = UpdateState::Checking;
         cx.notify();
-        let latest = cx.background_spawn(async move { Source::new()?.latest_version() });
+        let source = self.source.clone();
+        let latest = cx.background_spawn(async move { source()?.latest_version() });
         self.task = cx.spawn(async move |this, cx| {
             let latest = latest.await;
             this.update(cx, |this, cx| {
@@ -175,7 +207,7 @@ impl Updater {
 
     /// `version` can be downloaded, unless another window is already at it.
     fn set_available(&mut self, version: Version, cx: &mut Context<Self>) {
-        if self.kind.self_updating() && Lock::busy() {
+        if self.kind.self_updating() && self.lock_busy() {
             self.wait_elsewhere(version, cx);
         } else {
             self.state = UpdateState::Available(version);
@@ -195,7 +227,7 @@ impl Updater {
                     let UpdateState::Elsewhere(v) = &this.state else {
                         return true;
                     };
-                    if Lock::busy() {
+                    if this.lock_busy() {
                         return false;
                     }
                     this.state = UpdateState::Available(v.clone());
@@ -239,7 +271,7 @@ impl Updater {
             self.notify_available(version, cx);
             return;
         }
-        match Lock::try_acquire() {
+        match self.try_lock() {
             Ok(Some(lock)) => self.lock = Some(lock),
             Ok(None) => {
                 self.wait_elsewhere(version.clone(), cx);
@@ -261,8 +293,9 @@ impl Updater {
         let kind = self.kind.clone();
         let (tx, rx) = smol::channel::unbounded::<(u64, Option<u64>)>();
         let v = version.clone();
+        let source = self.source.clone();
         let work = cx.background_spawn(async move {
-            let source = Source::new()?;
+            let source = source()?;
             let release = source.release(&v)?;
             let mut last = 0;
             tex_update::download(&source, &release, &kind, &cancel, |done, total| {
@@ -390,16 +423,4 @@ pub fn release_page(version: &Version) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    // Not `super::*`: gpui_kit exports its own `test` attribute.
-    use super::{CHECK_INTERVAL, Updater, now};
-
-    #[test]
-    fn checks_once_a_day() {
-        assert!(Updater::check_due(None));
-        assert!(!Updater::check_due(Some(now() - 60)));
-        assert!(Updater::check_due(Some(now() - CHECK_INTERVAL.as_secs())));
-        // A clock that went back.
-        assert!(Updater::check_due(Some(now() + 3600)));
-    }
-}
+mod tests;
