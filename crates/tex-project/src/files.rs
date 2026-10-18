@@ -232,13 +232,40 @@ pub fn is_same_file(from: &Path, to: &Path) -> bool {
     #[cfg(not(unix))]
     {
         let _ = (a, b);
-        from.to_string_lossy().to_lowercase() == to.to_string_lossy().to_lowercase()
+        same_spelling(from, to)
     }
+}
+
+/// Whether `a` and `b` are the same path but for the case of their letters and the separators
+/// they are written with (`ch/a.tex` and `ch\A.tex` on Windows). Links are not followed: a
+/// link and its target are two files.
+#[cfg_attr(unix, allow(dead_code))]
+fn same_spelling(a: &Path, b: &Path) -> bool {
+    let parts = |p: &Path| -> Vec<String> {
+        p.components()
+            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+            .collect()
+    };
+    parts(a) == parts(b)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_spelling_ignores_case_and_separators() {
+        let dir = Path::new("/project");
+        assert!(same_spelling(
+            &dir.join("ch/Intro.tex"),
+            &dir.join("ch").join("intro.TEX")
+        ));
+        assert!(!same_spelling(
+            &dir.join("ch/intro.tex"),
+            &dir.join("intro.tex")
+        ));
+        assert!(!same_spelling(&dir.join("a.tex"), &dir.join("b.tex")));
+    }
 
     fn names(nodes: &[FileNode]) -> Vec<&str> {
         nodes.iter().map(|n| n.name.as_str()).collect()
