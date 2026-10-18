@@ -6,11 +6,12 @@
 //! relays its stdio to that port ([`bridge`]). The bridge must present a token
 //! first: any local program could connect to the port.
 
+use std::collections::HashMap;
 use std::io::{self, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_client_protocol_schema::v1 as acp;
@@ -98,41 +99,62 @@ pub trait Tools: Send + Sync + 'static {
 pub struct Server {
     addr: SocketAddr,
     token: String,
-    stop: Arc<AtomicBool>,
+    shared: Arc<Shared>,
+}
+
+/// What the server and its threads share.
+#[derive(Default)]
+struct Shared {
+    stop: AtomicBool,
+    /// The open connections (by number), closed when the server stops.
+    open: Mutex<HashMap<u64, TcpStream>>,
 }
 
 impl Server {
     pub fn start(tools: Arc<dyn Tools>) -> io::Result<Server> {
+        Self::start_with(tools, TOKEN_TIMEOUT)
+    }
+
+    fn start_with(tools: Arc<dyn Tools>, token_timeout: Duration) -> io::Result<Server> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let addr = listener.local_addr()?;
         let token = new_token()?;
-        let open = Arc::new(AtomicUsize::new(0));
-        let stop = Arc::new(AtomicBool::new(false));
+        let shared = Arc::new(Shared::default());
         {
-            let (token, stop) = (token.clone(), stop.clone());
+            let (token, shared) = (token.clone(), shared.clone());
             std::thread::Builder::new()
                 .name("mcp-server".into())
                 .spawn(move || {
-                    for stream in listener.incoming() {
-                        if stop.load(Ordering::SeqCst) {
-                            break;
+                    let mut next = 0u64;
+                    accept_loop(listener.incoming(), &shared.stop, |stream| {
+                        next += 1;
+                        let id = next;
+                        {
+                            let mut open = shared.open.lock().unwrap();
+                            // Checked again here: `Drop` sets it with the lock held.
+                            if shared.stop.load(Ordering::SeqCst) || open.len() >= MAX_CONNECTIONS {
+                                return;
+                            }
+                            let Ok(handle) = stream.try_clone() else {
+                                return;
+                            };
+                            open.insert(id, handle);
                         }
-                        let Ok(stream) = stream else { continue };
-                        if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
-                            open.fetch_sub(1, Ordering::SeqCst);
-                            continue;
-                        }
-                        let (tools, token, open) = (tools.clone(), token.clone(), open.clone());
+                        let (tools, token, shared) = (tools.clone(), token.clone(), shared.clone());
                         std::thread::spawn(move || {
-                            if let Err(e) = serve(stream, &token, &*tools) {
+                            if let Err(e) = serve(stream, &token, &*tools, token_timeout) {
                                 log::debug!("MCP connection: {e}");
                             }
-                            open.fetch_sub(1, Ordering::SeqCst);
+                            shared.open.lock().unwrap().remove(&id);
                         });
-                    }
+                    });
                 })?;
         }
-        Ok(Server { addr, token, stop })
+        Ok(Server {
+            addr,
+            token,
+            shared,
+        })
     }
 
     /// How an agent starts the bridge to this server (`exe` is TeXoria's).
@@ -150,9 +172,29 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
+        {
+            let _open = self.shared.open.lock().unwrap();
+            self.shared.stop.store(true, Ordering::SeqCst);
+        }
         // Wake the accept loop up so it sees `stop`.
         let _ = TcpStream::connect(self.addr);
+    }
+}
+
+/// Hand the connections of `incoming` to `serve` until `stop`.
+fn accept_loop(
+    incoming: impl Iterator<Item = io::Result<TcpStream>>,
+    stop: &AtomicBool,
+    mut serve: impl FnMut(TcpStream),
+) {
+    for stream in incoming {
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        match stream {
+            Ok(stream) => serve(stream),
+            Err(e) => log::debug!("MCP server: {e}"),
+        }
     }
 }
 
@@ -163,8 +205,13 @@ fn new_token() -> io::Result<String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn serve(stream: TcpStream, token: &str, tools: &dyn Tools) -> io::Result<()> {
-    stream.set_read_timeout(Some(TOKEN_TIMEOUT))?;
+fn serve(
+    stream: TcpStream,
+    token: &str,
+    tools: &dyn Tools,
+    token_timeout: Duration,
+) -> io::Result<()> {
+    stream.set_read_timeout(Some(token_timeout))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut writer = stream;
     let first = crate::rpc::read_line(&mut (&mut reader).take(MAX_TOKEN_LINE), 256)?;
@@ -242,10 +289,24 @@ fn handle(msg: &Value, tools: &dyn Tools) -> Option<Value> {
 
 /// `texoria --mcp-bridge`: relay stdin/stdout to the app's server.
 pub fn bridge() -> io::Result<()> {
-    let var = |k: &str| {
-        std::env::var(k).map_err(|_| io::Error::new(io::ErrorKind::NotFound, format!("{k} unset")))
-    };
-    let addr: SocketAddr = var(ADDR_VAR)?
+    relay(
+        std::env::var(ADDR_VAR).ok(),
+        std::env::var(TOKEN_VAR).ok(),
+        io::stdin(),
+        io::stdout(),
+    )
+}
+
+/// Relay `input` to the server at `addr` and its answers to `output`.
+fn relay(
+    addr: Option<String>,
+    token: Option<String>,
+    mut input: impl Read + Send + 'static,
+    mut output: impl Write,
+) -> io::Result<()> {
+    let unset = |k: &str| io::Error::new(io::ErrorKind::NotFound, format!("{k} unset"));
+    let addr: SocketAddr = addr
+        .ok_or_else(|| unset(ADDR_VAR))?
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
     if !addr.ip().is_loopback() {
@@ -254,23 +315,22 @@ pub fn bridge() -> io::Result<()> {
             "not a local address",
         ));
     }
-    let token = var(TOKEN_VAR)?;
+    let token = token.ok_or_else(|| unset(TOKEN_VAR))?;
     let mut upstream = TcpStream::connect(addr)?;
     upstream.write_all(format!("{token}\n").as_bytes())?;
     let mut down = upstream.try_clone()?;
     let to_app = std::thread::spawn(move || {
-        let _ = io::copy(&mut io::stdin().lock(), &mut upstream);
+        let _ = io::copy(&mut input, &mut upstream);
         let _ = upstream.shutdown(std::net::Shutdown::Write);
     });
-    let mut stdout = io::stdout().lock();
     let mut buf = [0u8; 16 * 1024];
     loop {
         let n = down.read(&mut buf)?;
         if n == 0 {
             break;
         }
-        stdout.write_all(&buf[..n])?;
-        stdout.flush()?;
+        output.write_all(&buf[..n])?;
+        output.flush()?;
     }
     drop(to_app);
     Ok(())
@@ -378,6 +438,226 @@ mod tests {
         assert_eq!(n, 0, "the connection is closed without an answer");
     }
 
+    /// A connection that has shown the token, and reads its answers.
+    fn connect(server: &Server) -> (TcpStream, BufReader<TcpStream>) {
+        let stream = TcpStream::connect(server.addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut w = stream.try_clone().unwrap();
+        writeln!(w, "{}", server.token).unwrap();
+        (w, BufReader::new(stream))
+    }
+
+    fn ask(w: &mut TcpStream, r: &mut BufReader<TcpStream>, msg: Value) -> Value {
+        writeln!(w, "{msg}").unwrap();
+        let mut line = String::new();
+        r.read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+
+    /// Whether the server hangs up on `stream` (rather than leaving it open).
+    fn hung_up(stream: &mut impl Read) -> bool {
+        let mut buf = [0u8; 64];
+        matches!(stream.read(&mut buf), Ok(0) | Err(_)) && {
+            // A reset or the end: either way, not a timeout.
+            !matches!(stream.read(&mut buf), Err(e) if e.kind() == io::ErrorKind::WouldBlock
+                || e.kind() == io::ErrorKind::TimedOut)
+        }
+    }
+
+    #[test]
+    fn answers_pings_and_reports_bad_calls() {
+        let server = Server::start(Arc::new(Echo)).unwrap();
+        let replies = exchange(
+            &server,
+            &server.token,
+            &[
+                json!({"jsonrpc":"2.0","id":"p","method":"ping"}),
+                json!({"jsonrpc":"2.0","id":null,"method":"ping"}),
+                json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"arguments":{}}}),
+                json!({"jsonrpc":"2.0","id":3,"method":"tools/call"}),
+                json!({"jsonrpc":"2.0","id":4,"method":"initialize"}),
+                json!({"jsonrpc":"2.0","id":5}),
+            ],
+        );
+        assert_eq!(replies.len(), 5, "{replies:?}");
+        assert_eq!(replies[0], json!({"jsonrpc":"2.0","id":"p","result":{}}));
+        assert_eq!(replies[1]["error"]["code"], -32602);
+        assert_eq!(replies[2]["error"]["message"], "Missing tool name");
+        assert_eq!(replies[3]["result"]["protocolVersion"], PROTOCOL_VERSION);
+        assert_eq!(replies[3]["result"]["serverInfo"]["name"], SERVER_NAME);
+        assert_eq!(replies[4]["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn skips_blank_and_broken_lines() {
+        let server = Server::start(Arc::new(Echo)).unwrap();
+        let (mut w, mut r) = connect(&server);
+        w.write_all(b"\n  \nnot json\n").unwrap();
+        let reply = ask(
+            &mut w,
+            &mut r,
+            json!({"jsonrpc":"2.0","id":1,"method":"ping"}),
+        );
+        assert_eq!(reply["id"], 1);
+    }
+
+    #[test]
+    fn tokens_are_compared_whole() {
+        assert!(same(b"abc", b"abc"));
+        assert!(!same(b"abc", b"abd"));
+        assert!(!same(b"abc", b"abcd"));
+        assert!(!same(b"", b"a"));
+        assert!(same(b"", b""));
+    }
+
+    #[test]
+    fn refuses_empty_and_oversized_tokens() {
+        let server = Server::start(Arc::new(Echo)).unwrap();
+        let ping = [json!({"jsonrpc":"2.0","id":1,"method":"ping"})];
+        assert!(exchange(&server, "", &ping).is_empty());
+        assert!(
+            exchange(
+                &server,
+                &format!("{}{}", server.token, " ".repeat(300)),
+                &ping
+            )
+            .is_empty()
+        );
+        // The right token with a line break of its own is fine.
+        assert_eq!(
+            exchange(&server, &format!("{}\r", server.token), &ping).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_token_must_come_in_time() {
+        let server = Server::start_with(Arc::new(Echo), Duration::from_millis(200)).unwrap();
+        let mut stream = TcpStream::connect(server.addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(600));
+        let _ = writeln!(stream, "{}", server.token);
+        let _ = writeln!(
+            stream,
+            "{}",
+            json!({"jsonrpc":"2.0","id":1,"method":"ping"})
+        );
+        assert!(hung_up(&mut stream));
+        // Once it is shown, there is no hurry.
+        let (mut w, mut r) = connect(&server);
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(
+            ask(
+                &mut w,
+                &mut r,
+                json!({"jsonrpc":"2.0","id":2,"method":"ping"})
+            )["id"],
+            2
+        );
+    }
+
+    #[test]
+    fn caps_the_connections_waiting_for_a_token() {
+        let server = Server::start_with(Arc::new(Echo), Duration::from_secs(3)).unwrap();
+        let idle: Vec<TcpStream> = (0..MAX_CONNECTIONS)
+            .map(|_| TcpStream::connect(server.addr).unwrap())
+            .collect();
+        // Wait until all are being served.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while server.shared.open.lock().unwrap().len() < MAX_CONNECTIONS {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut extra = TcpStream::connect(server.addr).unwrap();
+        extra
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let _ = writeln!(extra, "{}", server.token);
+        assert!(hung_up(&mut extra), "one too many");
+        drop(idle);
+        // Room again once they are gone.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !server.shared.open.lock().unwrap().is_empty() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let (mut w, mut r) = connect(&server);
+        assert_eq!(
+            ask(
+                &mut w,
+                &mut r,
+                json!({"jsonrpc":"2.0","id":1,"method":"ping"})
+            )["id"],
+            1
+        );
+    }
+
+    #[test]
+    fn the_bridge_relays_both_ways() {
+        let server = Server::start(Arc::new(Echo)).unwrap();
+        let input = [
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":[1]}}),
+        ]
+        .map(|m| format!("{m}\n"))
+        .concat();
+        let mut output = Vec::new();
+        relay(
+            Some(server.addr.to_string()),
+            Some(server.token.clone()),
+            io::Cursor::new(input.into_bytes()),
+            &mut output,
+        )
+        .unwrap();
+        let replies: Vec<Value> = output
+            .lines()
+            .map(|l| serde_json::from_str(&l.unwrap()).unwrap())
+            .collect();
+        assert_eq!(replies.len(), 2);
+        assert_eq!(replies[0]["result"]["tools"][0]["name"], "echo");
+        assert_eq!(replies[1]["result"]["content"][0]["text"], "[1]");
+
+        // A wrong token: the server hangs up, the bridge ends.
+        let mut output = Vec::new();
+        let input = io::Cursor::new(b"{}\n".to_vec());
+        let _ = relay(
+            Some(server.addr.to_string()),
+            Some("x".into()),
+            input,
+            &mut output,
+        );
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn the_bridge_needs_a_local_address_and_a_token() {
+        let none = || io::Cursor::new(Vec::new());
+        let addr = Some("127.0.0.1:9".to_string());
+        let e = relay(None, Some("t".into()), none(), Vec::new()).unwrap_err();
+        assert_eq!(
+            (e.kind(), e.to_string()),
+            (io::ErrorKind::NotFound, format!("{ADDR_VAR} unset"))
+        );
+        let e = relay(addr, None, none(), Vec::new()).unwrap_err();
+        assert_eq!(
+            (e.kind(), e.to_string()),
+            (io::ErrorKind::NotFound, format!("{TOKEN_VAR} unset"))
+        );
+        for bad in ["localhost:1", "", "127.0.0.1"] {
+            let e = relay(Some(bad.into()), Some("t".into()), none(), Vec::new()).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::InvalidInput, "{bad}");
+        }
+        // Never connects to another machine, even with the token.
+        for remote in ["10.0.0.1:80", "[2001:db8::1]:80", "0.0.0.0:80"] {
+            let e = relay(Some(remote.into()), Some("t".into()), none(), Vec::new()).unwrap_err();
+            assert_eq!(e.to_string(), "not a local address", "{remote}");
+        }
+    }
+
     #[test]
     fn bridge_config_carries_the_address() {
         let server = Server::start(Arc::new(Echo)).unwrap();
@@ -386,5 +666,7 @@ mod tests {
         assert_eq!(config["command"], "/app/texoria");
         assert_eq!(config["args"][0], BRIDGE_FLAG);
         assert_eq!(config["env"][0]["value"], server.addr.to_string());
+        assert_eq!(config["env"][1]["name"], TOKEN_VAR);
+        assert_eq!(config["env"][1]["value"], server.token);
     }
 }
