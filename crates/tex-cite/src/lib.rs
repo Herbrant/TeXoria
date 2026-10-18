@@ -764,6 +764,58 @@ mod tests {
         assert!(key.starts_with("ref") && key[3..].chars().all(|c| c.is_ascii_digit()));
     }
 
+    proptest::proptest! {
+        #[test]
+        fn classifies_every_doi(d in "10\\.[0-9]{4,5}(\\.[0-9]{1,3})?/[A-Za-z0-9._;()/:<>-]{1,20}") {
+            proptest::prop_assert_eq!(classify(&d), Lookup::Doi(d.clone()));
+            proptest::prop_assert_eq!(classify(&format!("https://doi.org/{d}")), Lookup::Doi(d.clone()));
+            proptest::prop_assert_eq!(classify(&format!(" doi:{d}\t")), Lookup::Doi(d.clone()));
+        }
+
+        #[test]
+        fn encodes_to_safe_ascii(s in "\\PC*") {
+            for (encoded, extra) in [(encode_query(&s), "+"), (encode_path(&s), "/();:")] {
+                proptest::prop_assert!(encoded.chars().all(|c| c.is_ascii_alphanumeric()
+                    || "-._~%".contains(c) || extra.contains(c)), "{}", encoded);
+                proptest::prop_assert_eq!(percent_decode(&encoded.replace('+', "%20")), s.clone());
+            }
+        }
+
+        #[test]
+        fn keys_are_ascii_and_free(
+            author in "\\PC{0,20}",
+            title in "\\PC{0,30}",
+            year in "[0-9]{0,4}",
+            taken in proptest::collection::hash_set("[a-z]{0,6}[0-9]{0,4}[a-z]?", 0..40),
+        ) {
+            let bib = format!("@misc{{x, author={{{}}}, title={{{}}}, year={{{year}}}}}",
+                author.replace(['{', '}'], ""), title.replace(['{', '}'], ""));
+            let key = make_key(&bib, &taken);
+            proptest::prop_assert!(!key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric()));
+            proptest::prop_assert!(!taken.contains(&key), "{} is taken", key);
+        }
+
+        #[test]
+        fn normalizing_is_idempotent(
+            kind in "[a-z]{1,10}",
+            fields in proptest::collection::vec(("[a-z]{1,8}", "[A-Za-z0-9 .,:;-]{0,20}", 0..3u8), 0..6),
+        ) {
+            let mut bib = format!("@{kind}{{orig,\n");
+            for (name, value, delim) in &fields {
+                let value = match delim {
+                    0 => format!("{{{value}}}"),
+                    1 => format!("\"{value}\""),
+                    _ => value.trim().replace([',', ' '], "").chars().take(1).collect::<String>() + "1",
+                };
+                bib.push_str(&format!("  {name} = {value},\n"));
+            }
+            bib.push('}');
+            let once = normalize(&bib, "key").unwrap();
+            proptest::prop_assert_eq!(normalize(&once, "key").unwrap(), once.clone());
+            let entry = &bib::parse(&once)[0];
+            proptest::prop_assert_eq!(&entry.key, "key");
+            proptest::prop_assert_eq!(entry.fields.len(), fields.len());
+        }
     }
 
     fn percent_decode(s: &str) -> String {
