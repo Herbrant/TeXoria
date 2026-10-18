@@ -96,6 +96,11 @@ struct Find {
     /// Of the search whose hits are awaited.
     id: u64,
     searching: bool,
+    /// The text searched last.
+    searched: String,
+    /// Whether the awaited hits are a new search, revealed when they come
+    /// (else the same search in a new document: the reader stays put).
+    reveal: bool,
     _subscription: Subscription,
     _debounce: Task<()>,
 }
@@ -152,6 +157,10 @@ pub struct PdfPane {
     page_input: Option<Entity<InputState>>,
     _page_input: Option<Subscription>,
     _events: Task<()>,
+    /// The renderer's events, which tests hand over themselves ([`PdfPane::pump`]): GPUI's
+    /// test scheduler must not be woken by the renderer's thread.
+    #[cfg(test)]
+    rx: smol::channel::Receiver<RenderEvent>,
     _highlight_timer: Task<()>,
 }
 
@@ -172,6 +181,7 @@ impl PdfPane {
                 )
             }
         };
+        #[cfg(not(test))]
         let events = cx.spawn(async move |this, cx| {
             while let Ok(event) = rx.recv().await {
                 if this
@@ -182,6 +192,8 @@ impl PdfPane {
                 }
             }
         });
+        #[cfg(test)]
+        let events = Task::ready(());
         PdfPane {
             renderer,
             error,
@@ -216,6 +228,8 @@ impl PdfPane {
             page_input: None,
             _page_input: None,
             _events: events,
+            #[cfg(test)]
+            rx,
             _highlight_timer: Task::ready(()),
         }
     }
@@ -253,6 +267,20 @@ impl PdfPane {
         .detach();
     }
 
+    /// Apply the renderer's events received so far.
+    #[cfg(test)]
+    pub(crate) fn pump(&mut self, cx: &mut Context<Self>) {
+        while let Ok(event) = self.rx.try_recv() {
+            self.on_render_event(event, cx);
+        }
+    }
+
+    /// The page shown by the presentation window.
+    #[cfg(test)]
+    pub(crate) fn presented_page(&self) -> Option<usize> {
+        self.presenting.as_ref().map(|p| p.page)
+    }
+
     fn on_render_event(&mut self, event: RenderEvent, cx: &mut Context<Self>) {
         match event {
             RenderEvent::Loaded { generation, pages } => {
@@ -274,7 +302,7 @@ impl PdfPane {
                     p.key = None;
                 }
                 // Hits move with the text.
-                self.search(Duration::ZERO, cx);
+                self.search_again(cx);
                 self.synctex = self.pending_synctex.take();
                 self.pages = pages;
                 self.error = None;
@@ -341,15 +369,22 @@ impl PdfPane {
                 if let Some(f) = self.find.as_mut().filter(|f| f.id == id) {
                     f.searching = false;
                     f.hits = hits;
+                    let (reveal, current) = (f.reveal, f.current);
                     // The first hit from where the reader is.
                     let here = self.current_page();
                     let f = self.find.as_mut().unwrap();
-                    f.current = f
+                    let first = f
                         .hits
                         .iter()
                         .position(|h| h.page >= here)
                         .or((!f.hits.is_empty()).then_some(0));
-                    self.reveal_hit(cx);
+                    if reveal {
+                        f.current = first;
+                        self.reveal_hit(cx);
+                    } else {
+                        // A rebuild: the same hit, without scrolling to it.
+                        f.current = current.filter(|c| *c < f.hits.len()).or(first);
+                    }
                 }
             }
             RenderEvent::PageText {
@@ -387,49 +422,21 @@ impl PdfPane {
 
     // ── Geometry ─────────────────────────────────────────────────────────
 
-    fn zoom_factor(&self) -> f32 {
-        match self.zoom {
-            Zoom::Fixed(z) => z,
-            Zoom::FitPage => {
-                let widest = self.pages.iter().map(|p| p.width).fold(0.0, f32::max);
-                let tallest = self.pages.iter().map(|p| p.height).fold(0.0, f32::max);
-                if widest <= 0.0 || tallest <= 0.0 || self.viewport.height <= px(0.) {
-                    return 1.0;
-                }
-                let w = (f32::from(self.viewport.width) - 2.0 * MARGIN) / widest;
-                let h = (f32::from(self.viewport.height) - 2.0 * MARGIN) / tallest;
-                w.min(h).clamp(MIN_ZOOM, MAX_ZOOM)
-            }
-            Zoom::FitWidth => {
-                let widest = self.pages.iter().map(|p| p.width).fold(0.0, f32::max);
-                if widest <= 0.0 || self.viewport.width <= px(0.) {
-                    return 1.0;
-                }
-                ((f32::from(self.viewport.width) - 2.0 * MARGIN) / widest).clamp(MIN_ZOOM, MAX_ZOOM)
-            }
+    fn geometry(&self) -> Geometry<'_> {
+        Geometry {
+            pages: &self.pages,
+            viewport: self.viewport,
+            zoom: self.zoom,
         }
+    }
+
+    fn zoom_factor(&self) -> f32 {
+        self.geometry().zoom_factor()
     }
 
     /// Page rectangles in content coordinates (pixels), plus content size.
     fn layout(&self, zoom: f32) -> (Vec<Bounds<Pixels>>, Size<Pixels>) {
-        let widest = self
-            .pages
-            .iter()
-            .map(|p| p.width * zoom)
-            .fold(0.0, f32::max);
-        let content_w = (widest + 2.0 * MARGIN).max(f32::from(self.viewport.width));
-        let mut y = MARGIN;
-        let rects = self
-            .pages
-            .iter()
-            .map(|p| {
-                let (w, h) = (p.width * zoom, p.height * zoom);
-                let r = Bounds::new(point(px((content_w - w) / 2.0), px(y)), size(px(w), px(h)));
-                y += h + GAP;
-                r
-            })
-            .collect();
-        (rects, size(px(content_w), px(y - GAP + MARGIN)))
+        self.geometry().layout(zoom)
     }
 
     fn set_zoom(&mut self, zoom: Zoom, anchor: Option<Point<Pixels>>, cx: &mut Context<Self>) {
@@ -474,12 +481,7 @@ impl PdfPane {
 
     /// The page in the middle of the viewport (0-based).
     pub fn current_page(&self) -> usize {
-        let (rects, _) = self.layout(self.zoom_factor());
-        let middle = -self.scroll.offset().y + self.viewport.height / 2.0;
-        rects
-            .iter()
-            .position(|r| r.bottom() + px(GAP) >= middle)
-            .unwrap_or(rects.len().saturating_sub(1))
+        self.geometry().current_page(-self.scroll.offset().y)
     }
 
     /// Scroll to `page` (0-based), at `y` points from its top if given.
@@ -511,7 +513,15 @@ impl PdfPane {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in PDF"));
             let subscription =
                 cx.subscribe_in(&input, window, |this, _, ev: &InputEvent, _, cx| match ev {
-                    InputEvent::Change => this.search(Duration::from_millis(250), cx),
+                    // Enter, for one, changes nothing.
+                    InputEvent::Change
+                        if this
+                            .find
+                            .as_ref()
+                            .is_some_and(|f| *f.input.read(cx).value() != *f.searched) =>
+                    {
+                        this.search(Duration::from_millis(250), cx)
+                    }
                     InputEvent::PressEnter { shift, .. } => {
                         this.next_hit(if *shift { -1 } else { 1 }, cx)
                     }
@@ -525,6 +535,8 @@ impl PdfPane {
                 id: 0,
                 searching: false,
                 _subscription: subscription,
+                searched: String::new(),
+                reveal: true,
                 _debounce: Task::ready(()),
             });
         }
@@ -546,13 +558,24 @@ impl PdfPane {
 
     /// Search for the find bar's text after `delay`.
     fn search(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        self.search_with(delay, true, cx);
+    }
+
+    /// The same search in a new document.
+    fn search_again(&mut self, cx: &mut Context<Self>) {
+        self.search_with(Duration::ZERO, false, cx);
+    }
+
+    fn search_with(&mut self, delay: Duration, reveal: bool, cx: &mut Context<Self>) {
         let Some(f) = &mut self.find else {
             return;
         };
         self.find_seq += 1;
         let id = self.find_seq;
         f.id = id;
+        f.reveal = reveal;
         let text = f.input.read(cx).value().to_string();
+        f.searched = text.clone();
         let match_case = f.match_case;
         if text.trim().is_empty() {
             f.hits.clear();
@@ -761,20 +784,8 @@ impl PdfPane {
         position: Point<Pixels>,
         page: Option<usize>,
     ) -> Option<(usize, f32, f32)> {
-        let zoom = self.zoom_factor();
-        let (rects, _) = self.layout(zoom);
         let p = position - self.scroll.bounds().origin - self.scroll.offset();
-        let (i, r) = match page {
-            Some(i) => (i, *rects.get(i)?),
-            None => rects
-                .iter()
-                .copied()
-                .enumerate()
-                .find(|(_, r)| r.contains(&p))?,
-        };
-        let x = f32::from(p.x - r.origin.x) / zoom;
-        let y = f32::from(p.y - r.origin.y) / zoom;
-        Some((i, x, y))
+        self.geometry().page_point(p, page)
     }
 
     /// The characters selected, as a range of the page's text.
@@ -846,16 +857,9 @@ impl PdfPane {
         let Some(st) = self.synctex.clone() else {
             return;
         };
-        let zoom = self.zoom_factor();
-        let (rects, _) = self.layout(zoom);
-        let origin = self.scroll.bounds().origin;
-        let offset = self.scroll.offset();
-        let p = ev.position - origin - offset;
-        let Some((page, r)) = rects.iter().enumerate().find(|(_, r)| r.contains(&p)) else {
+        let Some((page, x, y)) = self.page_point(ev.position, None) else {
             return;
         };
-        let x = f32::from(p.x - r.origin.x) / zoom;
-        let y = f32::from(p.y - r.origin.y) / zoom;
         if let Some(loc) = st.inverse(page, x, y) {
             cx.emit(PdfPaneEvent::InverseSearch {
                 file: loc.file,
@@ -873,18 +877,7 @@ impl PdfPane {
         }
         let scale_milli = quantize(scale);
         let mut wanted: Vec<RenderKey> = Vec::new();
-        let around = visible.first().map(|f| {
-            f.saturating_sub(RENDER_AHEAD)
-                ..(visible.last().unwrap() + RENDER_AHEAD + 1).min(self.pages.len())
-        });
-        // Visible pages first, then the ones just outside.
-        let order = visible.iter().copied().chain(
-            around
-                .into_iter()
-                .flatten()
-                .filter(|p| !visible.contains(p)),
-        );
-        for page in order {
+        for page in render_order(visible, self.pages.len()) {
             let key = RenderKey {
                 generation: self.doc_generation,
                 page,
@@ -1058,16 +1051,7 @@ impl PdfPane {
     }
 
     fn evict_far_pages(&mut self, visible: &[usize]) {
-        let (Some(&first), Some(&last)) = (visible.first(), visible.last()) else {
-            return;
-        };
-        let far: Vec<usize> = self
-            .shown
-            .keys()
-            .copied()
-            .filter(|p| *p + KEEP_AROUND < first || *p > last + KEEP_AROUND)
-            .collect();
-        for p in far {
+        for p in far_pages(self.shown.keys().copied(), visible) {
             if let Some(s) = self.shown.remove(&p) {
                 self.to_drop.push(s.image);
             }
@@ -1166,6 +1150,10 @@ impl Render for PdfPane {
         if bounds != self.viewport && bounds.width > px(0.) {
             self.viewport = bounds;
             self.last_request.clear();
+            window.request_animation_frame();
+        } else if self.viewport.width <= px(0.) && !self.pages.is_empty() {
+            // The first pages, before the scroll area was ever laid out: no
+            // page is visible yet, and nothing else may draw the pane again.
             window.request_animation_frame();
         }
 
@@ -1415,6 +1403,116 @@ impl Render for PdfPane {
     }
 }
 
+/// Where the pages are, for a zoom and a viewport.
+struct Geometry<'a> {
+    pages: &'a [PageSize],
+    viewport: Size<Pixels>,
+    zoom: Zoom,
+}
+
+impl Geometry<'_> {
+    fn zoom_factor(&self) -> f32 {
+        match self.zoom {
+            Zoom::Fixed(z) => z,
+            Zoom::FitPage => {
+                let widest = self.pages.iter().map(|p| p.width).fold(0.0, f32::max);
+                let tallest = self.pages.iter().map(|p| p.height).fold(0.0, f32::max);
+                if widest <= 0.0 || tallest <= 0.0 || self.viewport.height <= px(0.) {
+                    return 1.0;
+                }
+                let w = (f32::from(self.viewport.width) - 2.0 * MARGIN) / widest;
+                let h = (f32::from(self.viewport.height) - 2.0 * MARGIN) / tallest;
+                w.min(h).clamp(MIN_ZOOM, MAX_ZOOM)
+            }
+            Zoom::FitWidth => {
+                let widest = self.pages.iter().map(|p| p.width).fold(0.0, f32::max);
+                if widest <= 0.0 || self.viewport.width <= px(0.) {
+                    return 1.0;
+                }
+                ((f32::from(self.viewport.width) - 2.0 * MARGIN) / widest).clamp(MIN_ZOOM, MAX_ZOOM)
+            }
+        }
+    }
+
+    /// Page rectangles in content coordinates (pixels), plus content size.
+    fn layout(&self, zoom: f32) -> (Vec<Bounds<Pixels>>, Size<Pixels>) {
+        let widest = self
+            .pages
+            .iter()
+            .map(|p| p.width * zoom)
+            .fold(0.0, f32::max);
+        let content_w = (widest + 2.0 * MARGIN).max(f32::from(self.viewport.width));
+        let mut y = MARGIN;
+        let rects = self
+            .pages
+            .iter()
+            .map(|p| {
+                let (w, h) = (p.width * zoom, p.height * zoom);
+                let r = Bounds::new(point(px((content_w - w) / 2.0), px(y)), size(px(w), px(h)));
+                y += h + GAP;
+                r
+            })
+            .collect();
+        (rects, size(px(content_w), px(y - GAP + MARGIN)))
+    }
+
+    /// The page in the middle of the viewport (0-based), scrolled `top` down.
+    fn current_page(&self, top: Pixels) -> usize {
+        let (rects, _) = self.layout(self.zoom_factor());
+        let middle = top + self.viewport.height / 2.0;
+        rects
+            .iter()
+            .position(|r| r.bottom() + px(GAP) >= middle)
+            .unwrap_or(rects.len().saturating_sub(1))
+    }
+
+    /// The page at `p` (content coordinates), and `p` in its points; `page`
+    /// forces that page.
+    fn page_point(&self, p: Point<Pixels>, page: Option<usize>) -> Option<(usize, f32, f32)> {
+        let zoom = self.zoom_factor();
+        let (rects, _) = self.layout(zoom);
+        let (i, r) = match page {
+            Some(i) => (i, *rects.get(i)?),
+            None => rects
+                .iter()
+                .copied()
+                .enumerate()
+                .find(|(_, r)| r.contains(&p))?,
+        };
+        let x = f32::from(p.x - r.origin.x) / zoom;
+        let y = f32::from(p.y - r.origin.y) / zoom;
+        Some((i, x, y))
+    }
+}
+
+/// The pages to rasterize: the visible ones first, then those just outside.
+fn render_order(visible: &[usize], pages: usize) -> Vec<usize> {
+    let around = visible
+        .first()
+        .zip(visible.last())
+        .map(|(f, l)| f.saturating_sub(RENDER_AHEAD)..(l + RENDER_AHEAD + 1).min(pages));
+    visible
+        .iter()
+        .copied()
+        .chain(
+            around
+                .into_iter()
+                .flatten()
+                .filter(|p| !visible.contains(p)),
+        )
+        .collect()
+}
+
+/// Of the pages `shown`, those too far from the `visible` ones to keep.
+fn far_pages(shown: impl Iterator<Item = usize>, visible: &[usize]) -> Vec<usize> {
+    let (Some(&first), Some(&last)) = (visible.first(), visible.last()) else {
+        return Vec::new();
+    };
+    shown
+        .filter(|p| *p + KEEP_AROUND < first || *p > last + KEEP_AROUND)
+        .collect()
+}
+
 /// Snap to 5% steps so continuous resizing does not re-rasterize per pixel.
 fn quantize(scale: f32) -> u32 {
     let step = 1.05f32.ln();
@@ -1426,3 +1524,6 @@ fn to_render_image(bitmap: Bitmap) -> Option<Arc<RenderImage>> {
     let buffer = image::RgbaImage::from_raw(bitmap.width, bitmap.height, bitmap.bgra)?;
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
 }
+
+#[cfg(test)]
+mod tests;
