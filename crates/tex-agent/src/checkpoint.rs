@@ -257,17 +257,98 @@ impl Checkpoint {
 /// The configuration and hooks of the repository `dir` is in (not the
 /// `.sample` hooks git ships, which never run).
 fn git_files(dir: &Path) -> Vec<PathBuf> {
-    let Some(git) = dir.ancestors().map(|d| d.join(".git")).find(|g| g.is_dir()) else {
+    // The nearest `.git`: a folder, or a file naming one (worktrees and
+    // submodules), like git looks for it.
+    let Some(dot_git) = dir
+        .ancestors()
+        .map(|d| d.join(".git"))
+        .find(|g| std::fs::symlink_metadata(g).is_ok())
+    else {
         return Vec::new();
     };
-    let mut out = vec![git.join("config")];
-    let hooks = std::fs::read_dir(git.join("hooks")).into_iter().flatten();
-    out.extend(
-        hooks
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_none_or(|e| e != "sample")),
-    );
+    let top = dot_git.parent().unwrap_or(dir).to_path_buf();
+    let mut out = Vec::new();
+    let gitdir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        // Pointing it elsewhere changes the repository.
+        out.push(dot_git.clone());
+        match std::fs::read_to_string(&dot_git)
+            .ok()
+            .as_deref()
+            .and_then(|s| s.trim_end().strip_prefix("gitdir:"))
+        {
+            Some(path) => lexical(&top.join(path.trim())),
+            None => return out,
+        }
+    };
+    // A linked worktree has the configuration and hooks of the main one.
+    let common = std::fs::read_to_string(gitdir.join("commondir"))
+        .map(|c| lexical(&gitdir.join(c.trim())))
+        .unwrap_or_else(|_| gitdir.clone());
+    let mut configs = vec![common.join("config")];
+    if common != gitdir {
+        configs.push(gitdir.join("config.worktree"));
+    }
+    let mut hooks = vec![common.join("hooks")];
+    hooks.extend(configs.iter().filter_map(|c| hooks_path(c, &top)));
+    out.extend(configs);
+    for dir in hooks {
+        let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
+        out.extend(
+            entries
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_none_or(|e| e != "sample")),
+        );
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The hooks folder that `core.hooksPath` in `config` sets (relative to the
+/// working tree `top`, where hooks run).
+fn hooks_path(config: &Path, top: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(config).ok()?;
+    let mut core = false;
+    let mut found = None;
+    for line in text.lines().map(str::trim) {
+        if let Some(section) = line.strip_prefix('[') {
+            let name = section.split([']', ' ', '"']).next().unwrap_or("");
+            core = name.eq_ignore_ascii_case("core");
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if core && key.trim().eq_ignore_ascii_case("hookspath") {
+            // The last one wins, as in git.
+            found = Some(value.trim().trim_matches('"').to_string());
+        }
+    }
+    let path = found.filter(|p| !p.is_empty())?;
+    let home = || std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    Some(match path.strip_prefix("~/") {
+        Some(rest) => PathBuf::from(home()?).join(rest),
+        None => lexical(&top.join(path)),
+    })
+}
+
+/// `path` without its `.` and `..` (read as going up a name, without links).
+fn lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
+            {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
     out
 }
 
@@ -735,6 +816,102 @@ mod tests {
             let p = patch(&[Change { path: PathBuf::from(path), kind, before, after, removable: true }]);
             proptest::prop_assert!(p.starts_with("diff --git a/"));
         }
+    }
+
+    #[test]
+    fn watches_the_repository_a_git_file_names() {
+        // A submodule: its `.git` is a file naming a folder of the outer
+        // repository's, which is not the submodule's repository.
+        let dir = tempfile::tempdir().unwrap();
+        let outer = dir.path();
+        let modules = outer.join(".git/modules/sub");
+        std::fs::create_dir_all(modules.join("hooks")).unwrap();
+        std::fs::write(outer.join(".git/config"), "[core]\n").unwrap();
+        std::fs::write(modules.join("config"), "[core]\n").unwrap();
+        std::fs::create_dir(outer.join("sub")).unwrap();
+        std::fs::write(outer.join("sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+        let cp = Checkpoint::take(&outer.join("sub"));
+        assert!(cp.git_changes().is_empty());
+
+        std::fs::write(outer.join(".git/config"), "[core]\n\tfsmonitor = x\n").unwrap();
+        assert!(cp.git_changes().is_empty(), "not this project's repository");
+        std::fs::write(modules.join("config"), "[core]\n\tfsmonitor = x\n").unwrap();
+        std::fs::write(modules.join("hooks/pre-commit"), "#!/bin/sh\n").unwrap();
+        assert_eq!(
+            cp.git_changes(),
+            [modules.join("config"), modules.join("hooks/pre-commit")]
+        );
+        // Pointing the `.git` file elsewhere is a change too.
+        std::fs::write(outer.join("sub/.git"), "gitdir: /tmp/elsewhere\n").unwrap();
+        assert!(cp.git_changes().contains(&outer.join("sub/.git")));
+    }
+
+    #[test]
+    fn worktrees_share_the_main_configuration_and_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main/.git");
+        let linked = main.join("worktrees/wt");
+        std::fs::create_dir_all(main.join("hooks")).unwrap();
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::write(main.join("config"), "[core]\n").unwrap();
+        std::fs::write(linked.join("commondir"), "../..\n").unwrap();
+        let wt = dir.path().join("wt");
+        std::fs::create_dir(&wt).unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", linked.display())).unwrap();
+        let cp = Checkpoint::take(&wt);
+        assert!(cp.git_changes().is_empty());
+
+        std::fs::write(main.join("hooks/post-checkout"), "#!/bin/sh\n").unwrap();
+        std::fs::write(linked.join("config.worktree"), "[core]\n\tfsmonitor = x\n").unwrap();
+        let changed: Vec<PathBuf> = cp
+            .git_changes()
+            .iter()
+            .map(|p| p.strip_prefix(dir.path()).unwrap().to_path_buf())
+            .collect();
+        let rel = |p: &str| PathBuf::from_iter(p.split('/'));
+        assert_eq!(
+            changed,
+            [
+                rel("main/.git/hooks/post-checkout"),
+                rel("main/.git/worktrees/wt/config.worktree"),
+            ]
+        );
+    }
+
+    #[test]
+    fn watches_the_hooks_of_core_hooks_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let hooks = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.join(".git/my-hooks")).unwrap();
+        // Relative to the working tree, or absolute.
+        for (config, folder) in [
+            (
+                "[core]\n\thooksPath = .git/my-hooks\n",
+                d.join(".git/my-hooks"),
+            ),
+            (
+                &*format!("[Core]\n  HooksPath = \"{}\"\n", hooks.path().display()),
+                hooks.path().to_path_buf(),
+            ),
+        ] {
+            std::fs::write(d.join(".git/config"), config).unwrap();
+            let cp = Checkpoint::take(d);
+            assert!(cp.git_changes().is_empty());
+            let hook = folder.join("pre-push");
+            std::fs::write(&hook, "#!/bin/sh\n").unwrap();
+            assert_eq!(cp.git_changes(), std::slice::from_ref(&hook), "{config}");
+            std::fs::remove_file(&hook).unwrap();
+        }
+        // Another section's key is not the hooks path.
+        std::fs::write(
+            d.join(".git/config"),
+            "[alias]\n\thooksPath = .git/my-hooks\n",
+        )
+        .unwrap();
+        let cp = Checkpoint::take(d);
+        std::fs::write(d.join(".git/my-hooks/pre-push"), "#!/bin/sh\n").unwrap();
+        assert!(cp.git_changes().is_empty());
     }
 
     #[test]
