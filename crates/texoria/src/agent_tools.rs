@@ -115,3 +115,61 @@ impl Tools for AppTools {
             .unwrap_or_else(|_| ToolResult::error("TeXoria did not answer."))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lists_every_tool_with_an_object_schema() {
+        let (tools, _calls) = AppTools::new();
+        let list = tools.list();
+        let names: Vec<&str> = list.iter().map(|t| t.name).collect();
+        assert_eq!(
+            names,
+            [
+                "build",
+                "problems",
+                "outline",
+                "pdf_page",
+                "pdf_text",
+                "bib_search",
+                "word_count"
+            ]
+        );
+        for t in &list {
+            assert_eq!(t.input_schema["type"], "object", "{}", t.name);
+            assert!(!t.description.is_empty());
+        }
+        let page = list.iter().find(|t| t.name == "pdf_page").unwrap();
+        assert_eq!(page.input_schema["required"], json!(["page"]));
+    }
+
+    #[test]
+    fn calls_are_answered_by_the_window() {
+        let (tools, calls) = AppTools::new();
+        // The window, on its own thread.
+        let window = std::thread::spawn(move || {
+            let call = calls.recv_blocking().unwrap();
+            assert_eq!(call.name, "bib_search");
+            assert_eq!(call.arguments["query"], "knuth");
+            call.reply.send(ToolResult::ok("knuth1984")).unwrap();
+            // A call it drops unanswered.
+            drop(calls.recv_blocking().unwrap());
+        });
+        let r = tools.call("bib_search", json!({ "query": "knuth" }));
+        assert_eq!((r.is_error, r.text.as_str()), (false, "knuth1984"));
+        let r = tools.call("build", json!({}));
+        assert_eq!(
+            (r.is_error, r.text.as_str()),
+            (true, "TeXoria did not answer.")
+        );
+        window.join().unwrap();
+        // The window is closed.
+        let r = tools.call("outline", json!({}));
+        assert_eq!(
+            (r.is_error, r.text.as_str()),
+            (true, "TeXoria's window is closed.")
+        );
+    }
+}
