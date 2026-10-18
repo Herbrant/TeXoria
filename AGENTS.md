@@ -19,6 +19,8 @@ cargo test --workspace
 cargo test -p tex-log                          # one crate
 cargo test -p synctex inverse                  # tests matching a name filter
 cargo test -p tex-compile -- --include-ignored # also runs the Tectonic e2e test (downloads TeX bundle first time)
+cargo llvm-cov --workspace --html              # coverage; CI checks scripts/coverage-thresholds.tsv
+cd fuzz && cargo +nightly fuzz run tex_log     # fuzz targets (fuzz/, not a workspace member)
 
 cargo packager --release -p texoria --formats app && ./scripts/package-macos.sh  # ad-hoc signed .dmg
 cargo packager --release -p texoria --formats nsis|appimage   # Windows installer / AppImage
@@ -26,8 +28,13 @@ cargo packager --release -p texoria --formats nsis|appimage   # Windows installe
 ./scripts/gen-icons.sh               # assets/logo/*.svg → crates/texoria/packaging (macOS only)
 ```
 
-CI (`.github/workflows/ci.yml`, macOS/Ubuntu/Windows) runs fmt check, clippy with `-D warnings`,
-tests and a release build — keep all four green. `rustfmt.toml` sets `max_width = 100`.
+CI (`.github/workflows/ci.yml`, on every release platform: macOS arm64/x64, Linux x64/arm64,
+Windows) runs fmt check, clippy with `-D warnings`, the tests under cargo-llvm-cov with a minimum
+line coverage per crate (`scripts/coverage-check.sh`, `scripts/coverage-thresholds.tsv`: raise
+a minimum when tests improve, never lower it), the Tectonic end-to-end test and a release build
+— keep them green. Code compiled only on Windows or only on Unix (cfg'd tests and their
+helpers) is linted on that system only, so check it with care. `.github/workflows/fuzz.yml` runs
+the cargo-fuzz targets of `fuzz/` (nightly). `rustfmt.toml` sets `max_width = 100`.
 
 ## Releasing
 
@@ -61,12 +68,19 @@ against `SHA256SUMS`, no root: `/Applications` or `~/.local`).
   must be added to all three.
 - Linux bundles Tectonic's static musl builds (the gnu one needs glibc 2.39).
 
-Tests that depend on the environment skip by returning early (they pass trivially) rather than
-failing: `tex-compile/tests/real_engine.rs` needs a TeX engine on the host, and
-`pdf-view`'s `renders_sample_pdf` needs both `vendor/pdfium` and a previously compiled
-`tests/fixtures/sample/.texoria/build/main.pdf`. Shared fixtures live in `tests/fixtures/` and are
-referenced via `CARGO_MANIFEST_DIR/../../tests/fixtures`. The sample project must compile with
-**zero diagnostics** (asserted by the e2e test; it is also the README screenshot).
+Tests that depend on the environment call `test_support::skip("<TOOL>", why)` and return early
+(they pass trivially) when the tool is missing, unless `TEXORIA_REQUIRE_<TOOL>=1` (set in CI for
+`TEX`, `TECTONIC`, `PDFIUM`, `GIT`), where it is a failure: `tex-compile/tests/real_engine.rs`
+needs a TeX engine, pdf-view's tests need `vendor/pdfium`. Shared fixtures live in
+`tests/fixtures/` (`test_support::fixtures()`); tests copy a fixture to a temporary folder before
+building or editing it. The sample project must compile with **zero diagnostics** (asserted by
+the e2e test; it is also the README screenshot). `crates/test-support` (dev-dependency only, it
+depends on no workspace crate) also has the `|` cursor-marker helper, a loopback HTTP server for
+the network clients and an isolated Git environment. Processes are faked by binaries built with
+the tests (`tex-compile`'s `fake-engine`, `tex-agent`'s `fake-acp-agent`, through
+`CARGO_BIN_EXE_*`), and invariants are property-tested with proptest (commit
+`proptest-regressions/`). Never use `std::env::set_var` in tests: inject the value instead. See
+`docs/development/testing.md`.
 
 ## Architecture
 
@@ -166,6 +180,12 @@ texoria ─┬─ tex-compile ── tex-log
 - **tex-vim**: Vim on plain text: keys in, `Action`s (edits in byte offsets, cursor, selection,
   undo, yank…) out; `.` replays the recorded keys on a copy of the text and returns one edit.
 - **texoria** (`workspace.rs` is the main window: outline or files | editor tabs | PDF pane):
+  - Tests run headless on GPUI's test platform (`#[gpui::test]`, dev-dependency `gpui-pre` with
+    `test-support`; gpui-kit's own feature would resolve its `gpui-fast` engine, whose pins
+    conflict). `testing.rs` opens real workspaces from a `Startup` (settings, engines, PDFium
+    folders) instead of `Workspace::new`'s `Startup::detect`. Under `cfg(test)`
+    `Settings::load` never reads the user's file; `Settings::load_from` saves where it read.
+    Paths go through `paths::canonical` (resolved, without Windows' `\\?\` prefix).
   - `git_panel.rs` is the Source Control sidebar (alternates with the outline). Mutating
     operations are emitted as `GitPanelEvent::Request(GitOp)`; the workspace saves dirty buffers
     and calls `GitPanel::execute`, which runs one operation at a time on the background executor.
@@ -258,12 +278,14 @@ texoria ─┬─ tex-compile ── tex-log
     `assets.rs`.
   - Files (sources and settings) are written through `atomic::write` (temp file + rename), and
     dirty buffers are saved on quit/window close.
-- **pdf-view**: PDFium is not thread-safe, so a single dedicated worker thread owns the library and
-  documents; the UI sends the wanted page set in priority order and gets BGRA bitmaps back. PDFs are
-  loaded from memory, never from disk, because an open handle on Windows would block the engine
-  from overwriting the PDF. The PDFium version in `fetch-pdfium.sh` must match pdfium-render's
-  `pdfium_*` feature. PDFium is located at runtime via `pdfium_dirs()` in `workspace.rs`
-  (next to the exe, bundle `Frameworks`/`Resources`, deb/AppImage `lib/texoria`, then repo `vendor/`).
+- **pdf-view**: PDFium is not thread-safe and pdfium-render binds it once per process: the first
+  `Renderer` binds it in a process-wide static that later ones reuse, each renderer's worker
+  thread owns its documents, and calls into PDFium run one at a time; the UI sends the wanted
+  page set in priority order and gets BGRA bitmaps back. PDFs are loaded from memory, never from
+  disk, because an open handle on Windows would block the engine from overwriting the PDF. The
+  PDFium version in `fetch-pdfium.sh` must match pdfium-render's `pdfium_*` feature. PDFium is
+  located at runtime via `pdfium_dirs()` in `workspace.rs` (next to the exe, bundle
+  `Frameworks`/`Resources`, deb/AppImage `lib/texoria`, then repo `vendor/`).
   The repo `vendor/` dirs (PDFium and Tectonic) are only searched by a binary under the repo's
   `target/` (`dev_vendor_dir`): a release build must never look at build-machine paths.
   `fetch-*.sh` verify pinned SHA-256s (`scripts/sha256.sh`): update them when bumping versions
@@ -272,8 +294,10 @@ texoria ─┬─ tex-compile ── tex-log
   (pure, over paths) tells them apart: a writable `TeXoria.app` (`.dmg`/install.sh), the NSIS
   per-user install (`uninstall.exe` next to the exe), `$APPIMAGE`, install.sh's Linux prefix
   (`bin/texoria` + `lib/texoria`) update themselves; Homebrew (a `Caskroom/texoria` folder),
-  `/usr` and `/opt` (deb/rpm/AUR), translocated or read-only apps only get instructions; a binary
-  in `target/{debug,release}` is `Dev` and never checks. The latest version comes from the
+  `/usr` and other `/opt` installs (deb/rpm/AUR), translocated or read-only apps only get
+  instructions; a binary in `target/{debug,release}` is `Dev` and never checks. Under `/usr`
+  everything is a distro package; under `/usr/local` and `/opt` only a writable `bin/texoria` +
+  `lib/texoria` layout (install.sh's) updates itself. The latest version comes from the
   `releases/latest` redirect (no API). Nothing is installed unless `SHA256SUMS` verifies against
   the embedded minisign key with the trusted comment `texoria <version>`, and the download
   matches it. The download goes to a `.texoria-update-*` folder next to its target (same file

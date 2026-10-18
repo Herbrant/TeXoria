@@ -77,8 +77,9 @@ Vim's keys. The status bar shows the mode (`-- NORMAL --`, `-- INSERT --`, `-- V
 | Modes | `i a I A o O` insert, `v V` visual, Esc (or Ctrl-[) back to normal |
 | Motions | `h j k l w b e W B E 0 ^ $ gg G f F t T ; , % { }`, Ctrl-D / Ctrl-U, with counts (`3w`, `5G`) |
 | Operators | `d c y > <` with a motion or a text object, doubled for lines (`dd`, `3yy`, `>>`) |
-| Text objects | `iw aw iW aW i( a( i{ a{ i[ a[ i" a"`, and for LaTeX `ie`/`ae` (the environment around the cursor) and `i$`/`a$` (inline math) |
+| Text objects | `iw aw iW aW i( a( i{ a{ i[ a[ i< a< i" a"`, and for LaTeX `ie`/`ae` (the environment around the cursor) and `i$`/`a$` (inline math) |
 | Edits | `x X s S r D C Y J ~ p P`, `u` undo, Ctrl-R redo, `.` repeats the last change |
+| Visual mode | `d x c y > <` and `J ~ u U r p P` act on the selection (`p` keeps the replaced text) |
 | Search | `/` and `?` (ignoring case unless the text has a capital), `n N`, `*` for the word under the cursor |
 | Commands | `:w`, `:q` (closes the tab), `:wq`, `:x`, `:42` (go to line 42) |
 

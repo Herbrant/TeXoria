@@ -25,7 +25,7 @@ they download. The `vendor/` folders are only used by binaries built in the chec
 
 ## Test and lint
 
-CI runs these on macOS, Ubuntu and Windows; keep them green:
+CI runs these on macOS, Linux and Windows; keep them green:
 
 ```sh
 cargo fmt --all --check
@@ -33,19 +33,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Useful variations:
-
-```sh
-cargo test -p tex-log                            # one crate
-cargo test -p synctex inverse                    # tests whose name matches
-cargo test -p tex-compile -- --include-ignored   # also the Tectonic end-to-end test
-```
-
-Tests that need something from the environment return early, and pass, when it is missing:
-`tex-compile/tests/real_engine.rs` needs a TeX engine, `pdf-view`'s `renders_sample_pdf` needs
-`vendor/pdfium` and a compiled `tests/fixtures/sample/.texoria/build/main.pdf`, and the Git
-integration tests need `git`. The sample project in `tests/fixtures/sample` must compile with
-zero diagnostics (it is also the README screenshot).
+[Testing](testing.md) explains the helpers, the tests that need TeX, PDFium or Git, coverage,
+property tests and fuzzing.
 
 ## Packaging
 

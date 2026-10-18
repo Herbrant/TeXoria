@@ -16,6 +16,7 @@
 ## Development
 
 - [Building from source](development/building.md): build, test and package TeXoria
+- [Testing](development/testing.md): test helpers, coverage, property tests and fuzzing
 - [Architecture](development/architecture.md): how the crates fit together
 - [Releasing](development/releasing.md): cutting a new version
 
