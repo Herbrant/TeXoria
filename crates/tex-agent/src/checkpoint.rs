@@ -18,6 +18,22 @@ const MAX_DEPTH: usize = 64;
 /// File times may be coarser than the clock.
 const CLOCK_SLACK: Duration = Duration::from_secs(2);
 
+/// How much a checkpoint keeps (smaller in tests).
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    file: u64,
+    total: u64,
+    files: usize,
+    depth: usize,
+}
+
+const LIMITS: Limits = Limits {
+    file: MAX_FILE,
+    total: MAX_TOTAL,
+    files: MAX_FILES,
+    depth: MAX_DEPTH,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Snapshot {
     Bytes(Vec<u8>),
@@ -35,6 +51,7 @@ pub struct Checkpoint {
     /// Every file was seen: one missing from `files` did not exist.
     complete: bool,
     taken: SystemTime,
+    limits: Limits,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,10 +89,14 @@ impl Change {
 impl Checkpoint {
     /// Record the files of `dir` (not `.git` nor `.texoria`). Blocking.
     pub fn take(dir: &Path) -> Checkpoint {
+        Self::take_with(dir, LIMITS)
+    }
+
+    fn take_with(dir: &Path, limits: Limits) -> Checkpoint {
         let taken = SystemTime::now();
         let mut files = BTreeMap::new();
         let mut total = 0u64;
-        let (paths, mut complete) = walk(dir);
+        let (paths, mut complete) = walk(dir, &limits);
         for path in paths {
             let Ok(meta) = std::fs::metadata(&path) else {
                 complete = false;
@@ -84,7 +105,7 @@ impl Checkpoint {
             let rel = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
             let len = meta.len();
             let stamp = Snapshot::Stamp(len, meta.modified().ok());
-            let snapshot = if len <= MAX_FILE && total + len <= MAX_TOTAL {
+            let snapshot = if len <= limits.file && total + len <= limits.total {
                 match std::fs::read(&path) {
                     Ok(bytes) => {
                         total += len;
@@ -111,6 +132,7 @@ impl Checkpoint {
             git,
             complete,
             taken,
+            limits,
         }
     }
 
@@ -131,7 +153,7 @@ impl Checkpoint {
 
     /// What differs now, by path. Blocking.
     pub fn changes(&self) -> Vec<Change> {
-        let now: BTreeSet<PathBuf> = walk(&self.dir)
+        let now: BTreeSet<PathBuf> = walk(&self.dir, &self.limits)
             .0
             .into_iter()
             .map(|p| p.strip_prefix(&self.dir).unwrap_or(&p).to_path_buf())
@@ -160,7 +182,7 @@ impl Checkpoint {
                     .ok()
                     .filter(|m| m.len() != *len || m.modified().ok() != *modified)
                     .map(|m| {
-                        if m.len() <= MAX_FILE {
+                        if m.len() <= self.limits.file {
                             std::fs::read(&abs).ok()
                         } else {
                             None
@@ -182,7 +204,7 @@ impl Checkpoint {
             let meta = std::fs::metadata(&abs).ok();
             let after = meta
                 .as_ref()
-                .filter(|m| m.len() <= MAX_FILE)
+                .filter(|m| m.len() <= self.limits.file)
                 .and_then(|_| std::fs::read(&abs).ok());
             // Deleting a file the checkpoint missed would lose it for good.
             let removable = self.complete && meta.is_some_and(|m| touched_since(&m, self.taken));
@@ -215,7 +237,7 @@ impl Checkpoint {
     pub fn keep(&mut self, rel: &Path) {
         let abs = self.dir.join(rel);
         let snapshot = std::fs::metadata(&abs).ok().and_then(|m| {
-            if m.len() > MAX_FILE {
+            if m.len() > self.limits.file {
                 Some(Snapshot::Stamp(m.len(), m.modified().ok()))
             } else {
                 std::fs::read(&abs).ok().map(Snapshot::Bytes)
@@ -282,8 +304,14 @@ fn touched_since(meta: &std::fs::Metadata, since: SystemTime) -> bool {
 /// project, nor what the Files view hides), and whether that is all of them.
 /// Unlike the Files view's scan, nothing is skipped to save time: a file
 /// missed here would look added later, and an undo would delete it.
-fn walk(dir: &Path) -> (Vec<PathBuf>, bool) {
-    fn visit(dir: &Path, depth: usize, out: &mut Vec<PathBuf>, complete: &mut bool) {
+fn walk(dir: &Path, limits: &Limits) -> (Vec<PathBuf>, bool) {
+    fn visit(
+        dir: &Path,
+        depth: usize,
+        limits: &Limits,
+        out: &mut Vec<PathBuf>,
+        complete: &mut bool,
+    ) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             *complete = false;
             return;
@@ -301,13 +329,13 @@ fn walk(dir: &Path) -> (Vec<PathBuf>, bool) {
                 continue;
             };
             if kind.is_dir() {
-                if depth + 1 >= MAX_DEPTH {
+                if depth + 1 >= limits.depth {
                     *complete = false;
                 } else {
-                    visit(&entry.path(), depth + 1, out, complete);
+                    visit(&entry.path(), depth + 1, limits, out, complete);
                 }
             } else if kind.is_file() {
-                if out.len() >= MAX_FILES {
+                if out.len() >= limits.files {
                     *complete = false;
                     return;
                 }
@@ -316,7 +344,7 @@ fn walk(dir: &Path) -> (Vec<PathBuf>, bool) {
         }
     }
     let (mut out, mut complete) = (Vec::new(), true);
-    visit(dir, 0, &mut out, &mut complete);
+    visit(dir, 0, limits, &mut out, &mut complete);
     (out, complete)
 }
 
@@ -468,6 +496,245 @@ mod tests {
         );
         // Not part of the files to review or undo.
         assert!(cp.changes().is_empty());
+    }
+
+    const SMALL: Limits = Limits {
+        file: 10,
+        total: 15,
+        files: 100,
+        depth: 8,
+    };
+
+    fn set_mtime(path: &Path, t: SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+    }
+
+    fn change<'a>(changes: &'a [Change], path: &str) -> Option<&'a Change> {
+        changes.iter().find(|c| c.path == Path::new(path))
+    }
+
+    #[test]
+    fn large_files_are_compared_by_size_and_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("a.tex"), "12345678").unwrap();
+        std::fs::write(d.join("b.tex"), "abcdefgh").unwrap();
+        std::fs::write(d.join("big.pdf"), "x".repeat(20)).unwrap();
+        std::fs::write(d.join("same.pdf"), "y".repeat(20)).unwrap();
+        let mut cp = Checkpoint::take_with(d, SMALL);
+        assert!(cp.changes().is_empty());
+        // Kept whole up to the total, then only stamped.
+        let kept: Vec<bool> = ["a.tex", "b.tex", "big.pdf"]
+            .iter()
+            .map(|f| cp.original(Path::new(f)).is_some())
+            .collect();
+        assert_eq!(kept.iter().filter(|k| **k).count(), 1);
+        assert!(cp.had(Path::new("big.pdf")) && cp.original(Path::new("big.pdf")).is_none());
+
+        let stamped = if kept[0] { "b.tex" } else { "a.tex" };
+        // Same size, another date.
+        std::fs::write(d.join(stamped), "ABCDEFGH").unwrap();
+        set_mtime(
+            &d.join(stamped),
+            SystemTime::now() + Duration::from_secs(60),
+        );
+        // Larger than what is kept.
+        std::fs::write(d.join("big.pdf"), "x".repeat(30)).unwrap();
+        let changes = cp.changes();
+        assert_eq!(changes.len(), 2, "{changes:?}");
+        let small = change(&changes, stamped).unwrap();
+        assert_eq!(
+            (small.kind, small.before.as_deref()),
+            (ChangeKind::Modified, None)
+        );
+        assert_eq!(small.after.as_deref(), Some(&b"ABCDEFGH"[..]));
+        let big = change(&changes, "big.pdf").unwrap();
+        assert_eq!(
+            (big.kind, &big.before, &big.after),
+            (ChangeKind::Modified, &None, &None)
+        );
+        assert!(!small.restorable() && !big.restorable());
+        let p = patch(&changes);
+        assert!(
+            p.contains("Binary files a/big.pdf and b/big.pdf differ"),
+            "{p}"
+        );
+
+        // Accepted: a large file stays a stamp.
+        cp.keep(Path::new("big.pdf"));
+        cp.keep(Path::new(stamped));
+        assert!(cp.changes().is_empty());
+        assert!(cp.original(Path::new("big.pdf")).is_none());
+        assert!(cp.original(Path::new(stamped)).is_some());
+        std::fs::remove_file(d.join("big.pdf")).unwrap();
+        cp.keep(Path::new("big.pdf"));
+        assert!(!cp.had(Path::new("big.pdf")));
+        assert!(cp.changes().is_empty());
+    }
+
+    #[test]
+    fn added_files_too_large_to_keep() {
+        let dir = tempfile::tempdir().unwrap();
+        let cp = Checkpoint::take_with(dir.path(), SMALL);
+        std::fs::write(dir.path().join("out.pdf"), "x".repeat(30)).unwrap();
+        let changes = cp.changes();
+        assert_eq!(changes[0].after, None);
+        assert!(changes[0].restorable(), "it surely was not there");
+        assert!(patch(&changes).contains("Binary files /dev/null and b/out.pdf differ"));
+    }
+
+    #[test]
+    fn skips_hidden_entries_and_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        // What the Files view hides; other dot files are the project's.
+        std::fs::create_dir_all(d.join(".hg")).unwrap();
+        std::fs::write(d.join(".hg/x"), "x").unwrap();
+        std::fs::write(d.join(".latexmkrc"), "x").unwrap();
+        std::fs::write(d.join(".DS_Store"), "x").unwrap();
+        std::fs::write(d.join("main.tex"), "x").unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), "s").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path().join("secret"), d.join("link.tex")).unwrap();
+        let cp = Checkpoint::take(d);
+        assert!(cp.had(Path::new("main.tex")) && cp.had(Path::new(".latexmkrc")));
+        assert_eq!(cp.files.len(), 2, "{:?}", cp.files.keys());
+
+        std::fs::write(d.join(".hg/x"), "changed").unwrap();
+        std::fs::write(d.join(".hg/new"), "new").unwrap();
+        std::fs::write(d.join("Thumbs.db"), "new").unwrap();
+        std::fs::write(outside.path().join("secret"), "changed").unwrap();
+        assert!(cp.changes().is_empty());
+        // A file replaced by a link is gone from the project.
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(d.join("main.tex")).unwrap();
+            std::os::unix::fs::symlink(outside.path().join("secret"), d.join("main.tex")).unwrap();
+            let changes = cp.changes();
+            assert_eq!(changes.len(), 1);
+            assert_eq!(changes[0].kind, ChangeKind::Deleted);
+            assert!(changes[0].restorable());
+        }
+    }
+
+    #[test]
+    fn too_many_files_or_too_deep_is_incomplete() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        for f in ["a", "b", "c"] {
+            std::fs::write(d.join(f), f).unwrap();
+        }
+        let few = Limits { files: 2, ..SMALL };
+        let cp = Checkpoint::take_with(d, few);
+        assert!(!cp.complete);
+        assert_eq!(cp.files.len(), 2);
+
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir_all(d.join("1/2/3")).unwrap();
+        std::fs::write(d.join("1/2/3/deep.tex"), "x").unwrap();
+        std::fs::write(d.join("1/shallow.tex"), "x").unwrap();
+        let shallow = Limits { depth: 2, ..SMALL };
+        let cp = Checkpoint::take_with(d, shallow);
+        assert!(!cp.complete);
+        assert!(cp.had(Path::new("1/shallow.tex")));
+        assert!(!cp.had(Path::new("1/2/3/deep.tex")));
+        // A file it could not see may have been there: never deleted.
+        std::fs::write(d.join("new.tex"), "x").unwrap();
+        let added = cp.changes();
+        assert_eq!(added.len(), 1);
+        assert!(!added[0].restorable());
+        assert!(Checkpoint::take(d).complete);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_files_are_stamped() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("locked.tex");
+        std::fs::write(&f, "x").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&f).is_ok() {
+            // Running as root: nothing is unreadable.
+            return;
+        }
+        let cp = Checkpoint::take(dir.path());
+        assert!(cp.had(Path::new("locked.tex")));
+        assert!(cp.original(Path::new("locked.tex")).is_none());
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    #[test]
+    fn new_files_with_an_old_date_count_as_added_now() {
+        let dir = tempfile::tempdir().unwrap();
+        let cp = Checkpoint::take(dir.path());
+        let f = dir.path().join("old.tex");
+        std::fs::write(&f, "x").unwrap();
+        // As a copy that keeps the original's date would be.
+        set_mtime(&f, SystemTime::now() - Duration::from_secs(24 * 3600));
+        let changes = cp.changes();
+        assert!(changes[0].removable, "created after the checkpoint");
+    }
+
+    #[test]
+    fn no_repository_no_git_files() {
+        let dir = tempfile::tempdir().unwrap();
+        if dir.path().ancestors().any(|a| a.join(".git").exists()) {
+            return;
+        }
+        let cp = Checkpoint::take(dir.path());
+        assert!(cp.git.is_empty() && cp.git_changes().is_empty());
+        assert_eq!(cp.dir(), dir.path());
+    }
+
+    #[test]
+    fn identical_and_undecodable_contents() {
+        let c = |kind, before: Option<&[u8]>, after: Option<&[u8]>| Change {
+            path: PathBuf::from("ch").join("a.tex"),
+            kind,
+            before: before.map(<[u8]>::to_vec),
+            after: after.map(<[u8]>::to_vec),
+            removable: false,
+        };
+        assert_eq!(
+            patch(&[c(ChangeKind::Modified, Some(b"x"), Some(b"x"))]),
+            "diff --git a/ch/a.tex b/ch/a.tex\n"
+        );
+        let p = patch(&[c(ChangeKind::Modified, Some(b"caf\xe9"), Some(b"cafe"))]);
+        assert!(
+            p.ends_with("Binary files a/ch/a.tex and b/ch/a.tex differ\n"),
+            "{p}"
+        );
+        let p = patch(&[c(ChangeKind::Deleted, None, None)]);
+        assert!(
+            p.ends_with("Binary files a/ch/a.tex and /dev/null differ\n"),
+            "{p}"
+        );
+        let p = patch(&[c(ChangeKind::Added, None, Some(b"new\n"))]);
+        assert!(
+            p.ends_with("--- /dev/null\n+++ b/ch/a.tex\n@@ -0,0 +1 @@\n+new\n"),
+            "{p}"
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn patches_never_panic(
+            before in proptest::option::of(proptest::collection::vec(proptest::num::u8::ANY, 0..64)),
+            after in proptest::option::of(proptest::collection::vec(proptest::num::u8::ANY, 0..64)),
+            kind in proptest::sample::select(vec![ChangeKind::Added, ChangeKind::Modified, ChangeKind::Deleted]),
+            path in "\\PC{1,12}",
+        ) {
+            let p = patch(&[Change { path: PathBuf::from(path), kind, before, after, removable: true }]);
+            proptest::prop_assert!(p.starts_with("diff --git a/"));
+        }
     }
 
     #[test]
