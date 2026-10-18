@@ -5400,6 +5400,10 @@ fn vendor_dir_of(repo: &Path, exe: &Path, name: &str) -> Option<PathBuf> {
 /// What the other modules' tests look at.
 #[cfg(test)]
 impl Workspace {
+    pub(crate) fn search_panel(&self) -> &Entity<SearchPanel> {
+        &self.search
+    }
+
     pub(crate) fn spell_mut(&mut self) -> &mut Spell {
         &mut self.spell
     }

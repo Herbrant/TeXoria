@@ -150,6 +150,8 @@ impl SearchPanel {
     /// Search, reading `open` (the open buffers) instead of their files.
     pub fn run(&mut self, open: HashMap<PathBuf, Arc<str>>, cx: &mut Context<Self>) {
         self.cancel.store(true, Ordering::Relaxed);
+        // Its results, partial or not, are not wanted anymore.
+        self._search = Task::ready(());
         let (Some(dir), Some(query)) = (self.dir.clone(), self.query(cx)) else {
             self.error = None;
             self.searching = false;
@@ -225,6 +227,28 @@ impl SearchPanel {
         });
     }
 
+    /// Show or hide the matches of a file.
+    fn toggle_file(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(path) {
+            self.collapsed.insert(path.to_path_buf());
+        }
+        self.update_rows();
+        cx.notify();
+    }
+
+    /// Show match `m` of file `f` in the editor.
+    fn open_match(&mut self, f: usize, m: usize, cx: &mut Context<Self>) {
+        let Some(file) = self.results.files.get(f) else {
+            return;
+        };
+        if let Some(found) = file.matches.get(m) {
+            cx.emit(SearchPanelEvent::Open {
+                path: file.path.clone(),
+                range: found.range.clone(),
+            });
+        }
+    }
+
     fn relative<'a>(&self, path: &'a Path) -> &'a Path {
         self.dir
             .as_ref()
@@ -289,19 +313,11 @@ impl SearchPanel {
                             .text_color(theme.muted_foreground)
                             .child(file.matches.len().to_string()),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.collapsed.remove(&path) {
-                            this.collapsed.insert(path.clone());
-                        }
-                        this.update_rows();
-                        cx.notify();
-                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_file(&path, cx)))
                     .into_any_element()
             }
             Row::Match(f, m) => {
-                let file = &self.results.files[f];
-                let found = &file.matches[m];
-                let (path, range) = (file.path.clone(), found.range.clone());
+                let found = &self.results.files[f].matches[m];
                 let highlight = HighlightStyle {
                     background_color: Some(theme.warning.opacity(0.35)),
                     font_weight: Some(FontWeight::SEMIBOLD),
@@ -334,12 +350,7 @@ impl SearchPanel {
                             .text_color(theme.muted_foreground)
                             .child((found.line + 1).to_string()),
                     )
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.emit(SearchPanelEvent::Open {
-                            path: path.clone(),
-                            range: range.clone(),
-                        })
-                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_match(f, m, cx)))
                     .into_any_element()
             }
         }
@@ -488,3 +499,6 @@ impl Render for SearchPanel {
         )
     }
 }
+
+#[cfg(test)]
+mod tests;
