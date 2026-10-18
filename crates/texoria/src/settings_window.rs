@@ -52,6 +52,9 @@ impl Target {
 
 pub struct SettingsWindow {
     target: Target,
+    /// The items of the pages rendered last, for the tests.
+    #[cfg(test)]
+    built: std::cell::RefCell<Vec<(&'static str, Vec<SettingItem>)>>,
     /// One input per Overleaf Server Pro instance.
     servers: Vec<Entity<InputState>>,
     /// Name, command and arguments of each agent added by hand.
@@ -77,6 +80,8 @@ impl SettingsWindow {
         }
         let mut this = SettingsWindow {
             target,
+            #[cfg(test)]
+            built: Default::default(),
             servers: Vec::new(),
             agents: Vec::new(),
             _subscriptions: subscriptions,
@@ -206,6 +211,20 @@ impl SettingsWindow {
 
     // ── Pages ────────────────────────────────────────────────────────────
 
+    /// The groups of a page.
+    fn groups(&self, groups: impl IntoIterator<Item = Group>) -> Vec<SettingGroup> {
+        groups
+            .into_iter()
+            .map(|g| {
+                #[cfg(test)]
+                self.built.borrow_mut().push((g.title, g.items.clone()));
+                g.items
+                    .into_iter()
+                    .fold(SettingGroup::new().title(g.title), SettingGroup::item)
+            })
+            .collect()
+    }
+
     fn editor_page(&self, cx: &App) -> SettingPage {
         let t = self.target.clone();
         let words = t.get(cx, |s| s.spell_words.clone());
@@ -214,8 +233,8 @@ impl SettingsWindow {
             .iter()
             .map(|c| (c.key().into(), c.label().into()))
             .collect();
-        SettingPage::new("Editor").default_open(true).groups([
-            SettingGroup::new().title("Appearance").item(
+        SettingPage::new("Editor").default_open(true).groups(self.groups([
+            Group::new().title("Appearance").item(
                 SettingItem::new(
                     "Theme",
                     SettingField::dropdown(
@@ -237,7 +256,7 @@ impl SettingsWindow {
                 )
                 .description("System follows the light or dark appearance of the OS."),
             ),
-            SettingGroup::new()
+            Group::new()
                 .title("Text")
                 .item(
                     SettingItem::new("Font size", {
@@ -289,7 +308,7 @@ impl SettingsWindow {
                          at any time). A tex-fmt.toml in the project folder changes its rules.",
                     ),
                 ),
-            SettingGroup::new().title("Checks").item(
+            Group::new().title("Checks").item(
                 SettingItem::new(
                     "Check references",
                     bool_field(&t, |s| s.live_checks, |s, v| s.live_checks = v)
@@ -302,7 +321,7 @@ impl SettingsWindow {
                      are listed with the problems.",
                 ),
             ),
-            SettingGroup::new()
+            Group::new()
                 .title("Spelling")
                 .item(
                     SettingItem::new(
@@ -327,7 +346,7 @@ impl SettingsWindow {
                         move |word, cx| t.set(cx, |s| s.spell_words.retain(|w| *w != word))
                     },
                 )),
-            SettingGroup::new()
+            Group::new()
                 .title("Grammar")
                 .item(
                     SettingItem::new(
@@ -378,7 +397,7 @@ impl SettingsWindow {
                         move |rule, cx| t.set(cx, |s| s.grammar_rules_off.retain(|r| *r != rule))
                     },
                 )),
-        ])
+        ]))
     }
 
     fn build_page(&self, cx: &App) -> SettingPage {
@@ -429,83 +448,11 @@ impl SettingsWindow {
             .description("latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, or Tectonic.")
         };
         let live = t.get(cx, |s| s.live_preview);
-        SettingPage::new("Build").groups([
-            SettingGroup::new().title("Engine").item(engine).item(
-                SettingItem::new(
-                    "Timeout",
-                    number_field(
-                        &t,
-                        NumberFieldOptions {
-                            min: 0.,
-                            max: 3600.,
-                            step: 30.,
-                        },
-                        |s| s.compile_timeout_secs,
-                        |s, v| s.compile_timeout_secs = v,
-                    )
-                    .default_value(defaults.compile_timeout_secs as f64),
-                )
-                .description("Stop a build after this many seconds (0: never)."),
-            ),
-            SettingGroup::new()
-                .title("Live preview")
-                .item(
+        SettingPage::new("Build").groups(
+            self.groups([
+                Group::new().title("Engine").item(engine).item(
                     SettingItem::new(
-                        "Live preview",
-                        bool_field(&t, |s| s.live_preview, |s, v| s.live_preview = v)
-                            .default_value(defaults.live_preview),
-                    )
-                    .description("Save and build automatically after edits."),
-                )
-                .item(
-                    SettingItem::new(
-                        "Delay",
-                        number_field(
-                            &t,
-                            NumberFieldOptions {
-                                min: 100.,
-                                max: 5000.,
-                                step: 100.,
-                            },
-                            |s| s.live_delay_ms,
-                            |s, v| s.live_delay_ms = v,
-                        )
-                        .default_value(defaults.live_delay_ms as f64),
-                    )
-                    .description("Pause after the last keystroke, in milliseconds.")
-                    .disabled(!live),
-                ),
-        ])
-    }
-
-    fn git_page(&self, cx: &mut Context<Self>) -> SettingPage {
-        let t = self.target.clone();
-        let defaults = Settings::default();
-        let view = cx.entity().downgrade();
-        SettingPage::new("Git").groups([
-            SettingGroup::new()
-                .title("Repository")
-                .item(
-                    SettingItem::new(
-                        "Pull with rebase",
-                        bool_field(&t, |s| s.pull_rebase, |s, v| s.pull_rebase = v)
-                            .default_value(defaults.pull_rebase),
-                    )
-                    .description(
-                        "Rebase local commits on top of the pulled ones instead of merging.",
-                    ),
-                )
-                .item(
-                    SettingItem::new(
-                        "Side-by-side diffs",
-                        bool_field(&t, |s| s.diff_split, |s, v| s.diff_split = v)
-                            .default_value(defaults.diff_split),
-                    )
-                    .description("Show changes in two columns instead of one."),
-                )
-                .item(
-                    SettingItem::new(
-                        "Network timeout",
+                        "Timeout",
                         number_field(
                             &t,
                             NumberFieldOptions {
@@ -513,29 +460,107 @@ impl SettingsWindow {
                                 max: 3600.,
                                 step: 30.,
                             },
-                            |s| s.git_timeout_secs,
-                            |s, v| s.git_timeout_secs = v,
+                            |s| s.compile_timeout_secs,
+                            |s, v| s.compile_timeout_secs = v,
                         )
-                        .default_value(defaults.git_timeout_secs as f64),
+                        .default_value(defaults.compile_timeout_secs as f64),
                     )
-                    .description("Stop a fetch, pull or push after this many seconds (0: never)."),
+                    .description("Stop a build after this many seconds (0: never)."),
                 ),
-            SettingGroup::new().title("Overleaf").item(
-                SettingItem::new(
-                    "Overleaf Server Pro",
-                    SettingField::render(move |_, _, cx| {
-                        view.upgrade()
-                            .map(|v| v.read(cx).render_servers(&v).into_any_element())
-                            .unwrap_or_else(|| div().into_any_element())
-                    }),
-                )
-                .description(
-                    "Your own Overleaf instances (overleaf.com is always known). They must use \
+                Group::new()
+                    .title("Live preview")
+                    .item(
+                        SettingItem::new(
+                            "Live preview",
+                            bool_field(&t, |s| s.live_preview, |s, v| s.live_preview = v)
+                                .default_value(defaults.live_preview),
+                        )
+                        .description("Save and build automatically after edits."),
+                    )
+                    .item(
+                        SettingItem::new(
+                            "Delay",
+                            number_field(
+                                &t,
+                                NumberFieldOptions {
+                                    min: 100.,
+                                    max: 5000.,
+                                    step: 100.,
+                                },
+                                |s| s.live_delay_ms,
+                                |s, v| s.live_delay_ms = v,
+                            )
+                            .default_value(defaults.live_delay_ms as f64),
+                        )
+                        .description("Pause after the last keystroke, in milliseconds.")
+                        .disabled(!live),
+                    ),
+            ]),
+        )
+    }
+
+    fn git_page(&self, cx: &mut Context<Self>) -> SettingPage {
+        let t = self.target.clone();
+        let defaults = Settings::default();
+        let view = cx.entity().downgrade();
+        SettingPage::new("Git").groups(
+            self.groups([
+                Group::new()
+                    .title("Repository")
+                    .item(
+                        SettingItem::new(
+                            "Pull with rebase",
+                            bool_field(&t, |s| s.pull_rebase, |s, v| s.pull_rebase = v)
+                                .default_value(defaults.pull_rebase),
+                        )
+                        .description(
+                            "Rebase local commits on top of the pulled ones instead of merging.",
+                        ),
+                    )
+                    .item(
+                        SettingItem::new(
+                            "Side-by-side diffs",
+                            bool_field(&t, |s| s.diff_split, |s, v| s.diff_split = v)
+                                .default_value(defaults.diff_split),
+                        )
+                        .description("Show changes in two columns instead of one."),
+                    )
+                    .item(
+                        SettingItem::new(
+                            "Network timeout",
+                            number_field(
+                                &t,
+                                NumberFieldOptions {
+                                    min: 0.,
+                                    max: 3600.,
+                                    step: 30.,
+                                },
+                                |s| s.git_timeout_secs,
+                                |s, v| s.git_timeout_secs = v,
+                            )
+                            .default_value(defaults.git_timeout_secs as f64),
+                        )
+                        .description(
+                            "Stop a fetch, pull or push after this many seconds (0: never).",
+                        ),
+                    ),
+                Group::new().title("Overleaf").item(
+                    SettingItem::new(
+                        "Overleaf Server Pro",
+                        SettingField::render(move |_, _, cx| {
+                            view.upgrade()
+                                .map(|v| v.read(cx).render_servers(&v).into_any_element())
+                                .unwrap_or_else(|| div().into_any_element())
+                        }),
+                    )
+                    .description(
+                        "Your own Overleaf instances (overleaf.com is always known). They must use \
                      HTTPS, or TeXoria will not send them your token.",
-                )
-                .layout(Axis::Vertical),
-            ),
-        ])
+                    )
+                    .layout(Axis::Vertical),
+                ),
+            ]),
+        )
     }
 
     fn render_servers(&self, view: &Entity<Self>) -> Div {
@@ -636,25 +661,27 @@ impl SettingsWindow {
             }
         };
         let view = cx.entity().downgrade();
-        SettingPage::new("Agents").groups([
-            SettingGroup::new().title("Agent").item(agent),
-            SettingGroup::new().title("Other agents").item(
-                SettingItem::new(
-                    "Your agents",
-                    SettingField::render(move |_, _, cx| {
-                        view.upgrade()
-                            .map(|v| v.read(cx).render_agents(&v).into_any_element())
-                            .unwrap_or_else(|| div().into_any_element())
-                    }),
-                )
-                .description(
-                    "Programs speaking the Agent Client Protocol on their standard input and \
+        SettingPage::new("Agents").groups(
+            self.groups([
+                Group::new().title("Agent").item(agent),
+                Group::new().title("Other agents").item(
+                    SettingItem::new(
+                        "Your agents",
+                        SettingField::render(move |_, _, cx| {
+                            view.upgrade()
+                                .map(|v| v.read(cx).render_agents(&v).into_any_element())
+                                .unwrap_or_else(|| div().into_any_element())
+                        }),
+                    )
+                    .description(
+                        "Programs speaking the Agent Client Protocol on their standard input and \
                      output that TeXoria does not know, with the arguments that start them in \
                      that mode (e.g. `--acp`).",
-                )
-                .layout(Axis::Vertical),
-            ),
-        ])
+                    )
+                    .layout(Axis::Vertical),
+                ),
+            ]),
+        )
     }
 
     fn render_agents(&self, view: &Entity<Self>) -> Div {
@@ -708,8 +735,8 @@ impl SettingsWindow {
                  run programs, and coding agents read and change its files, so TeXoria asks \
                  before letting them. Removing a folder makes TeXoria ask again.",
             )
-            .groups([
-                SettingGroup::new().title("Git").item(path_list(
+            .groups(self.groups([
+                Group::new().title("Git").item(path_list(
                     "git",
                     git,
                     "No project lets Git run yet.",
@@ -718,7 +745,7 @@ impl SettingsWindow {
                         move |dir, cx| t.set(cx, |s| s.trusted_projects.retain(|p| *p != dir))
                     },
                 )),
-                SettingGroup::new().title("latexmkrc").item(path_list(
+                Group::new().title("latexmkrc").item(path_list(
                     "rc",
                     rc,
                     "No project lets its latexmkrc run yet.",
@@ -733,7 +760,7 @@ impl SettingsWindow {
                         }
                     },
                 )),
-                SettingGroup::new().title("Shell escape").item(path_list(
+                Group::new().title("Shell escape").item(path_list(
                     "shell-escape",
                     shell,
                     "No project may run programs while it builds yet.",
@@ -742,13 +769,13 @@ impl SettingsWindow {
                         move |dir, cx| t.set(cx, |s| s.shell_escape_allowed.retain(|p| *p != dir))
                     },
                 )),
-                SettingGroup::new().title("Coding agents").item(path_list(
+                Group::new().title("Coding agents").item(path_list(
                     "agents",
                     agents,
                     "No project lets coding agents work in it yet.",
                     move |dir, cx| t.set(cx, |s| s.agent_projects.retain(|p| *p != dir)),
                 )),
-            ])
+            ]))
     }
 
     fn updates_page(&self, cx: &App) -> SettingPage {
@@ -781,19 +808,44 @@ impl SettingsWindow {
             }),
         )
         .description("The answer appears in the main window.");
-        SettingPage::new("Updates").groups([SettingGroup::new()
-            .title("Updates")
-            .item(
-                SettingItem::new(
-                    "Check for updates",
-                    bool_field(&t, |s| s.check_updates, |s, v| s.check_updates = v)
-                        .default_value(Settings::default().check_updates),
+        SettingPage::new("Updates").groups(
+            self.groups([Group::new()
+                .title("Updates")
+                .item(
+                    SettingItem::new(
+                        "Check for updates",
+                        bool_field(&t, |s| s.check_updates, |s, v| s.check_updates = v)
+                            .default_value(Settings::default().check_updates),
+                    )
+                    .description(format!(
+                        "Look for a new release at startup, at most once a day. {how}"
+                    )),
                 )
-                .description(format!(
-                    "Look for a new release at startup, at most once a day. {how}"
-                )),
-            )
-            .item(check)])
+                .item(check)]),
+        )
+    }
+}
+
+/// A group of settings, as [`SettingGroup`] (whose items cannot be read back).
+#[derive(Default)]
+struct Group {
+    title: &'static str,
+    items: Vec<SettingItem>,
+}
+
+impl Group {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn title(mut self, title: &'static str) -> Self {
+        self.title = title;
+        self
+    }
+
+    fn item(mut self, item: SettingItem) -> Self {
+        self.items.push(item);
+        self
     }
 }
 
@@ -876,6 +928,8 @@ fn removable_list<T: Clone + 'static>(
 
 impl Render for SettingsWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        self.built.borrow_mut().clear();
         let pages = [
             self.editor_page(cx),
             self.build_page(cx),
@@ -908,3 +962,6 @@ impl Render for SettingsWindow {
             )
     }
 }
+
+#[cfg(test)]
+mod tests;
