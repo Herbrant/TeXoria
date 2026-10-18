@@ -546,3 +546,703 @@ fn reads_the_repository(cx: &mut TestAppContext) {
     assert_eq!(p.read(cx, |g, _| g.status().behind), 1);
     assert_eq!(p.notifications(cx), 0);
 }
+
+fn read(dir: &Path, rel: &str) -> String {
+    std::fs::read_to_string(dir.join(rel)).unwrap()
+}
+
+#[gpui::test]
+fn stages_commits_and_discards(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = committed(&s, "repo");
+    std::fs::write(dir.join("main.tex"), "changed\n").unwrap();
+    std::fs::write(dir.join("a.tex"), "a\n").unwrap();
+    let p = Panel::on(cx, &s, &dir);
+
+    p.execute(cx, GitOp::Stage(vec!["a.tex".into()]));
+    p.read(cx, |g, _| {
+        let staged: Vec<_> = g.status().staged().map(|e| e.path.as_str()).collect();
+        assert_eq!(staged, ["a.tex"]);
+    });
+    p.execute(cx, GitOp::Unstage(vec!["a.tex".into()]));
+    assert_eq!(p.read(cx, |g, _| g.status().staged().count()), 0);
+
+    // Nothing staged: Commit All.
+    p.update(cx, |g, window, cx| {
+        g.message
+            .update(cx, |m, cx| m.set_value("Both", window, cx));
+        g.commit(window, cx);
+    });
+    let Some(op @ GitOp::Commit { all: true, .. }) = p.requests().pop() else {
+        panic!("{:?}", p.requests());
+    };
+    p.execute(cx, op);
+    p.read(cx, |g, cx| {
+        assert!(g.status().is_clean());
+        assert_eq!(g.history[0].subject, "Both");
+        assert_eq!(g.history.len(), 2);
+        // The message box is emptied for the next commit.
+        assert_eq!(g.message.read(cx).value().to_string(), "");
+    });
+
+    // Amending starts from the last message.
+    p.update(cx, |g, _, cx| g.toggle_amend(true, cx));
+    cx.run_until_parked();
+    p.draw(cx);
+    p.read(cx, |g, cx| {
+        assert_eq!(g.message.read(cx).value().to_string(), "Both")
+    });
+    p.update(cx, |g, window, cx| g.commit(window, cx));
+    let Some(op @ GitOp::Commit { amend: true, .. }) = p.requests().pop() else {
+        panic!("{:?}", p.requests());
+    };
+    p.execute(cx, op);
+    p.read(cx, |g, _| {
+        assert_eq!(g.history.len(), 2);
+        assert!(!g.amend);
+    });
+
+    // An empty message is refused.
+    let before = p.requests().len();
+    std::fs::write(dir.join("main.tex"), "again\n").unwrap();
+    p.update(cx, |g, _, cx| g.refresh(cx));
+    cx.run_until_parked();
+    p.update(cx, |g, window, cx| g.commit(window, cx));
+    assert_eq!(p.requests().len(), before);
+    assert_eq!(p.notifications(cx), 1);
+
+    // Discard: tracked files go back, untracked ones are deleted.
+    std::fs::write(dir.join("b.tex"), "b\n").unwrap();
+    p.update(cx, |g, _, cx| g.refresh(cx));
+    cx.run_until_parked();
+    p.draw(cx);
+    let entries = p.read(cx, |g, _| {
+        g.status().unstaged().cloned().collect::<Vec<_>>()
+    });
+    assert_eq!(entries.len(), 2);
+    p.update(cx, |g, window, cx| g.confirm_discard(entries, window, cx));
+    p.confirm(cx);
+    let Some(op @ GitOp::Discard { .. }) = p.requests().pop() else {
+        panic!("{:?}", p.requests());
+    };
+    let GitOp::Discard { tracked, untracked } = &op else {
+        unreachable!()
+    };
+    assert_eq!(
+        (&tracked[..], &untracked[..]),
+        (&["main.tex".to_string()][..], &["b.tex".to_string()][..])
+    );
+    let changed = p.count(|e| matches!(e, Seen::WorktreeChanged));
+    p.execute(cx, op);
+    assert_eq!(read(&dir, "main.tex"), "changed\n");
+    assert!(!dir.join("b.tex").exists());
+    assert!(p.read(cx, |g, _| g.status().is_clean()));
+    assert_eq!(p.count(|e| matches!(e, Seen::WorktreeChanged)), changed + 1);
+}
+
+#[gpui::test]
+fn branches_remotes_and_identity(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let (dir, bare) = published(&s, "repo");
+    let p = Panel::on(cx, &s, &dir);
+
+    p.execute(cx, GitOp::CreateBranch("draft".into()));
+    assert_eq!(
+        p.read(cx, |g, _| g.status().branch.clone()).as_deref(),
+        Some("draft")
+    );
+    let main = p.read(cx, |g, _| {
+        g.branches.iter().find(|b| b.name == "main").cloned()
+    });
+    p.execute(cx, GitOp::Switch(main.unwrap()));
+    assert_eq!(
+        p.read(cx, |g, _| g.status().branch.clone()).as_deref(),
+        Some("main")
+    );
+
+    // A branch only on the remote is checked out with a local branch tracking it.
+    s.run(&dir, &["push", "--quiet", "origin", "HEAD:remote-only"]);
+    p.execute(cx, GitOp::Fetch);
+    let remote = p.read(cx, |g, _| {
+        g.branches
+            .iter()
+            .find(|b| b.name == "origin/remote-only")
+            .cloned()
+    });
+    p.execute(cx, GitOp::Switch(remote.unwrap()));
+    p.read(cx, |g, _| {
+        assert_eq!(g.status().branch.as_deref(), Some("remote-only"));
+        assert_eq!(g.status().upstream.as_deref(), Some("origin/remote-only"));
+    });
+
+    p.execute(
+        cx,
+        GitOp::AddRemote {
+            name: "mirror".into(),
+            url: bare.to_string_lossy().into_owned(),
+        },
+    );
+    assert_eq!(p.read(cx, |g, _| g.remotes.clone()), ["mirror", "origin"]);
+
+    p.execute(
+        cx,
+        GitOp::SetIdentity {
+            name: "Ada".into(),
+            email: "ada@example.com".into(),
+            global: false,
+        },
+    );
+    assert_eq!(s.run(&dir, &["config", "--local", "user.name"]), "Ada");
+
+    // A failure is reported, and the panel is ready for the next one.
+    p.execute(cx, GitOp::CreateBranch("-bad".into()));
+    assert_eq!(p.notifications(cx), 1);
+    p.draw(cx);
+}
+
+#[gpui::test]
+fn pulls_and_pushes(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let (dir, bare) = published(&s, "repo");
+    let p = Panel::on(cx, &s, &dir);
+
+    push_from_elsewhere(&s, &bare, "intro.tex", "intro\n");
+    p.update(cx, |g, _, cx| g.pull(cx));
+    let Some(op @ GitOp::Pull) = p.requests().pop() else {
+        panic!("{:?}", p.requests());
+    };
+    p.execute(cx, op);
+    assert_eq!(read(&dir, "intro.tex"), "intro\n");
+    assert!(p.count(|e| matches!(e, Seen::WorktreeChanged)) >= 1);
+
+    std::fs::write(dir.join("main.tex"), "mine\n").unwrap();
+    s.run(&dir, &["commit", "--quiet", "-am", "mine"]);
+    p.update(cx, |g, _, cx| g.refresh(cx));
+    cx.run_until_parked();
+    assert_eq!(p.read(cx, |g, _| g.status().ahead), 1);
+    p.update(cx, |g, window, cx| g.push(window, cx));
+    let Some(op @ GitOp::Push) = p.requests().pop() else {
+        panic!("{:?}", p.requests());
+    };
+    p.execute(cx, op);
+    assert_eq!(p.read(cx, |g, _| g.status().ahead), 0);
+    assert_eq!(s.run(&bare, &["log", "-1", "--format=%s"]), "mine");
+
+    // A new branch is published to `origin` with its upstream set.
+    p.execute(cx, GitOp::CreateBranch("draft".into()));
+    p.execute(cx, GitOp::Push);
+    assert_eq!(
+        p.read(cx, |g, _| g.status().upstream.clone()).as_deref(),
+        Some("origin/draft")
+    );
+    // Pull, Push, Push: one notification each.
+    assert_eq!(p.notifications(cx), 3);
+}
+
+#[gpui::test]
+fn push_without_a_remote_asks_for_one(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = committed(&s, "repo");
+    let p = Panel::on(cx, &s, &dir);
+    // No upstream: nothing to pull from.
+    p.update(cx, |g, _, cx| g.pull(cx));
+    assert!(p.requests().is_empty());
+
+    p.update(cx, |g, window, cx| g.push(window, cx));
+    assert!(p.has_dialog(cx));
+    // The name field is filled in with `origin`; the URL has the focus.
+    p.fill_and_confirm(cx, "https://example.com/paper.git");
+    let Some(GitOp::AddRemote { name, url }) = p.requests().pop() else {
+        panic!("{:?}", p.requests());
+    };
+    assert_eq!(
+        (name.as_str(), url.as_str()),
+        ("origin", "https://example.com/paper.git")
+    );
+}
+
+#[gpui::test]
+fn stops_on_conflicts_and_aborts(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let (dir, bare) = published(&s, "repo");
+    let p = Panel::on(cx, &s, &dir);
+    push_from_elsewhere(&s, &bare, "main.tex", "theirs\n");
+    std::fs::write(dir.join("main.tex"), "ours\n").unwrap();
+    s.run(&dir, &["commit", "--quiet", "-am", "ours"]);
+
+    p.execute(cx, GitOp::Pull);
+    p.draw(cx);
+    p.read(cx, |g, cx| {
+        assert_eq!(g.status().operation, Operation::Merge);
+        assert_eq!(g.status().conflicts().count(), 1);
+        assert_eq!(g.commit_mode(), None);
+        // git's merge message is offered for the commit that concludes it.
+        assert!(
+            g.message.read(cx).value().starts_with("Merge branch"),
+            "{}",
+            g.message.read(cx).value()
+        );
+        assert_eq!(
+            g.file_marks().get(&dir.join("main.tex")),
+            Some(&GitMark::Conflict)
+        );
+    });
+    assert_eq!(p.notifications(cx), 1);
+
+    p.execute(cx, GitOp::Abort(Operation::Merge));
+    p.read(cx, |g, _| {
+        assert_eq!(g.status().operation, Operation::None);
+        assert!(g.status().is_clean());
+    });
+    assert_eq!(read(&dir, "main.tex"), "ours\n");
+
+    // With rebase: resolve, mark as resolved, continue.
+    p.update(cx, |g, _, _| g.configure(true, None, Vec::new()));
+    p.execute(cx, GitOp::Pull);
+    assert_eq!(p.read(cx, |g, _| g.status().operation), Operation::Rebase);
+    std::fs::write(dir.join("main.tex"), "both\n").unwrap();
+    p.execute(cx, GitOp::Stage(vec!["main.tex".into()]));
+    p.draw(cx);
+    p.execute(cx, GitOp::ContinueRebase);
+    p.read(cx, |g, _| {
+        assert_eq!(g.status().operation, Operation::None);
+        assert_eq!(g.status().ahead, 1);
+        assert_eq!(g.status().behind, 0);
+    });
+}
+
+#[gpui::test]
+fn syncs_what_was_reviewed(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let (dir, bare) = published(&s, "repo");
+    let p = Panel::on(cx, &s, &dir);
+    push_from_elsewhere(&s, &bare, "intro.tex", "intro\n");
+    std::fs::write(dir.join("main.tex"), "mine\n").unwrap();
+    std::fs::write(dir.join("fig.tex"), "fig\n").unwrap();
+    p.update(cx, |g, _, cx| g.refresh(cx));
+    cx.run_until_parked();
+    let review = p.read(cx, |g, _| SyncReview::of(g.status()));
+    assert_eq!(review.added, ["fig.tex"]);
+
+    // A file that appeared since the review stops the Sync before it commits anything.
+    std::fs::write(dir.join("late.tex"), "late\n").unwrap();
+    let sync = |review: &SyncReview, message: Option<&str>| GitOp::Sync {
+        message: message.map(str::to_string),
+        review: review.clone(),
+    };
+    p.execute(cx, sync(&review, None));
+    assert_eq!(p.notifications(cx), 1);
+    assert_eq!(p.read(cx, |g, _| g.history.len()), 1);
+    std::fs::remove_file(dir.join("late.tex")).unwrap();
+
+    p.execute(cx, sync(&review, None));
+    assert_eq!(p.notifications(cx), 2);
+    assert_eq!(read(&dir, "intro.tex"), "intro\n");
+    assert_eq!(s.run(&bare, &["log", "-1", "--format=%s"]), SYNC_MESSAGE);
+    p.read(cx, |g, _| {
+        assert!(g.status().is_clean());
+        assert_eq!((g.status().ahead, g.status().behind), (0, 0));
+    });
+
+    // With a typed message, which is then cleared.
+    std::fs::write(dir.join("main.tex"), "again\n").unwrap();
+    p.update(cx, |g, window, cx| {
+        g.message
+            .update(cx, |m, cx| m.set_value("Typed", window, cx))
+    });
+    p.execute(cx, sync(&SyncReview::default(), Some("Typed")));
+    assert_eq!(s.run(&bare, &["log", "-1", "--format=%s"]), "Typed");
+    assert_eq!(
+        p.read(cx, |g, cx| g.message.read(cx).value().to_string()),
+        ""
+    );
+
+    // Nothing to do.
+    p.execute(cx, sync(&SyncReview::default(), None));
+    assert_eq!(p.notifications(cx), 4);
+}
+
+#[gpui::test]
+fn initializes_a_repository(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = s.dir.join("paper");
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = Panel::open(cx);
+    p.update(cx, |g, _, cx| {
+        g.use_git(s.git.clone());
+        g.set_project(Some(dir.clone()), false, cx);
+    });
+    cx.run_until_parked();
+    assert!(matches!(
+        p.read(cx, |g, _| g.state.clone()),
+        RepoState::NotRepo
+    ));
+    p.draw(cx);
+    p.execute(cx, GitOp::Init);
+    assert!(dir.join(".git").is_dir());
+    assert!(dir.join(".gitignore").is_file());
+    assert!(p.read(cx, |g, _| g.repo().is_some()));
+    assert_eq!(p.count(|e| matches!(e, Seen::Trust)), 1);
+    p.draw(cx);
+}
+
+#[gpui::test]
+fn one_operation_at_a_time(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = committed(&s, "repo");
+    std::fs::write(dir.join("a.tex"), "a\n").unwrap();
+    let p = Panel::on(cx, &s, &dir);
+    p.update(cx, |g, window, cx| {
+        g.execute(GitOp::Stage(vec!["a.tex".into()]), window, cx);
+        assert_eq!(g.busy, Some("Stage"));
+        g.execute(GitOp::Unstage(vec!["a.tex".into()]), window, cx);
+    });
+    p.draw(cx);
+    cx.run_until_parked();
+    // The second was refused, with a word why.
+    assert_eq!(p.notifications(cx), 1);
+    assert_eq!(p.read(cx, |g, _| g.status().staged().count()), 1);
+}
+
+#[gpui::test]
+fn asks_who_is_committing(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = committed(&s, "repo");
+    // An empty name in the repository's configuration hides the sandbox's identity.
+    s.run(&dir, &["config", "user.name", ""]);
+    std::fs::write(dir.join("a.tex"), "a\n").unwrap();
+    let p = Panel::on(cx, &s, &dir);
+    let commit = GitOp::Commit {
+        message: "m".into(),
+        amend: false,
+        all: true,
+    };
+    p.execute(cx, commit);
+    assert!(p.has_dialog(cx));
+    assert!(matches!(
+        p.read(cx, |g, _| g.pending.clone()),
+        Some(GitOp::Commit { .. })
+    ));
+    // An empty form stays open.
+    p.confirm(cx);
+    assert!(p.has_dialog(cx));
+    p.update(cx, |_, window, cx| window.close_dialog(cx));
+
+    // Once the identity is saved, the commit is asked for again.
+    p.execute(
+        cx,
+        GitOp::SetIdentity {
+            name: "Ada".into(),
+            email: "ada@example.com".into(),
+            global: false,
+        },
+    );
+    assert!(matches!(&p.requests()[..], [GitOp::Commit { .. }]));
+    assert!(p.read(cx, |g, _| g.pending.is_none()));
+}
+
+#[gpui::test]
+fn shows_why_git_is_off(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = committed(&s, "repo");
+    let sub = dir.join("chapters");
+    std::fs::create_dir_all(&sub).unwrap();
+    let p = Panel::open(cx);
+    p.draw(cx);
+    assert!(matches!(
+        p.read(cx, |g, _| g.state.clone()),
+        RepoState::NoProject
+    ));
+
+    // Untrusted: git does not run, and the panel says where the repository is.
+    p.update(cx, |g, _, cx| {
+        g.use_git(s.git.clone());
+        g.set_project(Some(sub.clone()), false, cx);
+    });
+    cx.run_until_parked();
+    assert!(matches!(p.read(cx, |g, _| g.state.clone()), RepoState::Untrusted(top) if top == dir));
+    assert!(p.read(cx, |g, _| g.file_marks().is_empty()));
+    p.draw(cx);
+
+    // Trusted, from a subfolder.
+    p.update(cx, |g, _, cx| g.set_project(Some(sub.clone()), true, cx));
+    assert!(matches!(
+        p.read(cx, |g, _| g.state.clone()),
+        RepoState::Searching
+    ));
+    p.draw(cx);
+    cx.run_until_parked();
+    assert!(p.read(cx, |g, _| g.repo().is_some()));
+    // The same project again only refreshes.
+    let generation = p.read(cx, |g, _| g.generation);
+    p.update(cx, |g, _, cx| g.set_project(Some(sub.clone()), true, cx));
+    assert_eq!(p.read(cx, |g, _| g.generation), generation);
+
+    // A `.git` that git places elsewhere is not handed the project.
+    let odd = committed(&s, "odd");
+    s.run(&odd, &["config", "core.worktree", &s.dir.to_string_lossy()]);
+    p.update(cx, |g, _, cx| g.set_project(Some(odd.clone()), true, cx));
+    cx.run_until_parked();
+    assert!(matches!(
+        p.read(cx, |g, _| g.state.clone()),
+        RepoState::Failed(_)
+    ));
+    p.draw(cx);
+
+    // No git at all.
+    p.update(cx, |g, _, cx| {
+        g.git = Some(None);
+        g.set_project(Some(dir.clone()), false, cx);
+        g.set_project(Some(dir.clone()), true, cx);
+    });
+    cx.run_until_parked();
+    assert!(matches!(
+        p.read(cx, |g, _| g.state.clone()),
+        RepoState::NoGit
+    ));
+    p.draw(cx);
+
+    p.update(cx, |g, _, cx| g.set_project(None, true, cx));
+    assert!(matches!(
+        p.read(cx, |g, _| g.state.clone()),
+        RepoState::NoProject
+    ));
+    assert_eq!(p.read(cx, |g, _| g.change_count()), 0);
+}
+
+#[gpui::test]
+fn draws_changes_and_history(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = committed(&s, "repo");
+    std::fs::write(dir.join("chapter.tex"), "chapter\n").unwrap();
+    std::fs::write(dir.join("gone.tex"), "gone\n").unwrap();
+    s.run(&dir, &["add", "-A"]);
+    for i in 0..3 {
+        std::fs::write(dir.join("main.tex"), format!("{i}\n")).unwrap();
+        s.run(&dir, &["commit", "--quiet", "-am", &format!("commit {i}")]);
+    }
+    std::fs::write(dir.join("main.tex"), "staged\n").unwrap();
+    s.run(&dir, &["add", "main.tex"]);
+    std::fs::write(dir.join("main.tex"), "and more\n").unwrap();
+    std::fs::create_dir_all(dir.join("ch")).unwrap();
+    std::fs::write(dir.join("ch/new.tex"), "new\n").unwrap();
+    s.run(&dir, &["rm", "--quiet", "chapter.tex"]);
+    std::fs::remove_file(dir.join("gone.tex")).unwrap();
+    s.run(&dir, &["checkout", "--quiet", "--detach"]);
+    let p = Panel::on(cx, &s, &dir);
+    p.update(cx, |g, _, cx| g.toggle_amend(false, cx));
+    p.draw(cx);
+    p.update(cx, |g, _, cx| {
+        g.view = View::History;
+        g.error = Some("index.lock exists".into());
+        cx.notify();
+    });
+    p.draw(cx);
+    p.read(cx, |g, _| {
+        assert_eq!(g.history.len(), 4);
+        assert_eq!(g.status().branch, None);
+        // main.tex staged and changed again, chapter.tex deleted from the index, gone.tex
+        // from the disk, ch/new.tex new.
+        assert_eq!(g.status().staged().count(), 2);
+        assert_eq!(g.status().unstaged().count(), 3);
+    });
+
+    // More history, a page at a time: here, nothing more.
+    p.update(cx, |g, _, cx| {
+        g.history_done = false;
+        g.load_more_history(cx);
+    });
+    cx.run_until_parked();
+    p.read(cx, |g, _| {
+        assert_eq!(g.history.len(), 4);
+        assert!(g.history_done);
+    });
+}
+
+#[gpui::test]
+fn reports_failures_by_kind(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = committed(&s, "repo");
+    let p = Panel::on(cx, &s, &dir);
+    let sync = || GitOp::Sync {
+        message: None,
+        review: SyncReview::default(),
+    };
+    let finish = |cx: &mut TestAppContext, op: GitOp, result: tex_git::Result<Outcome>| {
+        p.update(cx, |g, window, cx| g.finish(op, result, window, cx));
+        cx.run_until_parked();
+    };
+    // Offline: the changes stay here, with a warning.
+    let output = String::from("fatal: unable to access");
+    finish(
+        cx,
+        sync(),
+        Err(Error::Unreachable {
+            output: output.clone(),
+        }),
+    );
+    finish(cx, sync(), Err(Error::TimedOut(60)));
+    assert_eq!(p.notifications(cx), 2);
+    // Cancelled by the user: nothing to say.
+    finish(cx, GitOp::Fetch, Err(Error::Cancelled));
+    assert_eq!(p.notifications(cx), 2);
+    // Anything else, with git's output a click away.
+    let failed = Error::Failed {
+        command: "fetch".into(),
+        output,
+    };
+    finish(cx, GitOp::Fetch, Err(failed));
+    // Not an Overleaf project: an authentication failure is a plain error.
+    let auth = Error::Auth {
+        output: "Authentication failed".into(),
+    };
+    finish(cx, GitOp::Push, Err(auth));
+    assert_eq!(p.notifications(cx), 4);
+    assert!(!p.has_dialog(cx));
+    p.draw(cx);
+}
+
+const OVERLEAF: &str = "https://git.overleaf.com";
+
+/// A repository whose `origin` is an Overleaf project. Nothing here reaches it: only the
+/// remote's URL is read.
+fn overleaf_repo(s: &GitSandbox) -> PathBuf {
+    let dir = committed(s, "overleaf");
+    s.run(
+        &dir,
+        &[
+            "remote",
+            "add",
+            "origin",
+            &format!("{OVERLEAF}/abcdef123456"),
+        ],
+    );
+    dir
+}
+
+#[gpui::test]
+fn recognizes_overleaf_projects(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = overleaf_repo(&s);
+    let p = Panel::on(cx, &s, &dir);
+    cx.run_until_parked();
+    p.read(cx, |g, _| {
+        assert_eq!(g.overleaf.as_deref(), Some(OVERLEAF));
+        // The keychain has no token.
+        assert_eq!(g.credential, None);
+    });
+    // Build files are kept out of the project for everyone, not by a `.gitignore`.
+    let exclude = read(&dir, ".git/info/exclude");
+    assert!(exclude.contains("*.aux"), "{exclude}");
+    p.draw(cx);
+
+    // One branch: the one cloned, which tracks the project.
+    assert!(p.read(cx, |g, _| g.check_overleaf_branch()).is_err());
+    p.update(cx, |g, window, cx| {
+        g.sync(window, cx);
+        g.push(window, cx);
+        g.prompt_new_branch(window, cx);
+    });
+    assert!(p.requests().is_empty());
+    assert!(!p.has_dialog(cx));
+    assert_eq!(p.notifications(cx), 3);
+
+    p.update(cx, |g, _, _| {
+        g.status.upstream = Some("origin/master".into())
+    });
+    assert_eq!(p.read(cx, |g, _| g.check_overleaf_branch()), Ok(()));
+    p.update(cx, |g, window, cx| g.sync(window, cx));
+    assert!(
+        matches!(&p.requests()[..], [GitOp::Sync { message: None, review }] if review.is_empty())
+    );
+
+    // New files are shown before they reach the collaborators.
+    std::fs::write(dir.join("fig.tex"), "fig\n").unwrap();
+    p.update(cx, |g, _, cx| g.refresh(cx));
+    cx.run_until_parked();
+    p.update(cx, |g, window, cx| {
+        g.status.upstream = Some("origin/main".into());
+        g.message
+            .update(cx, |m, cx| m.set_value("Figure", window, cx));
+        g.sync(window, cx);
+    });
+    assert!(p.has_dialog(cx));
+    assert_eq!(p.requests().len(), 1);
+    p.confirm(cx);
+    let Some(GitOp::Sync { message, review }) = p.requests().pop() else {
+        panic!("{:?}", p.requests());
+    };
+    assert_eq!(message.as_deref(), Some("Figure"));
+    assert_eq!(review.added, ["fig.tex"]);
+}
+
+#[gpui::test]
+fn saves_an_overleaf_token_once_it_works(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let dir = overleaf_repo(&s);
+    let p = Panel::on(cx, &s, &dir);
+    let auth = || {
+        Err(Error::Auth {
+            output: "Authentication failed".into(),
+        })
+    };
+    let stored = |cx: &mut TestAppContext| {
+        let task = cx.update(|cx| overleaf::load_token(OVERLEAF, cx));
+        testing::resolve(cx, task)
+    };
+
+    // Overleaf wants a token: ask for one, then try again with it.
+    p.update(cx, |g, window, cx| {
+        g.finish(GitOp::Push, auth(), window, cx)
+    });
+    assert!(p.has_dialog(cx));
+    p.fill_and_confirm(cx, "not a token");
+    // Refused, the dialog stays.
+    assert!(p.has_dialog(cx));
+    assert!(p.requests().is_empty());
+    p.update(cx, |_, window, cx| window.close_dialog(cx));
+
+    p.update(cx, |g, window, cx| {
+        g.finish(GitOp::Push, auth(), window, cx)
+    });
+    p.fill_and_confirm(cx, "olp_first0token");
+    assert!(matches!(&p.requests()[..], [GitOp::Push]));
+    p.read(cx, |g, _| {
+        let c = g.credential.as_ref().unwrap();
+        assert_eq!(
+            (c.url.as_str(), c.password.as_str()),
+            (OVERLEAF, "olp_first0token")
+        );
+        assert!(g.credential_unsaved);
+    });
+    // Not saved until Overleaf accepted it.
+    assert_eq!(stored(cx), None);
+    p.update(cx, |g, window, cx| {
+        g.finish(GitOp::Push, Ok(Outcome::Done), window, cx)
+    });
+    cx.run_until_parked();
+    assert!(!p.read(cx, |g, _| g.credential_unsaved));
+    assert_eq!(stored(cx).as_deref(), Some("olp_first0token"));
+
+    // A refusal keeps the saved token (it may concern this project only), and the new
+    // token is not saved when the retry fails.
+    p.update(cx, |g, window, cx| {
+        g.finish(GitOp::Push, auth(), window, cx)
+    });
+    p.fill_and_confirm(cx, "olp_second0token");
+    p.update(cx, |g, window, cx| {
+        g.finish(GitOp::Push, auth(), window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(stored(cx).as_deref(), Some("olp_first0token"));
+    p.update(cx, |_, window, cx| window.close_dialog(cx));
+
+    // Another project's token reads the saved one.
+    p.update(cx, |g, _, cx| {
+        g.overleaf = None;
+        g.set_overleaf(Some(OVERLEAF.into()), cx);
+    });
+    cx.run_until_parked();
+    let password = p.read(cx, |g, _| g.credential.as_ref().map(|c| c.password.clone()));
+    assert_eq!(password.as_deref(), Some("olp_first0token"));
+}

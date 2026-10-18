@@ -107,3 +107,14 @@ impl GitSandbox {
         text(&out.stdout)
     }
 }
+
+/// What `task` resolves to, once everything pending has run.
+pub fn resolve<T: 'static>(cx: &mut TestAppContext, task: gpui_kit::Task<T>) -> T {
+    let out = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let slot = out.clone();
+    cx.foreground_executor()
+        .spawn(async move { *slot.borrow_mut() = Some(task.await) })
+        .detach();
+    cx.run_until_parked();
+    out.take().expect("the task is still pending")
+}

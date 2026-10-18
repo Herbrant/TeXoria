@@ -164,3 +164,6 @@ pub fn prompt_token(
         },
     );
 }
+
+#[cfg(test)]
+mod tests;

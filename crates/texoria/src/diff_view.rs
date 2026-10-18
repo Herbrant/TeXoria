@@ -524,19 +524,4 @@ fn files_for(source: &DiffSource, text: &str) -> Result<Vec<DiffFile>, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use gpui_kit::component::diff::{DiffFile, DiffFileStatus};
-
-    #[test]
-    fn untracked_patches_parse() {
-        let patch = tex_git::untracked_patch("ch/intro.tex", b"\\section{Intro}\nText");
-        let files = DiffFile::parse(&patch).unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path().as_str(), "ch/intro.tex");
-        assert_eq!(files[0].status(), DiffFileStatus::Added);
-        assert_eq!(files[0].additions(), 2);
-
-        let files = DiffFile::parse(&tex_git::untracked_patch("fig.pdf", b"%PDF\0")).unwrap();
-        assert!(files[0].is_binary());
-    }
-}
+mod tests;
