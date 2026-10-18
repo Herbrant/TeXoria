@@ -227,6 +227,7 @@ impl Agent {
                         .as_array()
                         .map(|a| a.iter().filter_map(Value::as_str).collect())
                         .unwrap_or_default();
+                    keep_pipes_to_ourselves();
                     let child = Command::new(std::env::current_exe().unwrap())
                         .args(args)
                         .stdin(Stdio::null())
@@ -266,3 +267,28 @@ fn send(msg: &Value) {
     let _ = writeln!(out, "{msg}");
     let _ = out.flush();
 }
+
+/// On Windows a child inherits every inheritable handle of its parent, not only the ones given
+/// as its stdio: a helper would keep this agent's stdin and stdout open too, and the client
+/// would see the agent's stdout end only when the helper does. The helpers here must hold
+/// stderr only, as the scripts say.
+#[cfg(windows)]
+fn keep_pipes_to_ourselves() {
+    use std::ffi::c_void;
+    unsafe extern "system" {
+        fn GetStdHandle(which: u32) -> *mut c_void;
+        fn SetHandleInformation(handle: *mut c_void, mask: u32, flags: u32) -> i32;
+    }
+    const STD_INPUT_HANDLE: u32 = -10i32 as u32;
+    const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+    const HANDLE_FLAG_INHERIT: u32 = 1;
+    for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE] {
+        // SAFETY: plain Win32 calls on this process's own standard handles.
+        unsafe {
+            SetHandleInformation(GetStdHandle(which), HANDLE_FLAG_INHERIT, 0);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn keep_pipes_to_ourselves() {}
