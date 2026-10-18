@@ -2,7 +2,7 @@
 # CI runner. Raise a crate's minimum when its tests improve; never lower it to make CI pass.
 pdf-view	95
 synctex	97
-tex-agent	78
+tex-agent	92
 tex-cite	94
 tex-compile	92
 tex-complete	97
@@ -13,4 +13,4 @@ tex-spell	95
 tex-syntax	97
 tex-update	90
 tex-vim	96
-texoria	24
+texoria	80
