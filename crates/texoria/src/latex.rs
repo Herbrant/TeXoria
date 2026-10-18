@@ -315,3 +315,6 @@ pub fn package_at_cursor(editor: &Entity<EditorState>, cx: &App) -> Option<Strin
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests;
