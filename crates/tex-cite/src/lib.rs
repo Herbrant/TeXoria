@@ -482,21 +482,107 @@ fn encode_path(s: &str) -> String {
     out
 }
 
-/// The entry of `bibtex` written one field per line, under `key`.
+/// The entry of `bibtex` written one field per line, under `key`. `None` if
+/// it would corrupt the file it goes into: not closed, without a type, with a
+/// field name BibTeX cannot read or a value whose braces do not pair up.
 pub fn normalize(bibtex: &str, key: &str) -> Option<String> {
     let entry = bib::parse(bibtex).into_iter().next()?;
+    if entry.truncated || entry.kind.is_empty() {
+        return None;
+    }
+    // The entry's closing delimiter.
+    let body_end = entry.range.end - 1;
     let mut out = format!("@{}{{{key},\n", entry.kind);
     for f in &entry.fields {
-        let raw = collapse(&bibtex[f.range.clone()]);
-        let value = if raw.chars().all(|c| c.is_ascii_digit()) {
-            raw
-        } else {
-            format!("{{{raw}}}")
-        };
+        let value = value_text(bibtex, f.range.clone(), body_end)?;
+        if !identifier(&f.name) || !balanced(&value) {
+            return None;
+        }
         out.push_str(&format!("  {} = {value},\n", f.name));
     }
     out.push('}');
     Some(out)
+}
+
+/// A field's value to write: a number or a macro name (`jan`) bare, a
+/// concatenation (`"a" # b`) as it is if well formed, anything else in braces.
+fn value_text(bibtex: &str, range: std::ops::Range<usize>, body_end: usize) -> Option<String> {
+    let b = bibtex.as_bytes();
+    let raw = collapse(&bibtex[range.clone()]);
+    let opened = range.start > 0 && matches!(b[range.start - 1], b'{' | b'"');
+    // A `}` that ends the entry does not end a bare value.
+    let closed = range.end < body_end && matches!(b[range.end], b'}' | b'"');
+    let expr = &bibtex[range.start - opened as usize..range.end + closed as usize];
+    if let Some(pieces) = concatenation(expr) {
+        return pieces.iter().all(|p| piece(p)).then(|| collapse(expr));
+    }
+    if number(&raw) || (!opened && identifier(&raw)) {
+        Some(raw)
+    } else {
+        // Its braces must pair up inside the value's own.
+        balanced(&raw).then(|| format!("{{{raw}}}"))
+    }
+}
+
+fn number(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+}
+
+/// One piece of a concatenation: `{...}`, `"..."`, a number or a macro name.
+fn piece(p: &str) -> bool {
+    let p = p.trim();
+    let delimited = |open: char, close: char| {
+        p.len() >= 2
+            && p.starts_with(open)
+            && p.ends_with(close)
+            && balanced(&p[1..p.len() - 1])
+            && concatenation(p).is_none()
+    };
+    delimited('{', '}') || delimited('"', '"') || number(p) || identifier(p)
+}
+
+/// A field or macro name BibTeX reads: a letter, then letters, digits and `_-:.+/`.
+fn identifier(s: &str) -> bool {
+    s.starts_with(|c: char| c.is_ascii_alphabetic())
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-:.+/".contains(c))
+}
+
+/// The pieces of `expr` if it joins several with `#` (outside braces and quotes).
+fn concatenation(expr: &str) -> Option<Vec<&str>> {
+    let (mut depth, mut quoted) = (0usize, false);
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    for (i, c) in expr.bytes().enumerate() {
+        match c {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            b'"' if depth == 0 => quoted = !quoted,
+            b'#' if depth == 0 && !quoted => {
+                pieces.push(&expr[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    (!pieces.is_empty()).then(|| {
+        pieces.push(&expr[start..]);
+        pieces
+    })
+}
+
+/// Whether every `}` closes an earlier `{` and every `{` is closed.
+fn balanced(s: &str) -> bool {
+    let mut depth = 0usize;
+    for c in s.bytes() {
+        match c {
+            b'{' => depth += 1,
+            b'}' if depth == 0 => return false,
+            b'}' => depth -= 1,
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 /// A key like `knuth1984texbook` for the entry of `bibtex`, not in `taken`.
@@ -689,6 +775,37 @@ mod tests {
             "godel"
         );
         assert_eq!(make_key("@misc{x}", &HashSet::new()), "ref");
+    }
+
+    #[test]
+    fn refuses_entries_that_would_corrupt_a_bib() {
+        for bad in [
+            // Found by fuzzing: no type, a junk field name, unbalanced braces.
+            ",\0@{  \0=@\0\0,\0@{  \0=@{!{!\0",
+            "@{k, title={T}}",
+            "@misc{k, title={T}",
+            "@misc{k, ti tle={T}}",
+            "@misc{k, {title}={T}}",
+            "@misc{k, title = \"a{b\"}",
+            // A value whose first brace closes early, a concatenation of nothing.
+            "@misc{{, t = @a(}\\{,}}",
+            "@misc{k, t = #\"}",
+        ] {
+            assert_eq!(normalize(bad, "key"), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn keeps_macros_and_concatenations() {
+        let bib = "@misc{k, month = jan, note = \"a\" #  {b} # mar, year = {2000},\n\
+                   title=\"T\", howpublished = 12a, empty = {}}";
+        let once = normalize(bib, "key").unwrap();
+        assert_eq!(
+            once,
+            "@misc{key,\n  month = jan,\n  note = \"a\" # {b} # mar,\n  year = 2000,\n  \
+             title = {T},\n  howpublished = {12a},\n  empty = {},\n}"
+        );
+        assert_eq!(normalize(&once, "key").as_deref(), Some(once.as_str()));
     }
 
     #[test]
@@ -907,6 +1024,23 @@ mod tests {
             proptest::prop_assert!(!e.truncated, "{}", bib);
             proptest::prop_assert_eq!(e.fields.len(), 6, "{}", bib);
             proptest::prop_assert_eq!(e.field("eprint"), Some("2301.01234"));
+        }
+
+        #[test]
+        fn normalized_entries_are_balanced_fixed_points(
+            pieces in proptest::collection::vec(proptest::sample::select(&[
+                "@misc{", "@{", "@a(", "k,", " t = ", "x=", "{", "}", "(", ")", "\"", "#",
+                ",", "=", " ", "\n", "\0", "@", "jan", "12", "é", "\\{", "%",
+            ][..]), 0..30),
+            any_text in "\\PC{0,40}",
+        ) {
+            for bib in [pieces.concat(), any_text] {
+                if let Some(once) = normalize(&bib, "key") {
+                    proptest::prop_assert!(balanced(&once), "{:?} -> {:?}", bib, once);
+                    let twice = normalize(&once, "key");
+                    proptest::prop_assert_eq!(twice.as_ref(), Some(&once), "{:?}", bib);
+                }
+            }
         }
 
         #[test]
