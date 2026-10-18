@@ -136,31 +136,4 @@ pub fn duplicates(d: &Diagnostic, keys: &std::collections::HashSet<&str>) -> boo
 }
 
 #[cfg(test)]
-mod tests {
-    use super::duplicates;
-    use tex_log::{Diagnostic, Severity};
-
-    #[test]
-    fn tells_duplicate_log_warnings() {
-        let keys = std::collections::HashSet::from(["sec:x", "knuth"]);
-        let d = |m: &str| Diagnostic {
-            severity: Severity::Warning,
-            file: None,
-            line: None,
-            message: m.into(),
-        };
-        assert!(duplicates(
-            &d("Reference `sec:x' on page 1 undefined on input line 5."),
-            &keys
-        ));
-        assert!(duplicates(
-            &d("Citation `knuth' on page 2 undefined on input line 9."),
-            &keys
-        ));
-        assert!(!duplicates(
-            &d("Reference `other' on page 1 undefined"),
-            &keys
-        ));
-        assert!(!duplicates(&d("There were undefined references."), &keys));
-    }
-}
+mod tests;

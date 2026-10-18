@@ -1161,12 +1161,14 @@ impl Workspace {
             this.update(cx, |this, cx| {
                 this.issues = issues;
                 for ix in 0..this.buffers.len() {
-                    let editor = &this.buffers[ix].editor;
-                    // Edited meanwhile: the next check is on its way.
-                    let same = texts
+                    let b = &this.buffers[ix];
+                    // Edited meanwhile: the next check is on its way. A buffer
+                    // not in `texts` was indexed from its file.
+                    let checked = texts
                         .iter()
-                        .find(|(e, _)| e == editor)
-                        .is_some_and(|(_, t)| *editor.read(cx).text() == *t);
+                        .find(|(e, _)| *e == b.editor)
+                        .map_or(&b.saved, |(_, t)| t);
+                    let same = *b.editor.read(cx).text() == **checked;
                     if same {
                         this.underline_issues(ix, cx);
                     }
@@ -5393,6 +5395,23 @@ fn dev_vendor_dir(name: &str) -> Option<PathBuf> {
 fn vendor_dir_of(repo: &Path, exe: &Path, name: &str) -> Option<PathBuf> {
     exe.starts_with(repo.join("target"))
         .then(|| repo.join("vendor").join(name))
+}
+
+/// What the other modules' tests look at.
+#[cfg(test)]
+impl Workspace {
+    pub(crate) fn issues(&self) -> &[tex_project::check::Issue] {
+        &self.issues
+    }
+
+    /// The editor, spelling and checks of the open file `path`.
+    pub(crate) fn buffer_parts(
+        &self,
+        path: &Path,
+    ) -> Option<(&Entity<EditorState>, &BufferSpell, &BufferChecks)> {
+        let b = self.buffers.iter().find(|b| b.path == path)?;
+        Some((&b.editor, &b.spell, &b.checks))
+    }
 }
 
 #[cfg(test)]
