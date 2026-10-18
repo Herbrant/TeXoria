@@ -351,6 +351,37 @@ fn keeps_the_end_of_stderr() {
 }
 
 #[test]
+fn reports_stderr_written_after_stdout_closed() {
+    // A helper of the agent (sharing its stderr) writes after the agent is gone.
+    let fake = Fake::new(json!({
+        "start": [
+            { "spawn": { "args": ["--late-stderr", "late words\n", "400"] } },
+            { "exit": 2 },
+        ],
+    }));
+    let (_agent, rx) = fake.start(|_| {});
+    assert_eq!(exited(&rx), "late words\n");
+}
+
+#[test]
+fn does_not_wait_forever_for_stderr() {
+    // A helper keeps stderr open long after the agent is gone.
+    let fake = Fake::new(json!({
+        "start": [
+            { "stderr": "bye\n" },
+            { "spawn": { "args": ["--sleep"] } },
+            { "exit": 2 },
+        ],
+    }));
+    let start = Instant::now();
+    let (agent, rx) = fake.start(|_| {});
+    assert_eq!(exited(&rx), "bye\n");
+    assert!(start.elapsed() < Duration::from_secs(10));
+    // Dropping it stops the helper.
+    drop(agent);
+}
+
+#[test]
 fn a_program_that_cannot_start() {
     let mut fake = Fake::new(json!({}));
     fake.spec.program = fake.path("missing");

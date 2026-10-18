@@ -5,7 +5,8 @@ use std::io::BufReader;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use agent_client_protocol_schema::ProtocolVersion;
 use agent_client_protocol_schema::v1 as acp;
@@ -19,6 +20,9 @@ use crate::rpc::{Connection, Incoming, Responder, RpcError};
 
 /// How much of the agent's stderr is kept, to explain a failure.
 const STDERR_TAIL: usize = 4000;
+/// How long the end of stderr is waited for once the agent closed stdout (a
+/// helper it started may keep stderr open).
+const STDERR_WAIT: Duration = Duration::from_secs(2);
 
 /// What the agent asks or tells, in the order it did.
 pub enum Event {
@@ -99,6 +103,7 @@ impl Agent {
         let stderr_pipe = child.stderr.take().expect("piped stderr");
 
         let stderr = Arc::new(Mutex::new(String::new()));
+        let (stderr_done, stderr_ended) = mpsc::channel::<()>();
         {
             let stderr = stderr.clone();
             let name = spec.name.clone();
@@ -119,6 +124,7 @@ impl Agent {
                         tail.drain(..cut);
                     }
                 }
+                drop(stderr_done);
             });
         }
 
@@ -159,8 +165,8 @@ impl Agent {
                 ))),
             },
             Incoming::Closed => {
-                // Let the stderr thread catch up with the last lines.
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                // Let the stderr thread read the last lines.
+                let _ = stderr_ended.recv_timeout(STDERR_WAIT);
                 on_event(Event::Exited(tail.lock().unwrap().clone()));
             }
         });
