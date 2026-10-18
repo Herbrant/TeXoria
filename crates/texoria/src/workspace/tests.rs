@@ -251,3 +251,325 @@ fn removing_a_folder_link_keeps_its_target() {
     assert!(link.symlink_metadata().is_err());
     assert!(target.path().join("theirs.tex").exists());
 }
+
+// ── Files and Git, as the sidebars ask for them ─────────────────────────
+
+/// `f` on the workspace in its window.
+fn with<R>(
+    cx: &mut TestAppContext,
+    window: WindowHandle<Root>,
+    workspace: &Entity<Workspace>,
+    f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> R,
+) -> R {
+    cx.update_window(window.into(), |_, window, cx| {
+        workspace.update(cx, |ws, cx| f(ws, window, cx))
+    })
+    .unwrap()
+}
+
+fn tabs(cx: &mut TestAppContext, workspace: &Entity<Workspace>, dir: &Path) -> Vec<String> {
+    let dir = paths::canonical(dir);
+    workspace.read_with(cx, |ws, _| {
+        (ws.buffers.iter())
+            .map(|b| {
+                b.path
+                    .strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect()
+    })
+}
+
+fn text_of(cx: &mut TestAppContext, workspace: &Entity<Workspace>, path: &Path) -> String {
+    workspace.read_with(cx, |ws, cx| {
+        let b = ws.buffers.iter().find(|b| b.path == path).unwrap();
+        b.editor.read(cx).text().to_string()
+    })
+}
+
+#[gpui::test]
+fn file_operations_keep_tabs_in_step(cx: &mut TestAppContext) {
+    let (dir, window, workspace) = sample(cx);
+    let d = paths::canonical(dir.path());
+    let run = |cx: &mut TestAppContext, op: FileOp| {
+        with(cx, window, &workspace, |ws, window, cx| {
+            ws.run_file_op(op, window, cx)
+        });
+        cx.run_until_parked();
+    };
+    // A text file opens from the Files view.
+    let methods = d.join("chapters/methods.tex");
+    with(cx, window, &workspace, |ws, window, cx| {
+        let files = ws.files.clone();
+        ws.on_file_tree_event(&files, &FileTreeEvent::Open(methods.clone()), window, cx)
+    });
+    assert_eq!(
+        tabs(cx, &workspace, &d),
+        ["main.tex", "chapters/methods.tex"]
+    );
+
+    // A new file opens in a tab.
+    run(cx, FileOp::CreateFile(d.join("notes.tex")));
+    assert!(d.join("notes.tex").is_file());
+    assert_eq!(
+        tabs(cx, &workspace, &d),
+        ["main.tex", "chapters/methods.tex", "notes.tex"]
+    );
+    run(cx, FileOp::CreateDir(d.join("figures/plots")));
+    assert!(d.join("figures/plots").is_dir());
+
+    // Tabs follow a file and a folder.
+    run(
+        cx,
+        FileOp::Rename {
+            from: methods.clone(),
+            to: d.join("chapters/method.tex"),
+        },
+    );
+    run(
+        cx,
+        FileOp::Rename {
+            from: d.join("chapters"),
+            to: d.join("parts"),
+        },
+    );
+    assert_eq!(
+        tabs(cx, &workspace, &d),
+        ["main.tex", "parts/method.tex", "notes.tex"]
+    );
+    let text = text_of(cx, &workspace, &d.join("parts/method.tex"));
+    assert_eq!(
+        text,
+        std::fs::read_to_string(d.join("parts/method.tex")).unwrap()
+    );
+
+    // The root file renamed: the project follows it.
+    run(
+        cx,
+        FileOp::Rename {
+            from: d.join("main.tex"),
+            to: d.join("paper.tex"),
+        },
+    );
+    workspace.read_with(cx, |ws, _| assert_eq!(ws.root, Some(d.join("paper.tex"))));
+    assert_eq!(
+        tabs(cx, &workspace, &d),
+        ["paper.tex", "parts/method.tex", "notes.tex"]
+    );
+
+    // Deleting a folder closes the tabs of its files; the active one stays active.
+    with(cx, window, &workspace, |ws, _, _| ws.active = 2);
+    run(cx, FileOp::Delete(d.join("parts")));
+    assert!(!d.join("parts").exists());
+    assert_eq!(tabs(cx, &workspace, &d), ["paper.tex", "notes.tex"]);
+    workspace.read_with(cx, |ws, _| assert_eq!(ws.active, 1));
+
+    // A failure leaves everything as it was, with a word why.
+    run(cx, FileOp::CreateFile(d.join("notes.tex")));
+    run(cx, FileOp::Delete(d.join("missing.tex")));
+    assert_eq!(tabs(cx, &workspace, &d), ["paper.tex", "notes.tex"]);
+    let notes = cx
+        .update_window(window.into(), |_, window, cx| {
+            window.notifications(cx).len()
+        })
+        .unwrap();
+    assert_eq!(notes, 2);
+}
+
+/// The sample project in a repository the workspace trusts, driven by the sandbox's git,
+/// with its `main` pushed to a bare `origin`.
+fn sample_repo(
+    cx: &mut TestAppContext,
+    s: &testing::GitSandbox,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    PathBuf,
+    WindowHandle<Root>,
+    Entity<Workspace>,
+) {
+    let tmp = testing::fixture_copy("sample");
+    let d = paths::canonical(tmp.path());
+    s.run(&d, &["init", "--quiet"]);
+    s.run(&d, &["add", "-A"]);
+    s.run(&d, &["commit", "--quiet", "-m", "sample"]);
+    let bare = s.dir.join("origin.git");
+    s.run(&s.dir, &["init", "--bare", "--quiet", "origin.git"]);
+    s.run(&bare, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    s.run(&d, &["remote", "add", "origin", &bare.to_string_lossy()]);
+    s.run(&d, &["push", "--quiet", "-u", "origin", "main"]);
+    let (window, workspace) = testing::open(cx, Some(d.join("main.tex")), testing::startup());
+    // Untrusted until now: git has not run. Trusted, it runs with the sandbox's git.
+    workspace.update(cx, |ws, cx| {
+        assert!(ws.git.read(cx).repo().is_none());
+        ws.git.update(cx, |g, _| g.use_git(s.git.clone()));
+        ws.trust_git(cx);
+    });
+    cx.run_until_parked();
+    workspace.read_with(cx, |ws, cx| {
+        assert!(ws.settings.is_trusted(&d));
+        assert!(ws.git.read(cx).repo().is_some());
+    });
+    (tmp, d, bare, window, workspace)
+}
+
+fn git_request(
+    cx: &mut TestAppContext,
+    window: WindowHandle<Root>,
+    workspace: &Entity<Workspace>,
+    op: GitOp,
+) {
+    with(cx, window, workspace, |ws, window, cx| {
+        let git = ws.git.clone();
+        ws.on_git_event(&git, &GitPanelEvent::Request(op), window, cx)
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn git_operations_reload_open_tabs(cx: &mut TestAppContext) {
+    let Some(s) = testing::GitSandbox::new() else {
+        return;
+    };
+    let (_tmp, d, bare, window, workspace) = sample_repo(cx, &s);
+    let (main, methods, extra) = (
+        d.join("main.tex"),
+        d.join("chapters/methods.tex"),
+        d.join("extra.tex"),
+    );
+    let original = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(&extra, "extra\n").unwrap();
+    with(cx, window, &workspace, |ws, window, cx| {
+        ws.activate_file(methods.clone(), window, cx);
+        ws.activate_file(extra.clone(), window, cx);
+    });
+    // Changed by another editor: picked up when the window comes back.
+    std::fs::write(&main, "changed elsewhere\n").unwrap();
+    with(cx, window, &workspace, |ws, window, cx| {
+        ws.reload_from_disk(window, cx);
+        ws.git.update(cx, |g, cx| g.refresh(cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(text_of(cx, &workspace, &main), "changed elsewhere\n");
+    let marks = workspace.read_with(cx, |ws, cx| ws.git.read(cx).file_marks());
+    assert_eq!(marks.get(&main), Some(&crate::file_tree::GitMark::Modified));
+    assert_eq!(marks.get(&extra), Some(&crate::file_tree::GitMark::Added));
+
+    // Discarding puts the file back in its tab, and closes the deleted file's.
+    git_request(
+        cx,
+        window,
+        &workspace,
+        GitOp::Discard {
+            tracked: vec!["main.tex".into()],
+            untracked: vec!["extra.tex".into()],
+        },
+    );
+    assert_eq!(text_of(cx, &workspace, &main), original);
+    assert_eq!(
+        tabs(cx, &workspace, &d),
+        ["main.tex", "chapters/methods.tex"]
+    );
+
+    // So does a pull.
+    let other = s.dir.join("other");
+    s.run(
+        &s.dir,
+        &["clone", "--quiet", &bare.to_string_lossy(), "other"],
+    );
+    std::fs::write(other.join("chapters/methods.tex"), "pulled\n").unwrap();
+    s.run(&other, &["commit", "--quiet", "-am", "elsewhere"]);
+    s.run(&other, &["push", "--quiet"]);
+    git_request(cx, window, &workspace, GitOp::Pull);
+    assert_eq!(text_of(cx, &workspace, &methods), "pulled\n");
+}
+
+#[gpui::test]
+fn diff_tabs(cx: &mut TestAppContext) {
+    let Some(s) = testing::GitSandbox::new() else {
+        return;
+    };
+    let (_tmp, d, _, window, workspace) = sample_repo(cx, &s);
+    let main = d.join("main.tex");
+    let original = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(&main, "changed\n").unwrap();
+    let git_event = |cx: &mut TestAppContext, ev: GitPanelEvent| {
+        with(cx, window, &workspace, |ws, window, cx| {
+            let git = ws.git.clone();
+            ws.on_git_event(&git, &ev, window, cx)
+        });
+        cx.run_until_parked();
+    };
+    let diff_event = |cx: &mut TestAppContext, ev: DiffViewEvent| {
+        with(cx, window, &workspace, |ws, window, cx| {
+            let diff = ws.diff.clone().unwrap();
+            ws.on_diff_event(&diff, &ev, window, cx)
+        });
+        cx.run_until_parked();
+    };
+    let source = DiffSource::Working {
+        path: "main.tex".into(),
+        staged: false,
+        untracked: false,
+    };
+    git_event(cx, GitPanelEvent::OpenDiff(source.clone()));
+    workspace.read_with(cx, |ws, cx| {
+        assert!(ws.diff_active);
+        let diff = ws.diff.as_ref().unwrap().read(cx);
+        assert_eq!(diff.title(), "main.tex (changes)");
+    });
+    // A new status re-reads it; the side-by-side choice is remembered.
+    git_event(cx, GitPanelEvent::StatusChanged);
+    git_event(cx, GitPanelEvent::WorktreeChanged);
+    diff_event(cx, DiffViewEvent::SplitChanged(true));
+    workspace.read_with(cx, |ws, _| assert!(ws.settings.diff_split));
+    // Opening the file leaves the diff for the editor.
+    diff_event(cx, DiffViewEvent::Open(main.clone()));
+    workspace.read_with(cx, |ws, _| assert!(!ws.diff_active && ws.diff.is_some()));
+
+    // Restoring the last commit's version.
+    let sha = s.run(&d, &["rev-parse", "HEAD"]);
+    diff_event(
+        cx,
+        DiffViewEvent::Restore {
+            sha,
+            path: "main.tex".into(),
+        },
+    );
+    assert_eq!(std::fs::read_to_string(&main).unwrap(), original);
+    assert_eq!(text_of(cx, &workspace, &main), original);
+
+    // A resolved conflict is written and staged, and its tab closes.
+    std::fs::write(d.join("refs.bib"), "% resolved?\n").unwrap();
+    diff_event(
+        cx,
+        DiffViewEvent::Resolved {
+            path: "refs.bib".into(),
+            text: "% resolved\n".into(),
+        },
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.join("refs.bib")).unwrap(),
+        "% resolved\n"
+    );
+    assert_eq!(s.run(&d, &["diff", "--cached", "--name-only"]), "refs.bib");
+    workspace.read_with(cx, |ws, _| assert!(ws.diff.is_none() && !ws.diff_active));
+
+    git_event(cx, GitPanelEvent::OpenDiff(source));
+    diff_event(cx, DiffViewEvent::Close);
+    workspace.read_with(cx, |ws, _| assert!(ws.diff.is_none()));
+}
+
+#[gpui::test]
+fn no_diff_without_a_trusted_repository(cx: &mut TestAppContext) {
+    let (_dir, window, workspace) = sample(cx);
+    with(cx, window, &workspace, |ws, window, cx| {
+        let source = DiffSource::Conflict {
+            path: "main.tex".into(),
+        };
+        ws.open_diff(source, window, cx)
+    });
+    workspace.read_with(cx, |ws, _| assert!(ws.diff.is_none() && !ws.diff_active));
+}
