@@ -244,6 +244,88 @@ mod tests {
     }
 
     #[test]
+    fn long_lists_of_problems_are_cut() {
+        let dir = Path::new("/p");
+        let many: Vec<Diagnostic> = (0..MAX_PROBLEMS as u32 + 5)
+            .map(|i| diag(Severity::Warning, dir.join("a.tex"), i, "Overfull"))
+            .collect();
+        let text = format_diagnostics(dir, &many);
+        assert_eq!(text.lines().count(), MAX_PROBLEMS + 1);
+        assert!(text.ends_with("\n… and 5 more."));
+        assert!(!format_diagnostics(dir, &many[..MAX_PROBLEMS]).contains("more"));
+        assert_eq!(format_diagnostics(dir, &[]), "No errors or warnings.");
+    }
+
+    #[test]
+    fn problems_without_a_place() {
+        let dir = Path::new("/p");
+        let ds = [
+            Diagnostic {
+                severity: Severity::Info,
+                file: Some(dir.join("main.tex")),
+                line: None,
+                message: "Writing index".into(),
+            },
+            Diagnostic {
+                severity: Severity::Error,
+                file: None,
+                line: Some(3),
+                message: "Emergency stop".into(),
+            },
+            // Outside the project: the path stays whole.
+            diag(
+                Severity::Warning,
+                PathBuf::from("/elsewhere/x.sty"),
+                1,
+                "Old",
+            ),
+        ];
+        let text = format_diagnostics(dir, &ds);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "main.tex: info: Writing index");
+        assert_eq!(lines[1], "error: Emergency stop");
+        assert_eq!(
+            lines[2],
+            format!(
+                "{}:1: warning: Old",
+                Path::new("/elsewhere/x.sty").display()
+            )
+        );
+    }
+
+    #[test]
+    fn rewrites_and_selections_name_their_lines() {
+        for how in Rewrite::PRESETS {
+            let p = rewrite(Path::new("a.tex"), 1, 1, "x", &how);
+            assert!(p.contains(how.instruction()));
+            assert!(!how.label().is_empty());
+        }
+        assert_eq!(
+            Rewrite::Custom("x".into()).label(),
+            "Edit with Instructions"
+        );
+        let s = selection(Path::new("a.tex"), 3, 3, "one\n");
+        assert_eq!(s, "Selected in `a.tex`, line 3:\n\n```latex\none\n```");
+        assert!(selection(Path::new("a.tex"), 3, 5, "x").contains("lines 3–5:"));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn fences_are_longer_than_any_backtick_run(text in "[`a\n]{0,40}") {
+            let fenced = fenced(&text);
+            let fence = fenced.split("latex\n").next().unwrap();
+            let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+            proptest::prop_assert!(fence.len() > longest.max(2));
+            proptest::prop_assert!(fence.chars().all(|c| c == '`'));
+            let fence_line = format!("\n{fence}");
+            proptest::prop_assert!(fenced.ends_with(&fence_line));
+            // The text inside is whole, but for its last line breaks.
+            let inner = &fenced[fence.len() + 6..fenced.len() - fence.len() - 1];
+            proptest::prop_assert_eq!(inner, text.trim_end_matches('\n'));
+        }
+    }
+
+    #[test]
     fn preamble_names_the_root_file() {
         let p = preamble(Path::new("/p/thesis.tex"), Path::new("/p"));
         assert!(p.contains("root file is `thesis.tex`"));
