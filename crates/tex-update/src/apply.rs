@@ -249,20 +249,35 @@ fn encode_command(script: &str) -> String {
     out
 }
 
+/// Attempts after the first to mount the disk image.
+const ATTACH_RETRIES: usize = 2;
+
 /// Copy the app out of the disk image, check its signature, and swap it in.
 fn install_mac(dmg: &Path, bundle: &Path, staging: &Path) -> Result<()> {
     let mnt = tempfile::tempdir()?;
-    run(Command::new("hdiutil")
-        .args([
-            "attach",
-            "-nobrowse",
-            "-readonly",
-            "-noautoopen",
-            "-quiet",
-            "-mountpoint",
-        ])
-        .arg(mnt.path())
-        .arg(dmg))?;
+    let attach = || {
+        run(Command::new("hdiutil")
+            .args([
+                "attach",
+                "-nobrowse",
+                "-readonly",
+                "-noautoopen",
+                "-quiet",
+                "-mountpoint",
+            ])
+            .arg(mnt.path())
+            .arg(dmg))
+    };
+    // hdiutil fails now and then while the system is busy with another image.
+    let mut attached = attach();
+    for _ in 0..ATTACH_RETRIES {
+        if attached.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        attached = attach();
+    }
+    attached?;
     let new = staging.join("TeXoria.app");
     let copied = run(Command::new("ditto")
         .arg(mnt.path().join("TeXoria.app"))
@@ -408,8 +423,19 @@ fn run(cmd: &mut Command) -> Result<()> {
         .output()
         .with_context(|| format!("running {program}"))?;
     if !out.status.success() {
+        // Some tools (hdiutil -quiet) say nothing on stderr: then what they printed, or at least
+        // how they ended.
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(anyhow!("{program} failed: {}", err.trim()));
+        let said = match err.trim() {
+            "" => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            err => err.to_string(),
+        };
+        let said = if said.is_empty() {
+            out.status.to_string()
+        } else {
+            said
+        };
+        return Err(anyhow!("{program} failed: {said}"));
     }
     Ok(())
 }
