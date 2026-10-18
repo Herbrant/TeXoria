@@ -173,8 +173,12 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         {
-            let _open = self.shared.open.lock().unwrap();
+            let mut open = self.shared.open.lock().unwrap();
             self.shared.stop.store(true, Ordering::SeqCst);
+            // The tools are no longer the agent's: hang up on it.
+            for (_, stream) in open.drain() {
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
         }
         // Wake the accept loop up so it sees `stop`.
         let _ = TcpStream::connect(self.addr);
@@ -594,6 +598,30 @@ mod tests {
             )["id"],
             1
         );
+    }
+
+    #[test]
+    fn stopping_the_server_hangs_up_on_its_clients() {
+        let server = Server::start(Arc::new(Echo)).unwrap();
+        let addr = server.addr;
+        let (mut w, mut r) = connect(&server);
+        assert_eq!(
+            ask(
+                &mut w,
+                &mut r,
+                json!({"jsonrpc":"2.0","id":1,"method":"ping"})
+            )["id"],
+            1
+        );
+        drop(server);
+        let _ = writeln!(w, "{}", json!({"jsonrpc":"2.0","id":2,"method":"ping"}));
+        assert!(hung_up(r.get_mut()));
+        // Nobody listens any more.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while TcpStream::connect(addr).is_ok() {
+            assert!(std::time::Instant::now() < deadline, "still accepting");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]
