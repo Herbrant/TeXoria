@@ -291,8 +291,9 @@ struct Preprint {
 impl Preprint {
     fn bibtex(&self) -> String {
         let mut out = format!("@misc{{arxiv{},\n", self.id.replace(['/', '.'], ""));
-        out.push_str(&format!("  title = {{{}}},\n", self.title));
-        out.push_str(&format!("  author = {{{}}},\n", self.authors.join(" and ")));
+        let authors: Vec<String> = self.authors.iter().map(|a| tex_value(a)).collect();
+        out.push_str(&format!("  title = {{{}}},\n", tex_value(&self.title)));
+        out.push_str(&format!("  author = {{{}}},\n", authors.join(" and ")));
         out.push_str(&format!("  year = {{{}}},\n", self.year));
         out.push_str(&format!("  eprint = {{{}}},\n", self.id));
         out.push_str("  archivePrefix = {arXiv},\n");
@@ -303,6 +304,51 @@ impl Preprint {
         out.push('}');
         out
     }
+}
+
+/// arXiv's text as a BibTeX value: `%`, `&` and `#` escaped (math and other
+/// commands stay as they are), and braces that do not pair up dropped, since
+/// they would end the entry early or never.
+fn tex_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    // Where each `{` not closed yet is in `out`, and how long it is (`\{` too).
+    let mut open: Vec<(usize, usize)> = Vec::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some(b @ ('{' | '}')) => brace(&mut out, &mut open, b, "\\"),
+                Some(next) => {
+                    out.push('\\');
+                    out.push(next);
+                }
+                // It would escape the value's closing brace.
+                None => {}
+            },
+            '{' | '}' => brace(&mut out, &mut open, c, ""),
+            '%' | '&' | '#' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    // Unclosed ones, from the last.
+    for (at, len) in open.into_iter().rev() {
+        out.replace_range(at..at + len, "");
+    }
+    out
+}
+
+/// Push a brace (`prefix` is `\` for an escaped one), unless it closes nothing.
+fn brace(out: &mut String, open: &mut Vec<(usize, usize)>, b: char, prefix: &str) {
+    if b == '{' {
+        open.push((out.len(), prefix.len() + 1));
+    } else if open.pop().is_none() {
+        return;
+    }
+    out.push_str(prefix);
+    out.push(b);
 }
 
 /// The first entry of an arXiv Atom feed (there is one per requested id).
@@ -776,6 +822,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn preprints_escape_what_tex_would_misread() {
+        let p = Preprint {
+            id: "2301.01234".into(),
+            title: "50% of {x & y} in $O(n_1)$, #1 \\& 2\\% }odd{ \\".into(),
+            authors: vec!["A. {B".into(), "C} D".into()],
+            year: "2023".into(),
+            category: Some("cs.LG".into()),
+            doi: None,
+        };
+        let bib = p.bibtex();
+        let e = &bib::parse(&bib)[0];
+        assert!(!e.truncated, "{bib}");
+        assert_eq!(e.key, "arxiv230101234");
+        let names: Vec<_> = e.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "title",
+                "author",
+                "year",
+                "eprint",
+                "archiveprefix",
+                "primaryclass",
+                "url"
+            ]
+        );
+        assert_eq!(
+            e.title.as_deref(),
+            Some("50\\% of x \\& y in $O(n_1)$, \\#1 \\& 2\\% odd")
+        );
+        assert_eq!(e.author.as_deref(), Some("A. B and C D"));
+    }
+
     proptest::proptest! {
         #[test]
         fn classifies_every_doi(d in "10\\.[0-9]{4,5}(\\.[0-9]{1,3})?/[A-Za-z0-9._;()/:<>-]{1,20}") {
@@ -805,6 +885,28 @@ mod tests {
             let key = make_key(&bib, &taken);
             proptest::prop_assert!(!key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric()));
             proptest::prop_assert!(!taken.contains(&key), "{} is taken", key);
+        }
+
+        #[test]
+        fn preprints_round_trip(
+            title in "[a-z {}%&#\\\\$_]{0,30}",
+            authors in proptest::collection::vec("[A-Za-z {}.\\\\]{1,12}", 1..4),
+        ) {
+            let p = Preprint {
+                id: "2301.01234".into(),
+                title,
+                authors,
+                year: "2023".into(),
+                category: None,
+                doi: None,
+            };
+            let bib = p.bibtex();
+            let entries = bib::parse(&bib);
+            proptest::prop_assert_eq!(entries.len(), 1, "{}", bib);
+            let e = &entries[0];
+            proptest::prop_assert!(!e.truncated, "{}", bib);
+            proptest::prop_assert_eq!(e.fields.len(), 6, "{}", bib);
+            proptest::prop_assert_eq!(e.field("eprint"), Some("2301.01234"));
         }
 
         #[test]
