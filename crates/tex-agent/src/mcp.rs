@@ -229,7 +229,10 @@ fn serve(
     if !first.is_some_and(|t| same(t.as_bytes(), token.as_bytes())) {
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, "bad token"));
     }
+    // On both handles: on Windows a cloned socket keeps its own timeout, and the reader would
+    // drop an agent that stays quiet for longer than the token's.
     writer.set_read_timeout(None)?;
+    reader.get_ref().set_read_timeout(None)?;
     while let Some(line) = crate::rpc::read_line(&mut reader, 64 << 20)? {
         if line.trim().is_empty() {
             continue;
