@@ -167,7 +167,8 @@ fn opening_projects_and_folders(cx: &mut TestAppContext) {
         app.read(cx, |ws, _| ws.root.clone()),
         Some(odir.join("paper.tex"))
     );
-    assert_eq!(app.active(cx), odir.join("part.tex").to_string_lossy());
+    let part = odir.join("part.tex").to_string_lossy().replace('\\', "/");
+    assert_eq!(app.active(cx), part);
     let r = answer.try_recv().unwrap();
     assert_eq!(
         (r.is_error, r.text.as_str()),

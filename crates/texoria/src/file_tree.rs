@@ -385,7 +385,10 @@ impl FileTree {
 }
 
 /// Tree items are identified by their path.
+/// A row's id: its path, with the system's separators (git's paths joined to a folder have
+/// `/` in them on Windows, the scanned ones `\`).
 fn item_id(path: &Path) -> SharedString {
+    let path: PathBuf = path.components().collect();
     path.to_string_lossy().into_owned().into()
 }
 

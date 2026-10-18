@@ -278,7 +278,9 @@ fn switching_engines_builds_again(cx: &mut TestAppContext) {
         }
     ));
     let saved = Settings::load_from(dir.path().join("settings.toml"));
-    assert_eq!(saved.engine.as_deref(), Some("fake-engine"));
+    // A custom engine is labelled with its program's file name.
+    let label = format!("fake-engine{}", std::env::consts::EXE_SUFFIX);
+    assert_eq!(saved.engine.as_deref(), Some(label.as_str()));
     app.update(cx, |ws, _, cx| ws.next_engine(cx));
     wait_runs(cx, &app, 3);
     assert_eq!(app.read(cx, |ws, _| ws.engine_ix), 0);

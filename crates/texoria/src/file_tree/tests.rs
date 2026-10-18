@@ -14,6 +14,12 @@ use gpui_kit::gpui;
 fn ids_and_labels() {
     let path = Path::new("/project/ch/intro.tex");
     assert_eq!(item_id(path).as_ref(), path.to_string_lossy());
+    // The same row whichever separators a path was built with.
+    let folder = Path::new("/project");
+    assert_eq!(
+        item_id(&folder.join("ch/intro.tex")),
+        item_id(&folder.join("ch").join("intro.tex"))
+    );
     assert!(!reveal_label().is_empty());
     assert!(GitMark::Added < GitMark::Modified && GitMark::Modified < GitMark::Conflict);
 }
@@ -258,7 +264,7 @@ fn renames_and_deletes(cx: &mut TestAppContext) {
         t.prompt_rename(intro.clone(), window, cx)
     });
     f.type_and_confirm(cx, "opening");
-    assert!(!f.has_dialog(cx));
+    assert!(!f.has_dialog(cx), "{:?}", f.requests.borrow());
     // The same name: nothing to do.
     f.update(cx, |t, window, cx| {
         t.prompt_rename(intro.clone(), window, cx)

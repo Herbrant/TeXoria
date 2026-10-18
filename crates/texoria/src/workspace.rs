@@ -2704,6 +2704,21 @@ impl Workspace {
         prompt
     }
 
+    /// `path` relative to the project, as the agents' tools show it: with `/` on every system,
+    /// like the paths of `\input` and `\includegraphics`.
+    fn tool_path(&self, path: &Path) -> String {
+        let rel = self.relative(path);
+        if rel.is_absolute() {
+            // Outside the project: as the system writes it.
+            return rel.display().to_string();
+        }
+        let parts: Vec<_> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect();
+        parts.join("/")
+    }
+
     fn relative(&self, path: &Path) -> PathBuf {
         self.project_dir()
             .and_then(|d| path.strip_prefix(d).ok().map(Path::to_path_buf))
@@ -2991,7 +3006,7 @@ impl Workspace {
                         e.author.as_deref().unwrap_or("?"),
                         e.year.as_deref().unwrap_or("n.d."),
                         e.title.as_deref().unwrap_or(""),
-                        self.relative(file).display()
+                        self.tool_path(file)
                     ));
                 }
             }
@@ -2999,11 +3014,7 @@ impl Workspace {
         for (file, index) in project.indexes() {
             for b in &index.bibitems {
                 if words.iter().all(|w| b.name.to_lowercase().contains(w)) {
-                    lines.push(format!(
-                        "{} — \\bibitem [{}]",
-                        b.name,
-                        self.relative(file).display()
-                    ));
+                    lines.push(format!("{} — \\bibitem [{}]", b.name, self.tool_path(file)));
                 }
             }
         }
@@ -3028,11 +3039,7 @@ impl Workspace {
             t.display_math
         );
         for (file, c) in &self.word_counts {
-            out.push_str(&format!(
-                "\n{}: {} words",
-                self.relative(file).display(),
-                c.words()
-            ));
+            out.push_str(&format!("\n{}: {} words", self.tool_path(file), c.words()));
         }
         out
     }
@@ -3090,7 +3097,7 @@ impl Workspace {
                     "{indent}{:?}: {} ({}:{})",
                     o.item.kind,
                     o.item.title,
-                    self.relative(&o.file).display(),
+                    self.tool_path(&o.file),
                     o.item.line + 1
                 )
             })
