@@ -185,6 +185,10 @@ impl Drop for Server {
     }
 }
 
+/// After a failed accept (out of file descriptors…), wait this long: the
+/// error would come right back.
+const ACCEPT_PAUSE: Duration = Duration::from_millis(100);
+
 /// Hand the connections of `incoming` to `serve` until `stop`.
 fn accept_loop(
     incoming: impl Iterator<Item = io::Result<TcpStream>>,
@@ -197,7 +201,10 @@ fn accept_loop(
         }
         match stream {
             Ok(stream) => serve(stream),
-            Err(e) => log::debug!("MCP server: {e}"),
+            Err(e) => {
+                log::debug!("MCP server: {e}");
+                std::thread::sleep(ACCEPT_PAUSE);
+            }
         }
     }
 }
@@ -622,6 +629,24 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "still accepting");
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn waits_after_a_failed_accept() {
+        let stop = AtomicBool::new(false);
+        let errors = (0..3).map(|_| Err(io::Error::other("Too many open files")));
+        let start = std::time::Instant::now();
+        accept_loop(errors, &stop, |_| unreachable!());
+        assert!(start.elapsed() >= ACCEPT_PAUSE * 3, "{:?}", start.elapsed());
+        // A stopped server takes nothing more.
+        stop.store(true, Ordering::SeqCst);
+        let start = std::time::Instant::now();
+        accept_loop(
+            std::iter::repeat_with(|| Err(io::Error::other("x"))),
+            &stop,
+            |_| {},
+        );
+        assert!(start.elapsed() < ACCEPT_PAUSE);
     }
 
     #[test]
