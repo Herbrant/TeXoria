@@ -20,6 +20,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # The prebuilt cargo-fuzz defaults to the target it was built for (musl, whose static libc
+  # the sanitizers cannot use).
+  TARGET: x86_64-unknown-linux-gnu
 
 jobs:
   fuzz:
@@ -48,7 +51,7 @@ jobs:
         working-directory: fuzz
 
       - name: Build
-        run: cargo fuzz build -O
+        run: cargo fuzz build -O --target "$TARGET"
         working-directory: fuzz
 
       - name: Run
@@ -62,7 +65,7 @@ jobs:
           failed=0
           for target in $(cargo fuzz list); do
             echo "::group::$target ($seconds s)"
-            cargo fuzz run -O "$target" -- -max_total_time="$seconds" -rss_limit_mb=2048 \
+            cargo fuzz run -O --target "$TARGET" "$target" -- -max_total_time="$seconds" -rss_limit_mb=2048 \
               || { echo "::error::$target crashed"; failed=1; }
             echo "::endgroup::"
           done
