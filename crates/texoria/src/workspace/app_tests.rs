@@ -3,6 +3,8 @@
 
 mod agents;
 mod builds;
+mod editing;
+mod pdf;
 mod tools;
 
 use std::path::{Path, PathBuf};
@@ -104,7 +106,13 @@ impl Open {
         cx.run_until_parked();
     }
 
+    /// Dispatch `action` as a shortcut typed in the active editor (in the window, if none).
     fn dispatch(&self, cx: &mut TestAppContext, action: impl gpui_kit::Action) {
+        self.update(cx, |ws, window, cx| {
+            let editor = (ws.buffers.get(ws.active)).filter(|_| !ws.diff_active);
+            let focus = editor.map_or(ws.focus.clone(), |b| b.editor.focus_handle(cx));
+            window.focus(&focus, cx);
+        });
         self.draw(cx);
         cx.dispatch_action(self.window.into(), action);
         cx.run_until_parked();
