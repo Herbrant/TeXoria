@@ -47,9 +47,41 @@ pub enum Dictionary {
     Failed(SharedString),
 }
 
+/// Where the dictionaries come from: the system's, the cache, else a
+/// download. Tests never download one.
+pub struct Dictionaries {
+    store: Store,
+    download: bool,
+}
+
+impl Dictionaries {
+    pub fn new(store: Store) -> Self {
+        Self {
+            store,
+            download: true,
+        }
+    }
+
+    /// Only the dictionaries of `store` already on this machine.
+    pub fn offline(store: Store) -> Self {
+        Self {
+            store,
+            download: false,
+        }
+    }
+
+    /// Load the dictionary for `code`, downloading it if allowed. Blocking.
+    pub fn load(&self, code: &str) -> Result<Speller> {
+        if !self.download && self.store.local(code).is_none() {
+            anyhow::bail!("no {code} dictionary on this machine");
+        }
+        self.store.load(code)
+    }
+}
+
 /// The dictionaries, shared by every buffer.
 pub struct Spell {
-    pub store: Arc<Store>,
+    pub store: Arc<Dictionaries>,
     pub dictionaries: HashMap<&'static str, Dictionary>,
     /// The system locale's region, for regional variants (`GB` → `en-GB`).
     pub region: Option<String>,
@@ -61,19 +93,11 @@ pub struct Spell {
 
 impl Spell {
     pub fn new(words: &[String]) -> Self {
-        let cache = directories::ProjectDirs::from("app", "TeXoria", "TeXoria")
-            .map(|d| d.cache_dir().join("dictionaries"))
-            .unwrap_or_else(|| std::env::temp_dir().join("texoria-dictionaries"));
         let locale = sys_locale::get_locale();
-        let region = locale.as_deref().and_then(|l| {
-            l.split(['-', '_'])
-                .skip(1)
-                .find(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_alphabetic()))
-                .map(str::to_ascii_uppercase)
-        });
+        let region = locale.as_deref().and_then(region_of);
         let fallback = locale.as_deref().and_then(catalog::resolve).unwrap_or("en");
         Self {
-            store: Arc::new(Store::new(&cache)),
+            store: Arc::new(dictionaries()),
             dictionaries: HashMap::new(),
             region,
             fallback,
@@ -84,6 +108,29 @@ impl Spell {
     pub fn set_words(&mut self, words: &[String]) {
         self.words = Arc::new(words.iter().cloned().collect());
     }
+}
+
+/// The dictionaries of this machine, downloaded when missing. Tests get
+/// none at all: they neither read the machine's nor download any (they give
+/// a workspace their own).
+fn dictionaries() -> Dictionaries {
+    if cfg!(test) {
+        let none = std::env::temp_dir().join("texoria-tests-no-dictionaries");
+        return Dictionaries::offline(Store::with_dirs(&none, Vec::new()));
+    }
+    let cache = directories::ProjectDirs::from("app", "TeXoria", "TeXoria")
+        .map(|d| d.cache_dir().join("dictionaries"))
+        .unwrap_or_else(|| std::env::temp_dir().join("texoria-dictionaries"));
+    Dictionaries::new(Store::new(&cache))
+}
+
+/// The region of a BCP 47 locale (`en-GB`, `zh-Hant-TW`), in capitals.
+fn region_of(locale: &str) -> Option<String> {
+    locale
+        .split(['-', '_'])
+        .skip(1)
+        .find(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_alphabetic()))
+        .map(str::to_ascii_uppercase)
 }
 
 /// A buffer's spell checking.
@@ -305,27 +352,16 @@ pub fn context_menu(
                 .as_ref()
                 .map(|s| s.suggest(&word, SUGGESTIONS))
                 .unwrap_or_default();
-            if suggestions.is_empty() {
-                let none = ReplaceMisspelling {
-                    range: range.clone(),
-                    text: word.clone(),
+            for entry in corrections(range, word, suggestions) {
+                menu = match entry {
+                    Entry::Item {
+                        label,
+                        action,
+                        disabled,
+                    } => menu.menu_with_disabled(label, disabled, action),
+                    Entry::Separator => menu.separator(),
                 };
-                menu = menu.menu_with_disabled("No Suggestions", true, Box::new(none));
             }
-            for text in suggestions {
-                let action = ReplaceMisspelling {
-                    range: range.clone(),
-                    text: text.clone(),
-                };
-                menu = menu.menu(text, Box::new(action));
-            }
-            menu = menu
-                .separator()
-                .menu(
-                    format!("Add “{word}” to Dictionary"),
-                    Box::new(AddToDictionary { word }),
-                )
-                .separator();
         }
         menu.menu("Cut", Box::new(Cut))
             .menu("Copy", Box::new(Copy))
@@ -335,67 +371,50 @@ pub fn context_menu(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    // Not `super::*`: gpui_kit exports its own `test` attribute.
-    use super::{Job, analyze};
-    use tex_spell::Source;
-
-    fn job(text: &str) -> Job {
-        Job {
-            text: text.to_string(),
-            chosen: None,
-            previous: None,
-            index: None,
-            root: None,
-            root_text: None,
-            root_index: None,
-            region: None,
-            fallback: "en",
-        }
-    }
-
-    const ITALIAN: &str = "Questo documento descrive il funzionamento del sistema e le scelte \
-        progettuali che hanno guidato lo sviluppo del programma negli ultimi anni.";
-
-    #[test]
-    fn detects_and_keeps_the_language() {
-        let a = analyze(job(ITALIAN));
-        assert_eq!(a.language.code, "it");
-        assert_eq!(a.language.source, Source::Text);
-        // Every word but the single letter "e".
-        assert_eq!(a.words.len(), 20);
-
-        // Once recognized, short edits do not move it back to the fallback.
-        let a = analyze(Job {
-            previous: Some(a.language),
-            ..job("Breve")
-        });
-        assert_eq!(a.language.code, "it");
-
-        // A declaration wins over the text.
-        let a = analyze(Job {
-            previous: Some(a.language),
-            ..job(&format!("% !TeX spellcheck = de_DE\n{ITALIAN}"))
-        });
-        assert_eq!((a.language.code, a.language.source), ("de", Source::Magic));
-    }
-
-    #[test]
-    fn honors_the_users_choice_and_the_root_file() {
-        let a = analyze(Job {
-            chosen: Some("fr"),
-            ..job(ITALIAN)
-        });
-        assert_eq!((a.language.code, a.language.source), ("fr", Source::User));
-
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("main.tex");
-        std::fs::write(&root, "% !TeX spellcheck = en_GB\n").unwrap();
-        let a = analyze(Job {
-            root: Some(root),
-            ..job(ITALIAN)
-        });
-        assert_eq!(a.language.code, "en-GB");
-    }
+/// An entry of the context menu.
+enum Entry {
+    Item {
+        label: String,
+        action: Box<dyn Action>,
+        disabled: bool,
+    },
+    Separator,
 }
+
+/// The menu's entries for the misspelled `word` at `range`.
+fn corrections(range: Range<usize>, word: String, suggestions: Vec<String>) -> Vec<Entry> {
+    let mut entries = Vec::new();
+    if suggestions.is_empty() {
+        let none = ReplaceMisspelling {
+            range: range.clone(),
+            text: word.clone(),
+        };
+        entries.push(Entry::Item {
+            label: "No Suggestions".into(),
+            action: Box::new(none),
+            disabled: true,
+        });
+    }
+    for text in suggestions {
+        let action = ReplaceMisspelling {
+            range: range.clone(),
+            text: text.clone(),
+        };
+        entries.push(Entry::Item {
+            label: text,
+            action: Box::new(action),
+            disabled: false,
+        });
+    }
+    entries.push(Entry::Separator);
+    entries.push(Entry::Item {
+        label: format!("Add “{word}” to Dictionary"),
+        action: Box::new(AddToDictionary { word }),
+        disabled: false,
+    });
+    entries.push(Entry::Separator);
+    entries
+}
+
+#[cfg(test)]
+mod tests;
