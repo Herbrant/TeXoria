@@ -188,7 +188,11 @@ impl DiffView {
                         }
                         this.loaded = Some(text);
                     }
-                    Err(e) => this.error = Some(e.to_string().into()),
+                    Err(e) => {
+                        this.error = Some(e.to_string().into());
+                        // The next load that works must show its text, even if unchanged.
+                        this.loaded = None;
+                    }
                 }
                 cx.notify();
             })

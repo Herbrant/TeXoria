@@ -320,3 +320,25 @@ fn resolves_conflicts(cx: &mut TestAppContext) {
     draw(cx, window);
     view.read_with(cx, |v, _| assert!(v.error.is_some()));
 }
+
+/// A diff that failed to load once shows again when it loads, even unchanged.
+#[gpui::test]
+fn recovers_from_a_failed_reload(cx: &mut TestAppContext) {
+    let Some(s) = GitSandbox::new() else { return };
+    let (repo, _) = history(&s);
+    let new = repo.root().join("new.tex");
+    std::fs::write(&new, "new\n").unwrap();
+    let (window, view, _) = view(cx, Some(repo), working("new.tex", false, true));
+    assert_eq!(files(cx, &view), ["new.tex"]);
+    // Gone for a moment (a checkout, another editor saving).
+    std::fs::remove_file(&new).unwrap();
+    view.update(cx, |v, cx| v.reload(cx));
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| assert!(v.error.is_some()));
+    std::fs::write(&new, "new\n").unwrap();
+    view.update(cx, |v, cx| v.reload(cx));
+    cx.run_until_parked();
+    draw(cx, window);
+    view.read_with(cx, |v, _| assert_eq!(v.error, None));
+    assert_eq!(files(cx, &view), ["new.tex"]);
+}
