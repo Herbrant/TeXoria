@@ -59,16 +59,27 @@ pub struct Agent {
 
 impl Agent {
     /// Start `spec` in `cwd`. Events are delivered on a thread of the
-    /// connection, one at a time.
+    /// connection, one at a time: `on_event` must not block (answers to
+    /// our requests are read on that thread too). The agent gets
+    /// [`process::search_path`] as its `PATH`, unless `spec.env` sets one.
     pub fn start(
         spec: &AgentSpec,
         cwd: &Path,
         mut on_event: impl FnMut(Event) + Send + 'static,
     ) -> std::io::Result<Agent> {
         let mut cmd = Command::new(&spec.program);
+        let own_path = spec.env.iter().any(|(k, _)| {
+            if cfg!(windows) {
+                k.eq_ignore_ascii_case("PATH")
+            } else {
+                k == "PATH"
+            }
+        });
+        if !own_path {
+            cmd.env("PATH", process::search_path());
+        }
         cmd.args(&spec.args)
             .current_dir(cwd)
-            .env("PATH", process::search_path())
             // Windows: no program from the project before those on `PATH`.
             .env("NoDefaultCurrentDirectoryInExePath", "1")
             .envs(spec.env.iter().map(|(k, v)| (k, v)))

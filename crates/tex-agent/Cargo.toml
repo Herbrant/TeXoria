@@ -25,3 +25,10 @@ test-support.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 futures-executor = "0.3"
+
+# A scripted ACP agent for tests (see the file's documentation).
+[[bin]]
+name = "fake-acp-agent"
+path = "tests/bin/fake_acp_agent.rs"
+test = false
+doc = false
