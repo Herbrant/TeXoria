@@ -19,6 +19,8 @@ env:
   TEXORIA_REQUIRE_GIT: 1
   TEXORIA_REQUIRE_PDFIUM: 1
   TEXORIA_REQUIRE_TEX: 1
+  # The app's tests run the fake engine and agent built with tex-compile's and tex-agent's.
+  TEXORIA_REQUIRE_FAKES: 1
 
 jobs:
   test:
