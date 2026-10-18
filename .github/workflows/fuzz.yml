@@ -1,0 +1,75 @@
+name: Fuzz
+
+# The parsers and the other code that reads untrusted text, fed random input (fuzz/). A crash
+# is uploaded as an artifact: reproduce it with `cargo +nightly fuzz run <target> <file>`, then
+# add it as a regular test of its crate.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: "300"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      # The corpus grows from run to run: keep it.
+      - uses: actions/cache@v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+
+      - name: Format
+        run: cargo fmt --check
+        working-directory: fuzz
+
+      - name: Build
+        run: cargo fuzz build -O
+        working-directory: fuzz
+
+      - name: Run
+        working-directory: fuzz
+        run: |
+          case "${{ github.event_name }}" in
+            schedule) seconds=600 ;;
+            workflow_dispatch) seconds="${{ inputs.seconds }}" ;;
+            *) seconds=30 ;;
+          esac
+          failed=0
+          for target in $(cargo fuzz list); do
+            echo "::group::$target ($seconds s)"
+            cargo fuzz run -O "$target" -- -max_total_time="$seconds" -rss_limit_mb=2048 \
+              || { echo "::error::$target crashed"; failed=1; }
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-crashes
+          path: fuzz/artifacts
