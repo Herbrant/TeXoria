@@ -185,6 +185,13 @@ texoria ─┬─ tex-compile ── tex-log
     conflict). `testing.rs` opens real workspaces from a `Startup` (settings, engines, PDFium
     folders) instead of `Workspace::new`'s `Startup::detect`. Under `cfg(test)`
     `Settings::load` never reads the user's file; `Settings::load_from` saves where it read.
+    Test workspaces start no MCP tool server, find no machine dictionaries and no installed
+    agents (`AgentPanel`'s detector is replaced), and the PDF pane's events are pumped by hand:
+    real threads waking GPUI's deterministic scheduler make it panic, so a test that runs real
+    processes calls `testing::allow_threads` and waits with `testing::wait_until`.
+    `testing::fake_program` finds tex-compile's `fake-engine` and tex-agent's `fake-acp-agent`
+    next to the test executable (built by `cargo test --workspace`; with cargo-llvm-cov, in
+    `<target>/llvm-cov-target/debug`), and skips the test unless `TEXORIA_REQUIRE_FAKES=1`.
     Paths go through `paths::canonical` (resolved, without Windows' `\\?\` prefix).
   - `git_panel.rs` is the Source Control sidebar (alternates with the outline). Mutating
     operations are emitted as `GitPanelEvent::Request(GitOp)`; the workspace saves dirty buffers
