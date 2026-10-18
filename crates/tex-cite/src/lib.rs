@@ -43,7 +43,12 @@ pub fn classify(input: &str) -> Lookup {
         "doi:",
     ] {
         if lower.starts_with(prefix) {
-            return Lookup::Doi(s[prefix.len()..].trim().to_string());
+            let doi = s[prefix.len()..].trim();
+            // Only the prefix so far: nothing to look up yet.
+            if doi.is_empty() {
+                return Lookup::Search(s.to_string());
+            }
+            return Lookup::Doi(doi.to_string());
         }
     }
     if tex_project::check::valid_doi(s) {
@@ -762,6 +767,13 @@ mod tests {
         let key = make_key("@misc{x}", &taken);
         assert!(!taken.contains(&key), "{key}");
         assert!(key.starts_with("ref") && key[3..].chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn a_doi_prefix_alone_is_no_doi() {
+        for s in ["https://doi.org/", "doi:", " DOI: ", "doi.org/"] {
+            assert_eq!(classify(s), Lookup::Search(s.trim().into()), "{s:?}");
+        }
     }
 
     proptest::proptest! {
