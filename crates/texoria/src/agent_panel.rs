@@ -201,6 +201,8 @@ pub struct AgentPanel {
     scroll: ScrollHandle,
     /// Bumped when the agent or the project changes: late results are dropped.
     generation: u64,
+    /// How agents are looked for (tests find only their own).
+    detector: fn(&[CustomAgent]) -> Vec<AgentSpec>,
     _detect: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -244,6 +246,7 @@ impl AgentPanel {
             errors: 0,
             scroll: ScrollHandle::new(),
             generation: 0,
+            detector: tex_agent::catalog::detect,
             _detect: Task::ready(()),
             _subscriptions: subscriptions,
         }
@@ -286,14 +289,16 @@ impl AgentPanel {
         let custom = self.custom.clone();
         let before = self.current().map(|a| a.id.clone());
         self.agents = None;
+        let detector = self.detector;
         self._detect = cx.spawn(async move |this, cx| {
-            let found = cx
-                .background_spawn(async move { tex_agent::catalog::detect(&custom) })
-                .await;
+            let found = cx.background_spawn(async move { detector(&custom) }).await;
             this.update(cx, |this, cx| {
                 this.agents = Some(found);
                 if this.current().map(|a| a.id.clone()) != before {
+                    // A message sent before any agent was found is for this one.
+                    let queued = this.queued.take().filter(|_| before.is_none());
                     this.reset(cx);
+                    this.queued = queued;
                 }
                 this.flush_queued(cx);
                 cx.notify();
@@ -2019,144 +2024,4 @@ fn detail(content: &[acp::ToolCallContent]) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{detail, inside, read_text, writable};
-    use tex_agent::acp;
-
-    #[test]
-    fn rc_files_are_refused_under_any_spelling() {
-        let dir = tempfile::tempdir().unwrap();
-        let d = std::fs::canonicalize(dir.path()).unwrap();
-        // Windows drops trailing dots and spaces, and `name:stream` writes to `name`.
-        for name in [
-            "latexmkrc.",
-            "latexmkrc ",
-            "LatexMkRc. .",
-            "latexmkrc::$DATA",
-            ".latexmkrc:x",
-        ] {
-            assert!(writable(&d, &d.join(name)).is_err(), "{name:?}");
-        }
-        assert!(writable(&d, &d.join("latexmkrc.tex")).is_ok());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rc_files_are_refused_through_a_link() {
-        let dir = tempfile::tempdir().unwrap();
-        let d = std::fs::canonicalize(dir.path()).unwrap();
-        std::fs::write(d.join("latexmkrc"), "").unwrap();
-        std::os::unix::fs::symlink(d.join("latexmkrc"), d.join("notes.tex")).unwrap();
-        assert!(writable(&d, &d.join("notes.tex")).is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn undo_removes_added_files_only_inside_the_project() {
-        use super::remove_added;
-        let dir = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        let d = std::fs::canonicalize(dir.path()).unwrap();
-        std::fs::write(outside.path().join("new.tex"), "theirs").unwrap();
-        // The folder of an added file replaced by a link that leads out of the project.
-        std::os::unix::fs::symlink(outside.path(), d.join("ch")).unwrap();
-        assert!(remove_added(&d, &d.join("ch/new.tex")).is_err());
-        assert!(outside.path().join("new.tex").exists());
-
-        // An added link is removed itself, never what it points to.
-        std::os::unix::fs::symlink(outside.path().join("new.tex"), d.join("link.tex")).unwrap();
-        remove_added(&d, &d.join("link.tex")).unwrap();
-        assert!(outside.path().join("new.tex").exists());
-        std::fs::write(d.join("added.tex"), "").unwrap();
-        remove_added(&d, &d.join("added.tex")).unwrap();
-        assert!(!d.join("added.tex").exists());
-    }
-
-    #[test]
-    fn reads_only_project_text_and_slices_lines() {
-        let dir = tempfile::tempdir().unwrap();
-        let d = std::fs::canonicalize(dir.path()).unwrap();
-        std::fs::write(d.join("main.tex"), "one\ntwo\nthree\n").unwrap();
-        let main = d.join("main.tex");
-        assert_eq!(
-            read_text(&d, &main, None, None).unwrap(),
-            "one\ntwo\nthree\n"
-        );
-        assert_eq!(read_text(&d, &main, Some(2), None).unwrap(), "two\nthree\n");
-        assert_eq!(read_text(&d, &main, Some(2), Some(1)).unwrap(), "two\n");
-        // Lines count from 1; 0 reads from the start too.
-        assert_eq!(read_text(&d, &main, Some(0), Some(1)).unwrap(), "one\n");
-        assert_eq!(read_text(&d, &main, Some(9), None).unwrap(), "");
-        assert!(read_text(&d, &d.join("missing.tex"), None, None).is_err());
-        assert!(read_text(&d, &d, None, None).is_err(), "a folder");
-        std::fs::create_dir(d.join(".git")).unwrap();
-        std::fs::write(d.join(".git/config"), "secret").unwrap();
-        assert!(read_text(&d, &d.join(".git/config"), None, None).is_err());
-        let outside = tempfile::tempdir().unwrap();
-        std::fs::write(outside.path().join("x.tex"), "theirs").unwrap();
-        assert!(read_text(&d, &outside.path().join("x.tex"), None, None).is_err());
-        // Not UTF-8: read anyway, with replacement characters.
-        std::fs::write(d.join("latin1.tex"), b"caf\xe9").unwrap();
-        assert_eq!(
-            read_text(&d, &d.join("latin1.tex"), None, None).unwrap(),
-            "caf\u{fffd}"
-        );
-    }
-
-    #[test]
-    fn large_files_are_not_read() {
-        let dir = tempfile::tempdir().unwrap();
-        let d = std::fs::canonicalize(dir.path()).unwrap();
-        let big = std::fs::File::create(d.join("big.tex")).unwrap();
-        big.set_len(tex_project::files::MAX_TEXT_BYTES + 1).unwrap();
-        let e = read_text(&d, &d.join("big.tex"), None, None).unwrap_err();
-        assert!(e.contains("too large"), "{e}");
-    }
-
-    #[test]
-    fn writes_stay_in_the_project() {
-        let dir = tempfile::tempdir().unwrap();
-        let d = std::fs::canonicalize(dir.path()).unwrap();
-        std::fs::create_dir(d.join("ch")).unwrap();
-        assert!(inside(&d, &d.join("main.tex")));
-        assert!(inside(&d, &d.join("ch/new/intro.tex")));
-        assert!(!inside(&d, &d.join("../elsewhere.tex")));
-        assert!(!inside(&d, &d.join("ch/../../x.tex")));
-        assert!(!inside(&d, &d.join(".git/config")));
-        assert!(!inside(&d, &d.join(".GIT/hooks/pre-commit")));
-        assert!(!inside(&d, &d.join("ch/.Git/config")));
-        assert!(!inside(&d, std::path::Path::new("main.tex")));
-        assert!(writable(&d, &d.join("ch/intro.tex")).is_ok());
-        assert!(writable(&d, &d.join("latexmkrc")).is_err());
-        assert!(writable(&d, &d.join("ch/.LatexMkRc")).is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn undo_replaces_links_instead_of_following_them() {
-        let dir = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        let d = std::fs::canonicalize(dir.path()).unwrap();
-        let target = outside.path().join("victim.txt");
-        std::fs::write(&target, "theirs").unwrap();
-        std::os::unix::fs::symlink(&target, d.join("main.tex")).unwrap();
-        super::restore(&d, &d.join("main.tex"), b"mine").unwrap();
-        assert_eq!(std::fs::read(&target).unwrap(), b"theirs");
-        assert_eq!(std::fs::read(d.join("main.tex")).unwrap(), b"mine");
-        assert!(!d.join("main.tex").symlink_metadata().unwrap().is_symlink());
-    }
-
-    #[test]
-    fn tool_details_are_short() {
-        let text = acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Text(
-            acp::TextContent::new("x".repeat(5000)),
-        )));
-        let d = detail(&[text]).unwrap();
-        assert!(d.chars().count() <= super::DETAIL_CHARS + 1);
-        let diff = acp::ToolCallContent::Diff(
-            acp::Diff::new("/p/main.tex", "a\nc\n").old_text(Some("a\nb\n".to_string())),
-        );
-        assert_eq!(detail(&[diff]).unwrap(), "main.tex: +1 −1");
-        assert_eq!(detail(&[]), None);
-    }
-}
+mod tests;

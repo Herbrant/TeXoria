@@ -118,3 +118,165 @@ pub fn resolve<T: 'static>(cx: &mut TestAppContext, task: gpui_kit::Task<T>) -> 
     cx.run_until_parked();
     out.take().expect("the task is still pending")
 }
+
+/// A program another crate of the workspace builds for its tests, next to this test executable
+/// (`target/<profile>/deps/texoria-<hash>`; `cargo test --workspace` builds them all in the same
+/// folder). `None`, and the test passes trivially, when it was not built, unless
+/// `TEXORIA_REQUIRE_FAKES=1` (as in CI).
+pub fn fake_program(name: &str, package: &str) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    let path = exe.parent()?.parent()?.join(file);
+    if path.is_file() {
+        return Some(path);
+    }
+    let why = format!("{name} not built (cargo build -p {package} --bin {name})");
+    test_support::skip("FAKES", &why);
+    None
+}
+
+/// tex-compile's `fake-engine` doing `steps` (see `crates/tex-compile/tests/bin/fake_engine.rs`).
+pub fn fake_engine(steps: &[&str]) -> Option<tex_compile::Engine> {
+    Some(tex_compile::Engine {
+        kind: tex_compile::EngineKind::Custom {
+            program: fake_program("fake-engine", "tex-compile")?,
+            args: steps.iter().map(|s| s.to_string()).collect(),
+        },
+        extra_path: Vec::new(),
+    })
+}
+
+/// tex-agent's `fake-acp-agent` playing a script (see
+/// `crates/tex-agent/tests/bin/fake_acp_agent.rs`), as a custom agent of the settings.
+pub struct FakeAgent {
+    pub custom: tex_agent::CustomAgent,
+    dir: tempfile::TempDir,
+}
+
+impl FakeAgent {
+    /// The agent's name, and its id in the settings once found.
+    pub const NAME: &str = "Fake";
+    pub const ID: &str = "custom:Fake";
+
+    pub fn new(mut script: serde_json::Value) -> Option<FakeAgent> {
+        let program = fake_program("fake-acp-agent", "tex-agent")?;
+        let dir = tempfile::tempdir().unwrap();
+        script["log"] = serde_json::json!(dir.path().join("log.jsonl"));
+        let path = dir.path().join("script.json");
+        std::fs::write(&path, script.to_string()).unwrap();
+        let custom = tex_agent::CustomAgent {
+            name: Self::NAME.into(),
+            command: program.to_string_lossy().into_owned(),
+            args: vec![path.to_string_lossy().into_owned()],
+        };
+        Some(FakeAgent { custom, dir })
+    }
+
+    /// What the agent read from TeXoria so far, one JSON-RPC message each.
+    pub fn log(&self) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(self.dir.path().join("log.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    }
+
+    /// The requests TeXoria sent for `method`.
+    pub fn requests(&self, method: &str) -> Vec<serde_json::Value> {
+        (self.log().into_iter())
+            .filter(|m| m["method"] == method)
+            .collect()
+    }
+
+    /// TeXoria's answer to the agent's request number `id` (they start at 1001), once sent.
+    pub fn answer(&self, id: i64) -> Option<serde_json::Value> {
+        (self.log().into_iter()).find(|m| m["id"] == id && m.get("method").is_none())
+    }
+}
+
+/// The agents of the settings whose command is a path, as `AgentPanel` would find them, without
+/// looking for the agents installed on this machine nor asking the login shell for its `PATH`.
+pub fn custom_agents_only(custom: &[tex_agent::CustomAgent]) -> Vec<tex_agent::AgentSpec> {
+    (custom.iter())
+        .filter(|c| Path::new(&c.command).is_absolute())
+        .map(|c| tex_agent::AgentSpec {
+            id: format!("custom:{}", c.name),
+            name: c.name.clone(),
+            program: PathBuf::from(&c.command),
+            args: c.args.clone(),
+            env: vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())],
+            login_hint: None,
+        })
+        .collect()
+}
+
+/// Let real threads (an engine's, an agent's, PDFium's) wake the test's tasks: GPUI's test
+/// scheduler takes that for a mistake otherwise.
+pub fn allow_threads(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+}
+
+/// Run the app's tasks until `done` holds, waiting for real processes and threads meanwhile
+/// (see [`allow_threads`]); fails after 20 seconds.
+#[track_caller]
+pub fn wait_until(
+    cx: &mut TestAppContext,
+    what: &str,
+    mut done: impl FnMut(&mut TestAppContext) -> bool,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        if done(cx) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting: {what}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// A copy of the sample project opened with the fake agent playing `script(project dir)`:
+/// agents are allowed in the project and the fake is the chosen one (the only one found).
+#[allow(clippy::type_complexity)]
+pub fn agent_workspace(
+    cx: &mut TestAppContext,
+    script: impl FnOnce(&Path) -> serde_json::Value,
+) -> Option<(
+    tempfile::TempDir,
+    FakeAgent,
+    WindowHandle<Root>,
+    Entity<Workspace>,
+)> {
+    let tmp = fixture_copy("sample");
+    let dir = crate::paths::canonical(tmp.path());
+    let agent = FakeAgent::new(script(&dir))?;
+    let mut startup = startup();
+    startup.settings.custom_agents = vec![agent.custom.clone()];
+    startup.settings.agent = Some(FakeAgent::ID.into());
+    startup.settings.agent_projects = vec![dir.clone()];
+    startup.settings.spell_check = false;
+    allow_threads(cx);
+    let (window, workspace) = open(cx, Some(dir.join("main.tex")), startup);
+    workspace.update(cx, |ws, cx| {
+        (ws.agent_panel()).update(cx, |a, _| a.find_agents_with(custom_agents_only))
+    });
+    Some((tmp, agent, window, workspace))
+}
+
+/// Lay the window out and paint it, as a frame on screen would.
+pub fn draw(cx: &mut TestAppContext, window: WindowHandle<Root>) {
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+}
+
+/// The notifications shown in `window`.
+pub fn notifications(cx: &mut TestAppContext, window: WindowHandle<Root>) -> usize {
+    use gpui_kit::component::WindowExt as _;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.notifications(cx).len()
+    })
+    .unwrap()
+}

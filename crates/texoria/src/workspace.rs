@@ -5420,3 +5420,6 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod app_tests;
