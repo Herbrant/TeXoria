@@ -306,6 +306,13 @@ impl GitPanel {
         self.overleaf_servers = overleaf_servers;
     }
 
+    /// Drive git with `git` instead of the one found on the system (tests isolate the user's
+    /// configuration this way).
+    #[cfg(test)]
+    pub(crate) fn use_git(&mut self, git: Git) {
+        self.git = Some(Some(git));
+    }
+
     pub fn repo(&self) -> Option<&Repo> {
         match &self.state {
             RepoState::Ready(r) => Some(r),
@@ -1173,17 +1180,7 @@ impl GitPanel {
             });
 
         let has_upstream = st.upstream.is_some();
-        let pull_label = if st.behind > 0 {
-            st.behind.to_string()
-        } else {
-            String::new()
-        };
-        let push_label = match (has_upstream, self.remotes.is_empty()) {
-            (_, true) => "Add Remote…".to_string(),
-            (false, false) => "Publish".to_string(),
-            (true, false) if st.ahead > 0 => st.ahead.to_string(),
-            _ => String::new(),
-        };
+        let (pull_label, push_label) = self.pull_push_labels();
         let network_busy = self.cancel.is_some();
 
         h_flex()
@@ -1252,6 +1249,23 @@ impl GitPanel {
             .text_color(theme.muted_foreground)
     }
 
+    /// The counts (or the action) shown on the Pull and Push buttons.
+    fn pull_push_labels(&self) -> (String, String) {
+        let st = &self.status;
+        let pull = if st.behind > 0 {
+            st.behind.to_string()
+        } else {
+            String::new()
+        };
+        let push = match (st.upstream.is_some(), self.remotes.is_empty()) {
+            (_, true) => "Add Remote…".to_string(),
+            (false, false) => "Publish".to_string(),
+            (true, false) if st.ahead > 0 => st.ahead.to_string(),
+            _ => String::new(),
+        };
+        (pull, push)
+    }
+
     fn render_view_switch(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let tab = |id: &'static str, label: &'static str, view: View, cx: &mut Context<Self>| {
             let active = self.view == view;
@@ -1293,17 +1307,7 @@ impl GitPanel {
         }
         let theme = cx.theme();
         let conflicts = self.status.conflicts().count();
-        let text = if conflicts > 0 {
-            format!(
-                "{} in progress: {conflicts} conflict{} left.",
-                op.label(),
-                plural(conflicts)
-            )
-        } else if op == Operation::Rebase {
-            "Rebase in progress: conflicts resolved.".to_string()
-        } else {
-            format!("{} in progress: commit to finish.", op.label())
-        };
+        let text = operation_text(op, conflicts);
         Some(
             v_flex()
                 .mx_2()
@@ -1346,7 +1350,8 @@ impl GitPanel {
         )
     }
 
-    fn render_commit_box(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The commit button's label and tooltip.
+    fn commit_button(&self) -> (&'static str, &'static str) {
         let mode = self.commit_mode();
         let label = match mode {
             Some(true) => "Commit All",
@@ -1359,6 +1364,12 @@ impl GitPanel {
             None if self.status.conflicts().next().is_some() => "Resolve the conflicts first",
             None => "Nothing to commit",
         };
+        (label, tooltip)
+    }
+
+    fn render_commit_box(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let mode = self.commit_mode();
+        let (label, tooltip) = self.commit_button();
         let has_head = self.status.oid.is_some();
         v_flex()
             .px_2()
@@ -1996,6 +2007,15 @@ fn render_sync_review(review: &SyncReview, cx: &App) -> AnyElement {
                 .child(format!("and {} more", total - SYNC_REVIEW_ROWS)),
         );
     }
+    v_flex()
+        .gap_2()
+        .child(div().text_sm().child(sync_summary(review)))
+        .child(list)
+        .into_any_element()
+}
+
+/// What a Sync will do to the project's files, above the list.
+fn sync_summary(review: &SyncReview) -> String {
     let summary = match (review.added.len(), review.deleted.len()) {
         (a, 0) => format!("{a} new file{} will be added", plural(a)),
         (0, d) => format!("{d} file{} will be deleted", plural(d)),
@@ -2005,13 +2025,22 @@ fn render_sync_review(review: &SyncReview, cx: &App) -> AnyElement {
             plural(d)
         ),
     };
-    v_flex()
-        .gap_2()
-        .child(div().text_sm().child(format!(
-            "{summary} on Overleaf, for every collaborator of the project."
-        )))
-        .child(list)
-        .into_any_element()
+    format!("{summary} on Overleaf, for every collaborator of the project.")
+}
+
+/// The banner of a merge-like operation stopped with `conflicts` files left.
+fn operation_text(op: Operation, conflicts: usize) -> String {
+    if conflicts > 0 {
+        format!(
+            "{} in progress: {conflicts} conflict{} left.",
+            op.label(),
+            plural(conflicts)
+        )
+    } else if op == Operation::Rebase {
+        "Rebase in progress: conflicts resolved.".to_string()
+    } else {
+        format!("{} in progress: commit to finish.", op.label())
+    }
 }
 
 /// The remote the branch tracks, else `origin`, else the only one.
@@ -2130,6 +2159,11 @@ fn relative_time(ts: i64) -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(ts);
+    relative_time_at(now, ts)
+}
+
+/// [`relative_time`] at time `now` (seconds since the Unix epoch).
+fn relative_time_at(now: i64, ts: i64) -> String {
     let d = (now - ts).max(0);
     match d {
         0..60 => "just now".into(),
@@ -2161,96 +2195,4 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{SyncReview, civil_from_days, main_remote, repo_top};
-    use tex_git::{Change, Entry, Status};
-
-    fn entry(path: &str, index: Change, worktree: Change) -> Entry {
-        Entry {
-            path: path.into(),
-            orig_path: None,
-            index,
-            worktree,
-            conflicted: false,
-        }
-    }
-
-    #[test]
-    fn sync_review_lists_new_and_deleted_files() {
-        use Change::*;
-        let mut renamed = entry("new.tex", Renamed, Unmodified);
-        renamed.orig_path = Some("old.tex".into());
-        let status = Status {
-            entries: vec![
-                entry("main.tex", Unmodified, Modified),
-                entry("fig.png", Unmodified, Untracked),
-                entry("staged.tex", Added, Unmodified),
-                entry("gone.tex", Unmodified, Deleted),
-                entry("removed.tex", Deleted, Unmodified),
-                renamed,
-            ],
-            ..Default::default()
-        };
-        let review = SyncReview::of(&status);
-        assert_eq!(review.added, ["fig.png", "new.tex", "staged.tex"]);
-        assert_eq!(review.deleted, ["gone.tex", "old.tex", "removed.tex"]);
-
-        let edits_only = Status {
-            entries: vec![entry("main.tex", Modified, Modified)],
-            ..Default::default()
-        };
-        assert!(SyncReview::of(&edits_only).is_empty());
-
-        // A file that appeared after the review was not agreed to.
-        assert!(SyncReview::of(&edits_only).within(&review));
-        assert!(review.within(&review));
-        assert!(!review.within(&SyncReview::default()));
-    }
-
-    #[test]
-    fn picks_the_tracked_remote() {
-        let remotes = |r: &[&str]| r.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let tracking = |u: &str| Status {
-            upstream: Some(u.into()),
-            ..Default::default()
-        };
-        let rs = remotes(&["origin", "overleaf", "over"]);
-        assert_eq!(
-            main_remote(&tracking("overleaf/main"), &rs),
-            Some("overleaf")
-        );
-        assert_eq!(main_remote(&Status::default(), &rs), Some("origin"));
-        let rs = remotes(&["overleaf"]);
-        assert_eq!(main_remote(&Status::default(), &rs), Some("overleaf"));
-        let rs = remotes(&["a", "b"]);
-        assert_eq!(main_remote(&Status::default(), &rs), None);
-    }
-
-    #[test]
-    fn dates() {
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(19_723), (2024, 1, 1));
-        assert_eq!(civil_from_days(19_782), (2024, 2, 29));
-        assert_eq!(civil_from_days(-1), (1969, 12, 31));
-    }
-
-    #[test]
-    fn finds_enclosing_repo() {
-        let dir = tempfile::tempdir().unwrap();
-        let sub = dir.path().join("paper/figures");
-        std::fs::create_dir_all(&sub).unwrap();
-        assert_eq!(repo_top(&sub), None);
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
-        assert_eq!(repo_top(&sub).as_deref(), Some(dir.path()));
-        std::fs::write(
-            dir.path().join("paper/.git"),
-            "gitdir: ../.git/modules/paper\n",
-        )
-        .unwrap();
-        assert_eq!(repo_top(&sub), Some(dir.path().join("paper")));
-        // Tests run in crates/texoria, two folders below this repository's .git: a relative
-        // path is never resolved against the current folder.
-        assert_eq!(repo_top(std::path::Path::new("../..")), None);
-        assert_eq!(repo_top(std::path::Path::new("")), None);
-    }
-}
+mod tests;
