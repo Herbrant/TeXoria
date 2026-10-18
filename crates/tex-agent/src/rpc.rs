@@ -190,6 +190,9 @@ pub struct Connection {
 }
 
 impl Connection {
+    /// Start reading `reader`. `handler` runs on the reading thread, so it
+    /// must not block: until it returns, no answer to this side's requests
+    /// is read either.
     pub fn new<R, W>(
         mut reader: R,
         writer: W,
@@ -341,6 +344,7 @@ impl Future for Response {
 mod tests {
     use super::*;
     use futures_executor::block_on;
+    use proptest::strategy::Just;
     use std::io::BufReader;
     use std::sync::mpsc;
 
@@ -448,6 +452,221 @@ mod tests {
         bw.write_all(b"\xff\xfe log\n{\"jsonrpc\":\"2.0\",\"method\":\"still\"}\n")
             .unwrap();
         assert_eq!(rx.recv().unwrap(), "still");
+    }
+
+    /// One end whose peer is driven by hand: what it writes, and what it reads.
+    fn manual(
+        handler: impl FnMut(Incoming) + Send + 'static,
+    ) -> (
+        Connection,
+        std::io::PipeWriter,
+        BufReader<std::io::PipeReader>,
+    ) {
+        let (ar, bw) = std::io::pipe().unwrap();
+        let (br, aw) = std::io::pipe().unwrap();
+        (
+            Connection::new(BufReader::new(ar), aw, handler),
+            bw,
+            BufReader::new(br),
+        )
+    }
+
+    fn read_json(r: &mut impl BufRead) -> Value {
+        serde_json::from_str(&read_line(r, MAX_LINE).unwrap().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn answers_are_matched_by_integer_id_only() {
+        let (a, mut peer, mut from_a) = manual(|_| {});
+        let pending = a.request("work", json!({}));
+        let sent = read_json(&mut from_a);
+        assert_eq!(sent["method"], "work");
+        let id = sent["id"].as_i64().unwrap();
+        // Ids that are not ours, or not integers, answer nothing...
+        for wrong in [
+            json!(id.to_string()),
+            json!(id as f64 + 0.5),
+            json!(id + 100),
+        ] {
+            writeln!(
+                peer,
+                "{}",
+                json!({ "jsonrpc": "2.0", "id": wrong, "result": 1 })
+            )
+            .unwrap();
+        }
+        // ...nor does a message with neither id nor method.
+        writeln!(peer, r#"{{"jsonrpc":"2.0","result":2}}"#).unwrap();
+        // `error: null` is not an error.
+        writeln!(
+            peer,
+            "{}",
+            json!({ "jsonrpc": "2.0", "id": id, "result": 3, "error": null })
+        )
+        .unwrap();
+        assert_eq!(block_on(pending).unwrap(), json!(3));
+
+        // A missing result is null; an error without fields still fails.
+        let pending = a.request("more", json!({}));
+        let id = read_json(&mut from_a)["id"].clone();
+        writeln!(peer, "{}", json!({ "jsonrpc": "2.0", "id": id })).unwrap();
+        assert_eq!(block_on(pending).unwrap(), Value::Null);
+        let pending = a.request("fail", json!({}));
+        let id = read_json(&mut from_a)["id"].clone();
+        writeln!(
+            peer,
+            "{}",
+            json!({ "jsonrpc": "2.0", "id": id, "error": {} })
+        )
+        .unwrap();
+        let e = block_on(pending).unwrap_err();
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (RpcError::INTERNAL, "Unknown error")
+        );
+
+        // A request answered with a wrong id waits until the connection closes.
+        let pending = a.request("lost", json!({}));
+        drop(peer);
+        assert!(block_on(pending).unwrap_err().is_closed());
+    }
+
+    #[test]
+    fn requests_from_the_other_side_are_answered_once() {
+        let (_a, mut peer, mut from_a) = manual(|msg| match msg {
+            Incoming::Request {
+                method, responder, ..
+            } if method == "fail" => {
+                let mut e = RpcError::new(RpcError::NOT_FOUND, "gone");
+                e.data = Some(json!({ "path": "x" }));
+                responder.respond(Err(e));
+            }
+            Incoming::Request { responder, .. } => responder.respond(Ok(json!("done"))),
+            _ => {}
+        });
+        writeln!(peer, r#"{{"jsonrpc":"2.0","id":"a","method":"fail"}}"#).unwrap();
+        let reply = read_json(&mut from_a);
+        assert_eq!(reply["id"], "a");
+        assert_eq!(reply["error"]["code"], RpcError::NOT_FOUND);
+        assert_eq!(reply["error"]["data"]["path"], "x");
+        // A null id is a notification: nothing comes back for it.
+        writeln!(peer, r#"{{"jsonrpc":"2.0","id":null,"method":"note"}}"#).unwrap();
+        writeln!(peer, r#"{{"jsonrpc":"2.0","id":7,"method":"ok"}}"#).unwrap();
+        let reply = read_json(&mut from_a);
+        assert_eq!(
+            (reply["id"].clone(), reply["result"].clone()),
+            (json!(7), json!("done"))
+        );
+    }
+
+    /// A writer whose other side is gone.
+    struct Broken;
+
+    impl Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failed_write_forgets_the_request() {
+        let (ar, _bw) = std::io::pipe().unwrap();
+        let a = Connection::new(BufReader::new(ar), Broken, |_| {});
+        assert!(block_on(a.request("x", json!({}))).unwrap_err().is_closed());
+        assert!(a.pending.lock().unwrap().as_ref().unwrap().is_empty());
+        assert!(a.notify("y", json!({})).unwrap_err().is_closed());
+        assert!(!a.is_closed(), "still reading");
+    }
+
+    /// Hands out `data` a few bytes at a time, interrupted before each piece.
+    struct Choppy {
+        data: Vec<u8>,
+        at: usize,
+        interrupt: bool,
+    }
+
+    impl std::io::Read for Choppy {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.interrupt = !self.interrupt;
+            if self.interrupt {
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            let n = buf.len().min(3).min(self.data.len() - self.at);
+            buf[..n].copy_from_slice(&self.data[self.at..self.at + n]);
+            self.at += n;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn reading_resumes_after_an_interruption() {
+        let data = b"first line\nsecond\n".to_vec();
+        let mut r = BufReader::with_capacity(
+            4,
+            Choppy {
+                data,
+                at: 0,
+                interrupt: false,
+            },
+        );
+        assert_eq!(
+            read_line(&mut r, 100).unwrap().as_deref(),
+            Some("first line")
+        );
+        assert_eq!(read_line(&mut r, 4).unwrap().as_deref(), Some("seco"));
+        assert_eq!(read_line(&mut r, 100).unwrap(), None);
+
+        struct Failing;
+        impl std::io::Read for Failing {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::ConnectionReset.into())
+            }
+        }
+        assert!(read_line(&mut BufReader::new(Failing), 10).is_err());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn lines_are_split_like_bufread(
+            data in proptest::collection::vec(
+                proptest::prop_oneof![Just(b'\n'), Just(b'\r'), Just(0xff), proptest::num::u8::ANY],
+                0..200,
+            ),
+            max in 0usize..40,
+            capacity in 1usize..16,
+        ) {
+            let mut r = BufReader::with_capacity(capacity, &data[..]);
+            let mut ours = Vec::new();
+            while let Some(line) = read_line(&mut r, max).unwrap() {
+                ours.push(line);
+            }
+            let pieces: Vec<&[u8]> = data.split(|&b| b == b'\n').collect();
+            let last = pieces.len() - 1;
+            let expected: Vec<String> = pieces
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    let l = &l[..l.len().min(max)];
+                    // Like `BufRead::lines`, a `\r` goes only with a line break.
+                    let l = if i < last { l.strip_suffix(b"\r").unwrap_or(l) } else { l };
+                    String::from_utf8_lossy(l).into_owned()
+                })
+                .collect();
+            // `split` yields an empty last piece after a final line break.
+            let expected = match data.last() {
+                Some(b'\n') | None => &expected[..expected.len() - 1],
+                _ => &expected[..],
+            };
+            proptest::prop_assert_eq!(&ours, expected);
+            for line in &ours {
+                // Every kept byte becomes at most one replacement character.
+                proptest::prop_assert!(line.chars().count() <= max);
+            }
+        }
     }
 
     #[test]
