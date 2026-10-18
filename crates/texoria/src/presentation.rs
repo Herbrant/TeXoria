@@ -64,6 +64,9 @@ impl Presentation {
 impl Render for Presentation {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
+        // A rebuild may have removed pages.
+        let pages = self.pane.read(cx).presentation().1;
+        self.page = self.page.min(pages.saturating_sub(1));
         let page = self.page;
         let size = self.pane.read(cx).page_size(page);
         // The page as large as fits.
@@ -135,3 +138,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", EndPresentation, context),
     ]);
 }
+
+#[cfg(test)]
+mod tests;
