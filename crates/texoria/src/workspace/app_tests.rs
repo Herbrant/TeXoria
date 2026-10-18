@@ -1,6 +1,7 @@
 //! The workspace driven the way the user and the agents drive it: builds with the fake engine,
 //! turns of the fake agent, the agents' tools, tabs, sessions and the toggles.
 
+mod agents;
 mod builds;
 mod tools;
 
@@ -23,7 +24,6 @@ impl Workspace {
 }
 
 /// A workspace in its window, on a temporary copy of a project.
-#[allow(dead_code)]
 struct Open {
     _tmp: Option<tempfile::TempDir>,
     /// The project's folder, canonical.
@@ -32,7 +32,6 @@ struct Open {
     ws: Entity<Workspace>,
 }
 
-#[allow(dead_code)]
 impl Open {
     /// The sample project opened on `main.tex` with `startup`.
     fn sample(cx: &mut TestAppContext, startup: Startup) -> Open {
@@ -194,7 +193,6 @@ fn quiet() -> Startup {
 }
 
 /// A startup whose settings are saved in `dir/settings.toml`.
-#[allow(dead_code)]
 fn saved_in(dir: &Path) -> Startup {
     let mut startup = quiet();
     let spell_check = startup.settings.spell_check;

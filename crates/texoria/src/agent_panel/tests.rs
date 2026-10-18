@@ -17,7 +17,6 @@ impl AgentPanel {
         self.detector = detector;
     }
 
-    #[allow(dead_code)]
     pub(crate) fn is_running(&self) -> bool {
         self.running
     }
@@ -68,7 +67,6 @@ impl AgentPanel {
     }
 
     /// Compare the project with the checkpoint again (`open`: as the Review button does).
-    #[allow(dead_code)]
     pub(crate) fn review(&mut self, open: bool, cx: &mut Context<Self>) {
         self.refresh_changes(open, cx);
     }

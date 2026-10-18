@@ -4923,6 +4923,9 @@ impl Render for Workspace {
                             spelling(menu, window, cx)
                         }
                     })
+                    // The element sets the editor's mode on every frame: what
+                    // `set_agent_busy` set would not last.
+                    .readonly(self.agent_busy)
                     .bordered(false)
                     .h(relative(1.))
                     .font_family(theme.mono_font_family.clone())
