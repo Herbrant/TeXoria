@@ -47,10 +47,26 @@ fn tabs_open_activate_and_close(cx: &mut TestAppContext) {
             .unwrap()
             .starts_with("% edited\n")
     );
-    app.update(cx, |ws, _, cx| ws.close_tab(cx));
+    // A tab's close button closes it even when another one is active, which
+    // keeps its tab.
+    app.update(cx, |ws, window, cx| {
+        ws.activate_file(methods.clone(), window, cx);
+        ws.close_buffer(0, cx);
+    });
+    assert_eq!(app.tabs(cx), ["refs.bib", "chapters/methods.tex"]);
+    assert_eq!(app.active(cx), "chapters/methods.tex");
+    app.update(cx, |ws, window, cx| {
+        ws.activate_file(main.clone(), window, cx);
+        ws.close_buffer(0, cx);
+        ws.close_buffer(5, cx);
+    });
+    assert_eq!(app.tabs(cx), ["chapters/methods.tex", "main.tex"]);
+    assert_eq!(app.active(cx), "main.tex");
+    app.update(cx, |ws, _, cx| ws.close_buffer(0, cx));
     assert_eq!(app.tabs(cx), ["main.tex"]);
     // The last tab stays.
     app.update(cx, |ws, _, cx| ws.close_tab(cx));
+    app.update(cx, |ws, _, cx| ws.close_buffer(0, cx));
     assert_eq!(app.tabs(cx), ["main.tex"]);
     app.draw(cx);
     // The session is saved with the settings.

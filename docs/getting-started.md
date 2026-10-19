@@ -39,7 +39,8 @@ Shortcuts are written for macOS: elsewhere, use Ctrl instead of ⌘ (see
 - **Sidebar**: the document [outline](writing.md#outline), the project's
   [files](writing.md#files) or [source control](git.md). Toggle it with ⌘1 (outline),
   ⌘⇧E (files) or ⌘⇧G (source control).
-- **Editor**: one tab per open file.
+- **Editor**: one tab per open file. Close a tab with its × button, a middle click or ⌘W;
+  its edits are saved first. The last open tab stays.
 - **PDF preview**: updated as you type (see [Build and preview](preview.md)).
 - **Status bar**: the Git branch, the [word count](writing.md#word-count), the
   [spell checking](writing.md#spell-checking) language,

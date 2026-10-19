@@ -3792,15 +3792,23 @@ impl Workspace {
         if self.diff_active {
             return self.close_diff(cx);
         }
-        if self.buffers.len() <= 1 {
+        self.close_buffer(self.active, cx);
+    }
+
+    /// Close the tab of `buffers[ix]`, saving first. The last tab stays; the
+    /// active one keeps its tab, or goes to the closed one's neighbor.
+    fn close_buffer(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if self.buffers.len() <= 1 || ix >= self.buffers.len() {
             return;
         }
         // Closing after a failed save would drop the edits.
         if !self.save_all(cx) {
             return;
         }
-        self.buffers.remove(self.active);
-        self.active = self.active.min(self.buffers.len() - 1);
+        self.buffers.remove(ix);
+        if ix < self.active || self.active == self.buffers.len() {
+            self.active -= 1;
+        }
         self.remember_session();
         cx.notify();
     }
@@ -4214,6 +4222,8 @@ impl Workspace {
             .map(Path::to_path_buf);
         let diff_title: Option<SharedString> =
             self.diff.as_ref().map(|d| d.read(cx).title().into());
+        // The last tab stays, so it has no close button.
+        let closable = self.buffers.len() > 1;
         h_flex()
             .h(px(34.))
             .px_2()
@@ -4232,7 +4242,9 @@ impl Workspace {
                 h_flex()
                     .id(("tab", i))
                     .gap_1p5()
-                    .px_3()
+                    .pl_3()
+                    .when(closable, |d| d.pr_1())
+                    .when(!closable, |d| d.pr_3())
                     .h(px(26.))
                     .rounded(theme.radius)
                     .text_xs()
@@ -4250,6 +4262,28 @@ impl Workspace {
                     .child(name)
                     .when(b.dirty, |d| {
                         d.child(div().size(px(6.)).rounded_full().bg(theme.muted_foreground))
+                    })
+                    .when(closable, |d| {
+                        d.child(
+                            div()
+                                .id(("tab-close", i))
+                                .p_0p5()
+                                .rounded(theme.radius)
+                                .hover(|s| s.bg(theme.muted))
+                                .child(Icon::new(Glyph::Close).xsmall())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.close_buffer(i, cx);
+                                })),
+                        )
+                        // A middle click closes the tab, as in most editors.
+                        .on_aux_click(cx.listener(
+                            move |this, e: &ClickEvent, _, cx| {
+                                if e.is_middle_click() {
+                                    this.close_buffer(i, cx);
+                                }
+                            },
+                        ))
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.active = i;
