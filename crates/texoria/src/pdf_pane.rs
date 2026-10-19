@@ -1282,7 +1282,13 @@ impl Render for PdfPane {
                 .rounded(px(2.))
                 .overflow_hidden()
                 .when(!shadow_page, |d| d.shadow_md())
-                .when(shadow_page, |d| d.border_1().border_color(theme.border));
+                // An outline drawn outside the page: a border would take its width from the
+                // bitmap, which would then be resampled (grainy).
+                .when(shadow_page, |d| {
+                    d.shadow(vec![
+                        BoxShadow::new(px(0.), px(0.), theme.border).spread_radius(px(1.)),
+                    ])
+                });
             if let Some(shown) = self.shown.get(&i) {
                 page = page.child(
                     img(shown.image.clone())
@@ -1554,14 +1560,14 @@ fn far_pages(shown: impl Iterator<Item = usize>, visible: &[usize]) -> Vec<usize
 
 /// The device pixels per point of pages shown at `zoom` on a display of
 /// `scale_factor`, in thousandths ([`RenderKey::scale_milli`]).
-fn scale_milli(zoom: f32, scale_factor: f32) -> u32 {
+pub(crate) fn scale_milli(zoom: f32, scale_factor: f32) -> u32 {
     ((zoom * scale_factor * 1000.0).round() as u32).max(1)
 }
 
 /// The size in pixels of `pt` points of a page at `zoom`: whole device pixels, rounded as the
 /// renderer sizes its bitmaps, so that a page's bitmap is drawn pixel for pixel (resampled,
 /// small text turns grainy on a low-resolution display).
-fn page_side(pt: f32, zoom: f32, scale_factor: f32) -> f32 {
+pub(crate) fn page_side(pt: f32, zoom: f32, scale_factor: f32) -> f32 {
     // As `RenderKey::scale`.
     let scale = scale_milli(zoom, scale_factor) as f32 / 1000.0;
     (pt * scale).round().max(1.0) / scale_factor

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::pdf_pane::PdfPane;
+use crate::pdf_pane::{self, PdfPane};
 
 actions!(
     presentation,
@@ -75,8 +75,9 @@ impl Render for Presentation {
                 .min(f32::from(viewport.height) / s.height)
                 .max(0.01)
         });
+        let scale_factor = window.scale_factor();
         if let Some(fit) = fit {
-            let scale_milli = (fit * window.scale_factor() * 1000.0).round() as u32;
+            let scale_milli = pdf_pane::scale_milli(fit, scale_factor);
             self.pane
                 .update(cx, |p, cx| p.present(page, scale_milli, cx));
         }
@@ -111,9 +112,10 @@ impl Render for Presentation {
             .on_click(cx.listener(|this, _, _, cx| this.go(this.page as isize + 1, cx)))
             .when_some(image.zip(size).zip(fit), |d, ((image, size), fit)| {
                 d.child(
+                    // Sized as the bitmap, so that it is drawn pixel for pixel.
                     img(image)
-                        .w(px(size.width * fit))
-                        .h(px(size.height * fit))
+                        .w(px(pdf_pane::page_side(size.width, fit, scale_factor)))
+                        .h(px(pdf_pane::page_side(size.height, fit, scale_factor)))
                         .object_fit(ObjectFit::Fill),
                 )
             })
