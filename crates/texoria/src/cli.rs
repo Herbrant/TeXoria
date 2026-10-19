@@ -19,8 +19,8 @@ pub enum Launch {
 pub const USAGE: &str = "\
 Usage: texoria [FILE | FOLDER]
 
-Opens a .tex file, or the main file of a folder (main.tex, or the first .tex
-file with \\documentclass).
+Opens a .tex file, or the main file of a folder (the LaTeX document, with
+\\documentclass, that no other one includes; subfolders are searched too).
 
 Options:
   -h, --help     Print this help

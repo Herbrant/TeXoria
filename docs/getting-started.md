@@ -3,9 +3,16 @@
 ## Open a project
 
 Start TeXoria and choose *Open a document…* (⌘O on macOS, Ctrl+O elsewhere). You can pick a
-`.tex` file or a whole folder: for a folder, TeXoria opens `main.tex`, or else the first file
-with a `\documentclass`. The welcome screen can also *Clone a repository…* or *Open from
-Overleaf…* (see [Git](git.md) and [Overleaf](overleaf.md)).
+`.tex` file or a whole folder. On Windows and Linux the system dialog cannot show files and
+folders together, so folders have their own *Open a folder…* (File › Open Folder…,
+Ctrl+Shift+O). The welcome screen can also *Clone a repository…* or *Open from Overleaf…* (see
+[Git](git.md) and [Overleaf](overleaf.md)).
+
+For a folder, TeXoria looks for its documents, whatever their name, in the folder and two
+levels of subfolders: `.tex` files with a `\documentclass` that no other document includes
+(`\input`, `\include`, `\subfile`) and whose `% !TeX root` comment does not name another
+file. It opens the one you worked on last, or else one with a `\begin{document}`, preferring
+the least deep and then the one that includes the most files.
 
 A project opens again with the tabs you left open, and on the one you were working in (unless
 you opened a specific file of it).

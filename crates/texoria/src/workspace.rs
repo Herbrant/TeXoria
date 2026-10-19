@@ -57,13 +57,28 @@ use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
     AddCitation, Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit,
     DecreaseFontSize, EditWithAgent, ExportPdf, Fetch, FindInProject, FixWithAgent, FormatDocument,
-    ForwardSearch, IncreaseFontSize, NewBranch, Open, OpenFromOverleaf, OpenSettings, Present,
-    Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent,
-    ToggleComment, ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline,
+    ForwardSearch, IncreaseFontSize, NewBranch, Open, OpenFolder, OpenFromOverleaf, OpenSettings,
+    Present, Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf,
+    ToggleAgent, ToggleComment, ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline,
     ToggleSoftWrap, ToggleTheme, ToggleVimMode, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
+
+/// Whether the system's open dialog can pick a file or a folder at once. Only macOS's can: the
+/// XDG portal (Linux) and Windows' dialog asked for folders show folders only, and the portal
+/// hands back the current folder when a file is chosen anyway.
+const OPEN_PICKS_FOLDERS: bool = cfg!(target_os = "macos");
+
+/// The open dialog of *Open…* (`folder: false`) or *Open Folder…*.
+fn open_prompt(folder: bool) -> PathPromptOptions {
+    PathPromptOptions {
+        files: !folder,
+        directories: folder || OPEN_PICKS_FOLDERS,
+        multiple: false,
+        prompt: Some("Open".into()),
+    }
+}
 
 #[derive(Debug, Clone)]
 enum CompileState {
@@ -624,13 +639,17 @@ impl Workspace {
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let path = crate::paths::canonical(&path);
         let file = if path.is_dir() {
-            find_main_file(&path)
+            find_main_file(&path, &self.settings.recent)
         } else {
             Some(path.clone())
         };
         let Some(file) = file else {
             self.state = CompileState::Failed(
-                format!("No .tex file with \\documentclass in {}", path.display()).into(),
+                format!(
+                    "No LaTeX document (a .tex file with \\documentclass) in {}",
+                    path.display()
+                )
+                .into(),
             );
             cx.notify();
             return;
@@ -937,13 +956,8 @@ impl Workspace {
         .detach();
     }
 
-    fn prompt_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: false,
-            prompt: Some("Open".into()),
-        });
+    fn prompt_open(&mut self, folder: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(open_prompt(folder));
         cx.spawn_in(window, async move |this, cx| {
             let Some(path) = paths
                 .await
@@ -4877,10 +4891,21 @@ impl Workspace {
                             .primary()
                             .icon(Glyph::Open)
                             .label("Open a document…")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.prompt_open(window, cx)),
-                            ),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.prompt_open(false, window, cx)
+                            })),
                     )
+                    .when(!OPEN_PICKS_FOLDERS, |d| {
+                        d.child(
+                            Button::new("open-folder")
+                                .outline()
+                                .icon(Glyph::Open)
+                                .label("Open a folder…")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.prompt_open(true, window, cx)
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("clone")
                             .outline()
@@ -5044,7 +5069,12 @@ impl Render for Workspace {
             .bg(theme.background)
             .text_color(theme.foreground)
             .font_family(theme.font_family.clone())
-            .on_action(cx.listener(|this, _: &Open, window, cx| this.prompt_open(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &Open, window, cx| this.prompt_open(false, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &OpenFolder, window, cx| this.prompt_open(true, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &Save, window, cx| this.save(window, cx)))
             .on_action(
                 cx.listener(|this, _: &FormatDocument, window, cx| {
@@ -5398,22 +5428,15 @@ fn run_summary(state: &CompileState) -> String {
     }
 }
 
-/// In a directory, the `.tex` file that has `\documentclass` (preferring
-/// `main.tex`).
-fn find_main_file(dir: &Path) -> Option<PathBuf> {
-    let main = dir.join("main.tex");
-    if main.is_file() {
-        return Some(main);
-    }
-    let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("tex")))
-        .filter(|p| tex_project::read_regular(p).is_some_and(|s| s.contains("\\documentclass")))
-        .collect();
-    candidates.sort();
-    candidates.into_iter().next()
+/// The document to open for the folder `dir`: the one opened last (`recent`, most recent
+/// first), or else the most likely main file.
+fn find_main_file(dir: &Path, recent: &[PathBuf]) -> Option<PathBuf> {
+    let docs = tex_project::main_file::main_files(dir);
+    recent
+        .iter()
+        .find(|r| docs.contains(r))
+        .or(docs.first())
+        .cloned()
 }
 
 /// Where to look for the PDFium shared library: next to the executable,

@@ -4,6 +4,7 @@
 pub mod bib;
 pub mod check;
 pub mod files;
+pub mod main_file;
 pub mod search;
 
 use std::collections::{HashMap, HashSet};
@@ -364,17 +365,8 @@ fn normalize(p: &Path) -> PathBuf {
 /// 4. otherwise the file itself.
 pub fn find_root(file: &Path, text: &str) -> PathBuf {
     let dir = file.parent().unwrap_or(Path::new("."));
-    for line in text.lines().take(20) {
-        let l = line.trim_start_matches(['%', ' ', '\t']);
-        // TeXShop, TeXworks and LaTeX Workshop ignore its case.
-        const MAGIC: &str = "!TEX root";
-        let rest = l
-            .get(..MAGIC.len())
-            .filter(|m| m.eq_ignore_ascii_case(MAGIC))
-            .map(|_| &l[MAGIC.len()..]);
-        if let Some(path) = rest.and_then(|r| r.trim().strip_prefix('=')) {
-            return normalize(&dir.join(path.trim()));
-        }
+    if let Some(root) = magic_root(file, text) {
+        return root;
     }
     if text.contains("\\documentclass") {
         return file.to_path_buf();
@@ -412,6 +404,24 @@ pub fn find_root(file: &Path, text: &str) -> PathBuf {
         candidate_dir = d.parent();
     }
     file.to_path_buf()
+}
+
+/// The file named by a `% !TEX root = path` magic comment in the first lines of `file`.
+fn magic_root(file: &Path, text: &str) -> Option<PathBuf> {
+    let dir = file.parent().unwrap_or(Path::new("."));
+    for line in text.lines().take(20) {
+        let l = line.trim_start_matches(['%', ' ', '\t']);
+        // TeXShop, TeXworks and LaTeX Workshop ignore its case.
+        const MAGIC: &str = "!TEX root";
+        let rest = l
+            .get(..MAGIC.len())
+            .filter(|m| m.eq_ignore_ascii_case(MAGIC))
+            .map(|_| &l[MAGIC.len()..]);
+        if let Some(path) = rest.and_then(|r| r.trim().strip_prefix('=')) {
+            return Some(normalize(&dir.join(path.trim())));
+        }
+    }
+    None
 }
 
 #[cfg(test)]

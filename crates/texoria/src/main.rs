@@ -39,6 +39,7 @@ actions!(
     texoria,
     [
         Open,
+        OpenFolder,
         Save,
         Build,
         CancelBuild,
@@ -85,6 +86,7 @@ actions!(
 fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("secondary-o", Open, None),
+        KeyBinding::new("secondary-shift-o", OpenFolder, None),
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-shift-s", ExportPdf, None),
         KeyBinding::new("secondary-shift-enter", Present, None),
@@ -152,6 +154,7 @@ fn set_menus(cx: &mut App) {
         ]),
         Menu::new("File").items([
             MenuItem::action("Open…", Open),
+            MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::action("Save", Save),
             MenuItem::action("Export PDF…", ExportPdf),
             MenuItem::action("Clone Repository…", CloneRepository),

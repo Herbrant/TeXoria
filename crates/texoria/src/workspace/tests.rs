@@ -51,16 +51,16 @@ fn pdfium_is_looked_for_next_to_the_executable_first() {
 #[test]
 fn finds_the_main_file_of_a_folder() {
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(find_main_file(dir.path()), None);
-    std::fs::write(dir.path().join("notes.tex"), "no class here").unwrap();
-    std::fs::write(dir.path().join("b.tex"), "\\documentclass{article}").unwrap();
-    std::fs::write(dir.path().join("a.tex"), "\\documentclass{book}").unwrap();
-    assert_eq!(find_main_file(dir.path()), Some(dir.path().join("a.tex")));
-    std::fs::write(dir.path().join("main.tex"), "").unwrap();
-    assert_eq!(
-        find_main_file(dir.path()),
-        Some(dir.path().join("main.tex"))
-    );
+    assert_eq!(find_main_file(dir.path(), &[]), None);
+    std::fs::write(dir.path().join("main.tex"), "\\section{Not the root}").unwrap();
+    let doc = "\\documentclass{article}\n\\begin{document}\n\\end{document}";
+    std::fs::write(dir.path().join("b.tex"), doc).unwrap();
+    std::fs::write(dir.path().join("a.tex"), doc).unwrap();
+    let (a, b) = (dir.path().join("a.tex"), dir.path().join("b.tex"));
+    assert_eq!(find_main_file(dir.path(), &[]), Some(a.clone()));
+    // The document opened last wins.
+    let other = PathBuf::from("/elsewhere/main.tex");
+    assert_eq!(find_main_file(dir.path(), &[other, b.clone(), a]), Some(b));
 }
 
 #[test]
@@ -129,6 +129,48 @@ fn opens_a_project_folder(cx: &mut TestAppContext) {
         assert_eq!(ws.buffers[ws.active].path, main);
         let titles: Vec<_> = ws.outline.iter().map(|i| i.item.title.as_str()).collect();
         assert!(titles.contains(&"Introduction"), "{titles:?}");
+    });
+}
+
+/// Answers the next open dialog with `path`, after checking what it was asked to pick.
+fn pick(
+    cx: &mut TestAppContext,
+    window: WindowHandle<Root>,
+    workspace: &Entity<Workspace>,
+    folder: bool,
+    path: PathBuf,
+) {
+    cx.update_window(window.into(), |_, window, cx| {
+        workspace.update(cx, |ws, cx| ws.prompt_open(folder, window, cx))
+    })
+    .unwrap();
+    cx.simulate_path_prompt_response(|options| {
+        // Outside macOS a dialog that may pick folders shows only folders.
+        assert_eq!(options.files, !folder);
+        assert_eq!(options.directories, folder || cfg!(target_os = "macos"));
+        Some(vec![path])
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn opens_a_file_or_a_folder_from_the_dialog(cx: &mut TestAppContext) {
+    let dir = testing::fixture_copy("sample");
+    let (window, workspace) = testing::open(cx, None, testing::startup());
+    let main = paths::canonical(&dir.path().join("main.tex"));
+    let methods = paths::canonical(&dir.path().join("chapters/methods.tex"));
+
+    pick(cx, window, &workspace, false, methods.clone());
+    workspace.read_with(cx, |ws, _| {
+        assert_eq!(ws.root.as_ref(), Some(&main));
+        assert_eq!(ws.buffers[ws.active].path, methods);
+    });
+
+    let (window, workspace) = testing::open(cx, None, testing::startup());
+    pick(cx, window, &workspace, true, dir.path().to_path_buf());
+    workspace.read_with(cx, |ws, _| {
+        assert_eq!(ws.root.as_ref(), Some(&main));
+        assert_eq!(ws.buffers[ws.active].path, main);
     });
 }
 

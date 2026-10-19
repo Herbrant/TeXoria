@@ -135,16 +135,13 @@ fn opening_projects_and_folders(cx: &mut TestAppContext) {
     let CompileState::Failed(e) = app.read(cx, |ws, _| ws.state.clone()) else {
         panic!("no error");
     };
-    assert!(
-        e.starts_with("No .tex file with \\documentclass in "),
-        "{e}"
-    );
+    assert!(e.starts_with("No LaTeX document "), "{e}");
     assert!(app.read(cx, |ws, _| ws.root.is_none()));
 
-    // Through the Open dialog, a folder with one.
+    // Through the Open Folder dialog, a folder with one.
     let tmp = testing::fixture_copy("sample");
     let dir = paths::canonical(tmp.path());
-    app.dispatch(cx, crate::Open);
+    app.dispatch(cx, crate::OpenFolder);
     assert!(cx.did_prompt_for_paths());
     cx.simulate_path_prompt_response(|_| Some(vec![dir.clone()]));
     cx.run_until_parked();

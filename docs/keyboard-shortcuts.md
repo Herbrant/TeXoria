@@ -2,7 +2,8 @@
 
 | Action | macOS | Windows, Linux |
 |---|---|---|
-| Open a file or folder | ⌘O | Ctrl+O |
+| Open a file (or a folder on macOS) | ⌘O | Ctrl+O |
+| Open a folder | ⇧⌘O | Ctrl+Shift+O |
 | Save | ⌘S | Ctrl+S |
 | Export the PDF | ⇧⌘S | Ctrl+Shift+S |
 | Close tab | ⌘W | Ctrl+W |

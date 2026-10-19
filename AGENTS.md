@@ -11,7 +11,7 @@ assuming upstream GPUI/Zed APIs).
 ```sh
 ./scripts/fetch-pdfium.sh            # PDFium → vendor/pdfium (needed for the PDF preview; CI runs it)
 ./scripts/fetch-tectonic.sh          # Tectonic → vendor/tectonic (optional fallback engine)
-cargo run -p texoria -- path/to/document.tex   # also accepts a directory (opens main.tex or the first .tex with \documentclass)
+cargo run -p texoria -- path/to/document.tex   # also accepts a directory (tex_project::main_file picks its document)
 
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
