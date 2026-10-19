@@ -3,6 +3,16 @@
 Notable changes to TeXoria, newest first. Each release's section is also its GitHub release notes
 (`scripts/release-notes.sh`), so every release must have one before it is tagged.
 
+## [0.5.0] - 2026-10-19
+
+### Added
+
+- Editor tabs have a close button, and a middle click closes a tab too, even one that is not
+  active; its edits are saved first. The last open tab stays.
+  ([ac54bd1](https://github.com/Herbrant/TeXoria/commit/ac54bd1))
+
+**Full changelog**: [v0.4.2...v0.5.0](https://github.com/Herbrant/TeXoria/compare/v0.4.2...v0.5.0)
+
 ## [0.4.2] - 2026-10-19
 
 ### Added

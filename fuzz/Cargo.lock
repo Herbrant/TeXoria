@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "synctex"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "flate2",
  "thiserror",
@@ -863,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "tex-cite"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "tex-complete"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "nucleo-matcher",
  "serde",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "tex-git"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "libc",
  "log",
@@ -895,14 +895,14 @@ dependencies = [
 
 [[package]]
 name = "tex-log"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "regex",
 ]
 
 [[package]]
 name = "tex-project"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "regex",
  "tex-syntax",
@@ -910,7 +910,7 @@ dependencies = [
 
 [[package]]
 name = "tex-spell"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "encoding_rs",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "tex-syntax"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "codebook-tree-sitter-latex",
  "tree-sitter",
@@ -936,7 +936,7 @@ dependencies = [
 
 [[package]]
 name = "tex-vim"
-version = "0.4.2"
+version = "0.5.0"
 
 [[package]]
 name = "texoria-fuzz"
