@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{
@@ -32,6 +32,9 @@ const MAX_ZOOM: f32 = 6.0;
 /// Pages around the viewport kept rasterized (and their bitmaps retained).
 const RENDER_AHEAD: usize = 1;
 const KEEP_AROUND: usize = 6;
+/// How long the scale must stay put (a live resize changes it on every frame)
+/// before the pages are rasterized at it.
+const SCALE_SETTLE: Duration = Duration::from_millis(150);
 
 actions!(
     pdf,
@@ -127,6 +130,13 @@ pub struct PdfPane {
     zoom: Zoom,
     scroll: ScrollHandle,
     viewport: Size<Pixels>,
+    /// Device pixels per pixel of the window's display, as of the last frame.
+    scale_factor: f32,
+    /// The scale the pages are rasterized at, in device pixels per point
+    /// (thousandths), and when the wanted one last changed.
+    scale_milli: u32,
+    scale_changed: Option<Instant>,
+    _scale_settle: Task<()>,
     highlight: Option<Highlight>,
     highlight_seq: usize,
     dark: bool,
@@ -206,6 +216,10 @@ impl PdfPane {
             zoom: Zoom::FitWidth,
             scroll: ScrollHandle::new(),
             viewport: Size::default(),
+            scale_factor: 1.0,
+            scale_milli: 0,
+            scale_changed: None,
+            _scale_settle: Task::ready(()),
             highlight: None,
             highlight_seq: 0,
             dark: false,
@@ -427,6 +441,7 @@ impl PdfPane {
             pages: &self.pages,
             viewport: self.viewport,
             zoom: self.zoom,
+            scale_factor: self.scale_factor,
         }
     }
 
@@ -870,12 +885,13 @@ impl PdfPane {
 
     // ── Rendering ────────────────────────────────────────────────────────
 
-    /// Ask the renderer for whatever visible pages lack a sharp bitmap.
-    fn request_bitmaps(&mut self, visible: &[usize], scale: f32) {
+    /// Ask the renderer for whatever visible pages lack a sharp bitmap at
+    /// `scale_milli`.
+    fn request_bitmaps(&mut self, visible: &[usize], scale_milli: u32, cx: &mut Context<Self>) {
         if self.renderer.is_none() {
             return;
         }
-        let scale_milli = quantize(scale);
+        let scale_milli = self.settled_scale(scale_milli, cx);
         let mut wanted: Vec<RenderKey> = Vec::new();
         for page in render_order(visible, self.pages.len()) {
             let key = RenderKey {
@@ -890,6 +906,29 @@ impl PdfPane {
         }
         self.pane_wanted = wanted;
         self.send_requests();
+    }
+
+    /// The scale to rasterize at for `wanted`: at once after a pause, but
+    /// while it keeps changing the pages stay at the last one (stretched)
+    /// until it settles.
+    fn settled_scale(&mut self, wanted: u32, cx: &mut Context<Self>) -> u32 {
+        if wanted == self.scale_milli {
+            return wanted;
+        }
+        let now = cx.background_executor().now();
+        let changing = self
+            .scale_changed
+            .is_some_and(|t| now.saturating_duration_since(t) < SCALE_SETTLE);
+        self.scale_changed = Some(now);
+        if changing {
+            self._scale_settle = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(SCALE_SETTLE).await;
+                this.update(cx, |_, cx| cx.notify()).ok();
+            });
+        } else {
+            self.scale_milli = wanted;
+        }
+        self.scale_milli
     }
 
     /// Ask the renderer for the presentation's page, then the pane's.
@@ -1188,6 +1227,7 @@ impl Render for PdfPane {
                 .into_any_element();
         }
 
+        self.scale_factor = window.scale_factor();
         let zoom = self.zoom_factor();
         let (rects, content) = self.layout(zoom);
 
@@ -1209,7 +1249,7 @@ impl Render for PdfPane {
             .filter(|(_, r)| r.bottom() >= view_top && r.top() <= view_bottom)
             .map(|(i, _)| i)
             .collect();
-        self.request_bitmaps(&visible, zoom * window.scale_factor());
+        self.request_bitmaps(&visible, scale_milli(zoom, self.scale_factor), cx);
         self.request_links(&visible);
         self.evict_far_pages(&visible);
 
@@ -1408,6 +1448,8 @@ struct Geometry<'a> {
     pages: &'a [PageSize],
     viewport: Size<Pixels>,
     zoom: Zoom,
+    /// The display's device pixels per pixel.
+    scale_factor: f32,
 }
 
 impl Geometry<'_> {
@@ -1436,18 +1478,15 @@ impl Geometry<'_> {
 
     /// Page rectangles in content coordinates (pixels), plus content size.
     fn layout(&self, zoom: f32) -> (Vec<Bounds<Pixels>>, Size<Pixels>) {
-        let widest = self
-            .pages
-            .iter()
-            .map(|p| p.width * zoom)
-            .fold(0.0, f32::max);
+        let side = |pt| page_side(pt, zoom, self.scale_factor);
+        let widest = self.pages.iter().map(|p| side(p.width)).fold(0.0, f32::max);
         let content_w = (widest + 2.0 * MARGIN).max(f32::from(self.viewport.width));
         let mut y = MARGIN;
         let rects = self
             .pages
             .iter()
             .map(|p| {
-                let (w, h) = (p.width * zoom, p.height * zoom);
+                let (w, h) = (side(p.width), side(p.height));
                 let r = Bounds::new(point(px((content_w - w) / 2.0), px(y)), size(px(w), px(h)));
                 y += h + GAP;
                 r
@@ -1513,11 +1552,19 @@ fn far_pages(shown: impl Iterator<Item = usize>, visible: &[usize]) -> Vec<usize
         .collect()
 }
 
-/// Snap to 5% steps so continuous resizing does not re-rasterize per pixel.
-fn quantize(scale: f32) -> u32 {
-    let step = 1.05f32.ln();
-    let snapped = (scale.max(0.05).ln() / step).round() * step;
-    (snapped.exp() * 1000.0).round() as u32
+/// The device pixels per point of pages shown at `zoom` on a display of
+/// `scale_factor`, in thousandths ([`RenderKey::scale_milli`]).
+fn scale_milli(zoom: f32, scale_factor: f32) -> u32 {
+    ((zoom * scale_factor * 1000.0).round() as u32).max(1)
+}
+
+/// The size in pixels of `pt` points of a page at `zoom`: whole device pixels, rounded as the
+/// renderer sizes its bitmaps, so that a page's bitmap is drawn pixel for pixel (resampled,
+/// small text turns grainy on a low-resolution display).
+fn page_side(pt: f32, zoom: f32, scale_factor: f32) -> f32 {
+    // As `RenderKey::scale`.
+    let scale = scale_milli(zoom, scale_factor) as f32 / 1000.0;
+    (pt * scale).round().max(1.0) / scale_factor
 }
 
 fn to_render_image(bitmap: Bitmap) -> Option<Arc<RenderImage>> {

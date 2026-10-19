@@ -232,8 +232,11 @@ texoria ─┬─ tex-compile ── tex-log
     run wrote it (`Output::pdf_written`); until then a full build is forced (latexmk `-g`), so
     build files shipped with a project are never handed to PDFium.
   - `pdf_pane.rs` keeps old bitmaps on screen until the new PDF's pages are rasterized (no flash)
-    and only materializes pages near the viewport. SyncTeX forward/inverse search goes through the
-    `synctex` crate, whose coordinates are PDF points with a top-left origin, y downwards.
+    and only materializes pages near the viewport. Pages are laid out in whole device pixels and
+    rasterized at the display's exact scale (`scale_milli`, once it stops changing), so a bitmap
+    is drawn 1:1: resampled, it looks grainy on a low-resolution display. SyncTeX forward/inverse
+    search goes through the `synctex` crate, whose coordinates are PDF points with a top-left
+    origin, y downwards.
     The pane takes the focus on click: in its key context (`PdfPane`) ⌘= / ⌘- / ⌘0 zoom the PDF,
     elsewhere they resize the editor's text (`Settings::editor_font_size`). Links, page text
     (selection) and search hits are `pdf_view::Query`s answered on the worker, per document

@@ -26,6 +26,7 @@ fn zoom_factors() {
         pages: &pages,
         viewport: view,
         zoom,
+        scale_factor: 2.0,
     };
     // The widest page fills the width, margins aside.
     let fit = g(Zoom::FitWidth, viewport(656.0, 500.0)).zoom_factor();
@@ -50,6 +51,7 @@ fn zoom_factors() {
         pages: &[],
         viewport: viewport(500.0, 500.0),
         zoom: Zoom::FitPage,
+        scale_factor: 1.0,
     };
     assert_eq!(none.zoom_factor(), 1.0);
     assert_eq!(none.layout(1.0).0.len(), 0);
@@ -63,6 +65,7 @@ fn pages_are_stacked_and_centered() {
         pages: &pages,
         viewport: viewport(1000.0, 500.0),
         zoom: Zoom::Fixed(0.5),
+        scale_factor: 1.0,
     };
     let (rects, content) = g.layout(0.5);
     // As wide as the viewport, each page in its middle.
@@ -107,13 +110,41 @@ fn pages_rendered_and_kept() {
 }
 
 #[test]
-fn scales_snap_to_steps() {
-    assert_eq!(quantize(1.0), 1000);
-    assert_eq!(quantize(1.01), 1000);
-    assert_eq!(quantize(2.0), quantize(2.02));
-    assert!(quantize(2.0) > quantize(1.9));
+fn pages_are_whole_device_pixels() {
+    assert_eq!(scale_milli(1.0, 2.0), 2000);
+    assert_eq!(scale_milli(0.919_934_6, 1.0), 920);
     // Never zero.
-    assert!(quantize(0.0) > 0 && quantize(-3.0) == quantize(0.05));
+    assert_eq!(scale_milli(0.0, 2.0), 1);
+
+    // An A4 page at a zoom that fills some pane, on a Retina display and on
+    // a low-resolution one: as wide as its bitmap, which is drawn 1:1.
+    let a4 = page(595.276, 841.89);
+    for scale_factor in [1.0, 1.5, 2.0] {
+        let g = Geometry {
+            pages: &[a4],
+            viewport: viewport(600.0, 500.0),
+            zoom: Zoom::FitWidth,
+            scale_factor,
+        };
+        let zoom = g.zoom_factor();
+        let (rects, _) = g.layout(zoom);
+        let key = RenderKey {
+            generation: 1,
+            page: 0,
+            scale_milli: scale_milli(zoom, scale_factor),
+            dark: false,
+        };
+        let device = |side: Pixels| f32::from(side) * scale_factor;
+        let width = device(rects[0].size.width);
+        let height = device(rects[0].size.height);
+        assert_eq!(width, (a4.width * key.scale()).round());
+        assert_eq!(height, (a4.height * key.scale()).round());
+        // Within a device pixel of the exact size.
+        assert!(
+            (width - a4.width * zoom * scale_factor).abs() <= 1.0,
+            "{width}"
+        );
+    }
 }
 
 #[test]
@@ -368,6 +399,33 @@ fn moves_between_pages(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn pages_are_drawn_again_once_the_scale_settles(cx: &mut TestAppContext) {
+    // No PDFium needed: this is the pane's own bookkeeping.
+    let (_, pane) = pane(cx, Vec::new());
+    let notified = Rc::new(RefCell::new(0));
+    let _observer = cx.update(|cx| {
+        let notified = notified.clone();
+        cx.observe(&pane, move |_, _| *notified.borrow_mut() += 1)
+    });
+    let settled =
+        |cx: &mut TestAppContext, scale| pane.update(cx, |p, cx| p.settled_scale(scale, cx));
+    // The first scale, and one after a pause, at once.
+    assert_eq!(settled(cx, 2000), 2000);
+    cx.executor().advance_clock(SCALE_SETTLE);
+    assert_eq!(settled(cx, 1000), 1000);
+    // Changing on every frame (a live resize, a move to another display):
+    // the pages stay as they are until it stops.
+    assert_eq!(settled(cx, 1100), 1000);
+    assert_eq!(settled(cx, 1200), 1000);
+    cx.run_until_parked();
+    let before = *notified.borrow();
+    cx.executor().advance_clock(SCALE_SETTLE);
+    // Then the pane draws again, at the last scale.
+    assert!(*notified.borrow() > before);
+    assert_eq!(settled(cx, 1200), 1200);
+}
+
+#[gpui::test]
 fn zooms(cx: &mut TestAppContext) {
     let Some((window, pane)) = loaded(cx) else {
         return;
@@ -387,11 +445,11 @@ fn zooms(cx: &mut TestAppContext) {
     assert_eq!(zoom(cx), MAX_ZOOM);
     update(cx, window, &pane, |p, _, cx| p.zoom_to_fit(cx));
     assert_eq!(zoom(cx), fit);
-    // The pages are drawn again at the new scale.
+    // The pages are drawn again at the new scale, once it settles.
+    cx.executor().advance_clock(SCALE_SETTLE);
     wait(cx, window, &pane, "sharper bitmaps", |cx| {
         pane.read_with(cx, |p, _| {
-            p.shown[&0].key.scale_milli == quantize(fit * 1.0)
-                || p.shown[&0].key.scale_milli == quantize(fit * 2.0)
+            p.shown[&0].key.scale_milli == scale_milli(fit, p.scale_factor)
         })
     });
 
