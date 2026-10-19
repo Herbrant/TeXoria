@@ -272,6 +272,8 @@ texoria ─┬─ tex-compile ── tex-log
     to `tex_vim` and stops them when Vim takes them; the block cursor is a fill
     `RangeDecoration` (the editor has no cursor shapes).
   - Actions/keybindings/menus are declared in `main.rs` (`secondary-*` = ⌘ on macOS, Ctrl elsewhere).
+    On macOS the app outlives its window: `reopen` (the Dock icon) opens the last project in a
+    new one. Closing the main window also closes the Settings and presentation windows.
   - The app icon's sources are `assets/logo/texoria.svg` (and `texoria-small.svg` for ≤ 48 px);
     the rasterized PNG/`.icns`/`.ico` in `crates/texoria/packaging` are committed. `build.rs`
     embeds the `.ico` as Windows resource ID 1, which is where GPUI loads the window icon from.

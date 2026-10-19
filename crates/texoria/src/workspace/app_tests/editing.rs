@@ -408,6 +408,37 @@ fn sidebars_and_toggles(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn closing_the_window_saves_and_closes_the_others(cx: &mut TestAppContext) {
+    let app = Open::sample(cx, quiet());
+    let main = app.path("main.tex");
+    app.type_at(cx, &main, 0, "% unsaved\n");
+    app.dispatch(cx, crate::OpenSettings);
+    assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+
+    let mut vcx = VisualTestContext::from_window(app.window.into(), cx);
+    assert!(vcx.simulate_close());
+    vcx.run_until_parked();
+    assert!(
+        std::fs::read_to_string(&main)
+            .unwrap()
+            .starts_with("% unsaved")
+    );
+    // Only the main window is left, which the platform now closes; then nothing holds the
+    // workspace (its compiler, agents and servers), and a new window can take its place.
+    let windows = cx.update(|cx| cx.windows());
+    assert_eq!(windows, [AnyWindowHandle::from(app.window)]);
+    let Open {
+        _tmp, window, ws, ..
+    } = app;
+    let weak = ws.downgrade();
+    drop(ws);
+    cx.update_window(window.into(), |_, window, _| window.remove_window())
+        .unwrap();
+    cx.run_until_parked();
+    assert!(weak.upgrade().is_none());
+}
+
+#[gpui::test]
 fn vim_keys_edit_the_active_editor(cx: &mut TestAppContext) {
     let mut startup = quiet();
     startup.settings.vim_mode = true;

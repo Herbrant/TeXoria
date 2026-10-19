@@ -284,14 +284,25 @@ impl Workspace {
             async {}
         }));
         let weak = cx.entity().downgrade();
-        window.on_window_should_close(cx, move |_, cx| {
-            weak.update(cx, |this, cx| {
-                // If saving fails, keep the window (and the error) up once.
-                let close = this.save_all(cx) || this.refused_close;
-                this.refused_close = !close;
-                close
-            })
-            .unwrap_or(true)
+        window.on_window_should_close(cx, move |window, cx| {
+            let close = weak
+                .update(cx, |this, cx| {
+                    // If saving fails, keep the window (and the error) up once.
+                    let close = this.save_all(cx) || this.refused_close;
+                    this.refused_close = !close;
+                    close
+                })
+                .unwrap_or(true);
+            if close {
+                // The Settings and presentation windows belong to this one. Left open,
+                // they would keep the app running elsewhere than on macOS, and there
+                // keep its Dock icon from opening a new window.
+                let main = window.window_handle();
+                for other in cx.windows().into_iter().filter(|w| *w != main) {
+                    other.update(cx, |_, w, _| w.remove_window()).ok();
+                }
+            }
+            close
         });
 
         let engine_ix = settings

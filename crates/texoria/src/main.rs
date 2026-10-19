@@ -28,8 +28,11 @@ mod workspace;
 #[cfg(test)]
 mod testing;
 
+use std::path::PathBuf;
+
 use gpui_kit::*;
 
+use crate::settings::Settings;
 use crate::workspace::Workspace;
 
 actions!(
@@ -257,24 +260,40 @@ fn main() {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    gpui_kit::application()
-        .with_assets(assets::Assets)
-        .run(move |cx| {
-            init(cx);
+    let app = gpui_kit::application().with_assets(assets::Assets);
+    // On macOS the app outlives its window: the Dock icon opens it again.
+    app.on_reopen(reopen);
+    app.run(move |cx| {
+        init(cx);
+        open_main_window(path, cx);
+    });
+}
 
-            // The title bar moves the window and handles double clicks itself
-            // (otherwise macOS does both too, and delays clicks on its buttons).
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
-                window_min_size: Some(size(px(720.), px(480.))),
-                // Matches the packaged `texoria.desktop`, so Linux shells pick up its icon.
-                app_id: Some("texoria".into()),
-                ..component::TitleBar::window_options()
-            };
-            gpui_kit::open_window(options, cx, move |window, cx| {
-                cx.new(|cx| Workspace::new(path, window, cx))
-            })
-            .expect("failed to open window");
-            cx.activate(true);
-        });
+/// Open the main window on `path` (a file or a folder, or none for the start page).
+fn open_main_window(path: Option<PathBuf>, cx: &mut App) {
+    // The title bar moves the window and handles double clicks itself
+    // (otherwise macOS does both too, and delays clicks on its buttons).
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
+        window_min_size: Some(size(px(720.), px(480.))),
+        // Matches the packaged `texoria.desktop`, so Linux shells pick up its icon.
+        app_id: Some("texoria".into()),
+        ..component::TitleBar::window_options()
+    };
+    gpui_kit::open_window(options, cx, move |window, cx| {
+        cx.new(|cx| Workspace::new(path, window, cx))
+    })
+    .expect("failed to open window");
+    cx.activate(true);
+}
+
+/// The app was opened again (its Dock icon clicked) with no window on screen: show the
+/// minimized one, or open the last project in a new one.
+fn reopen(cx: &mut App) {
+    if let Some(window) = cx.windows().into_iter().next() {
+        window.update(cx, |_, w, _| w.activate_window()).ok();
+        return;
+    }
+    let last = Settings::load().recent.into_iter().next();
+    open_main_window(last.filter(|p| p.exists()), cx);
 }
