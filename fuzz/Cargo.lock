@@ -953,6 +953,7 @@ dependencies = [
  "tex-spell",
  "tex-syntax",
  "tex-vim",
+ "url",
 ]
 
 [[package]]

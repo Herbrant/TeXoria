@@ -22,6 +22,8 @@ tex-cite = { path = "../crates/tex-cite" }
 tex-spell = { path = "../crates/tex-spell" }
 tex-git = { path = "../crates/tex-git" }
 tex-vim = { path = "../crates/tex-vim" }
+# Where an HTTP client (reqwest) really connects, to check the URL helpers against.
+url = "2"
 
 [workspace]
 
