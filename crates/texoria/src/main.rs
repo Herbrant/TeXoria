@@ -12,6 +12,7 @@ mod file_tree;
 mod git_panel;
 mod grammar;
 mod latex;
+mod outline;
 mod overleaf;
 mod paths;
 mod pdf_pane;

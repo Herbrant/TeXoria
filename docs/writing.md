@@ -94,6 +94,12 @@ The outline (⌘1) lists the parts, chapters, sections and subsections of the wh
 following `\input` and `\include`, and highlights the section you are editing. Click an entry to
 jump to it.
 
+Each heading groups what follows it (subsections under their section, figures and tables under
+their heading), and groups start collapsed, so only the top level is listed at first. Click a
+heading's arrow to open or close its group, or use the button at the top of the outline to
+expand or collapse them all. When the section you are editing is in a closed group, the
+heading around it is highlighted instead.
+
 ## Files
 
 The Files view (⌘⇧E) shares the sidebar with the outline and shows the project folder as a tree,

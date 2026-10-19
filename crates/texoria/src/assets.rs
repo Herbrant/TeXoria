@@ -83,6 +83,8 @@ glyphs! {
     NextChange => "chevron-down",
     Folder => "folder",
     Expand => "chevron-right",
+    ExpandAll => "chevrons-up-down",
+    CollapseAll => "chevrons-down-up",
     PlainFile => "file",
     NewFile => "file-plus",
     NewFolder => "folder-plus",

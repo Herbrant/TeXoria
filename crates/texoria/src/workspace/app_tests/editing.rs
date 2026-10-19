@@ -341,6 +341,54 @@ fn files_changed_on_disk_are_reloaded(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn outline_groups_start_collapsed(cx: &mut TestAppContext) {
+    let settings = tempfile::tempdir().unwrap();
+    let app = Open::sample(cx, saved_in(settings.path()));
+    let main = app.path("main.tex");
+    let visible = |cx: &mut TestAppContext| -> Vec<String> {
+        app.read(cx, |ws, _| {
+            outline::layout(&ws.outline, &ws.outline_fold)
+                .into_iter()
+                .filter(|r| r.visible)
+                .map(|r| ws.outline[r.index].item.title.clone())
+                .collect()
+        })
+    };
+    let toggle = |cx: &mut TestAppContext, title: &str| {
+        app.update(cx, |ws, _, cx| {
+            let rows = outline::layout(&ws.outline, &ws.outline_fold);
+            let row = rows
+                .into_iter()
+                .find(|r| ws.outline[r.index].item.title == title)
+                .unwrap();
+            ws.outline_fold.toggle(row.group.unwrap());
+            cx.notify();
+        })
+    };
+    app.draw(cx);
+    assert_eq!(visible(cx), ["Introduction", "Methods", "Results"]);
+    toggle(cx, "Results");
+    app.draw(cx);
+    assert_eq!(
+        visible(cx),
+        ["Introduction", "Methods", "Results", "Discussion"]
+    );
+    // Re-indexing an edit keeps the open group open, and new groups closed.
+    let at = app.text(cx, &main).find("\\section{Results}").unwrap();
+    app.type_at(cx, &main, at, "\\subsection{Aside}\n");
+    app.update(cx, |ws, _, cx| ws.reindex(cx));
+    assert_eq!(
+        visible(cx),
+        ["Introduction", "Methods", "Results", "Discussion"]
+    );
+    app.update(cx, |ws, _, _| ws.outline_fold.set_all(true));
+    assert_eq!(visible(cx).len(), 6);
+    app.draw(cx);
+    app.update(cx, |ws, _, _| ws.outline_fold.set_all(false));
+    assert_eq!(visible(cx), ["Introduction", "Methods", "Results"]);
+}
+
+#[gpui::test]
 fn sidebars_and_toggles(cx: &mut TestAppContext) {
     let settings = tempfile::tempdir().unwrap();
     let app = Open::sample(cx, saved_in(settings.path()));

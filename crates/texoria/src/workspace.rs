@@ -45,6 +45,7 @@ use crate::grammar::{self, BufferGrammar, Grammar, IgnoreGrammarRule, ServerStat
 use crate::latex::{
     self, CursorFixup, LatexCompletions, LatexNavigation, OpenExternal, OpenLocation, PackageDocs,
 };
+use crate::outline::{self, Fold};
 use crate::overleaf;
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
 use crate::presentation::Presentation;
@@ -144,6 +145,8 @@ pub struct Workspace {
         std::sync::Mutex<std::collections::HashMap<PathBuf, (u64, tex_spell::extract::Counts)>>,
     >,
     outline: Vec<ProjectOutlineItem>,
+    /// Which of the outline's groups are open.
+    outline_fold: Fold,
     show_sidebar: bool,
     sidebar: Sidebar,
     /// The last of Outline and Files: what the sidebar button shows.
@@ -374,6 +377,7 @@ impl Workspace {
             word_counts: Vec::new(),
             count_cache: Arc::default(),
             outline: Vec::new(),
+            outline_fold: Fold::default(),
             show_sidebar: true,
             sidebar: Sidebar::Outline,
             navigator: Sidebar::Outline,
@@ -728,6 +732,7 @@ impl Workspace {
         if self.root.as_deref() != Some(&root) {
             self.root = Some(root.clone());
             *self.project.write().unwrap() = Project::open(&root);
+            self.outline_fold = Fold::default();
             self.refresh_outline(cx);
             self.issues.clear();
             self.word_counts.clear();
@@ -4085,6 +4090,8 @@ impl Workspace {
                 .tooltip(tooltip)
                 .disabled(self.root.is_none())
         };
+        let rows = outline::layout(&self.outline, &self.outline_fold);
+        let open = outline::any_open(&rows);
         let header = h_flex()
             .px_3()
             .pt_3()
@@ -4093,6 +4100,23 @@ impl Workspace {
             .child(tab("nav-outline", "Outline", Sidebar::Outline, cx))
             .child(tab("nav-files", "Files", Sidebar::Files, cx))
             .child(div().flex_1())
+            .when(!files, |d| {
+                d.child(
+                    Button::new("outline-fold-all")
+                        .ghost()
+                        .icon(if open {
+                            Glyph::CollapseAll
+                        } else {
+                            Glyph::ExpandAll
+                        })
+                        .tooltip(if open { "Collapse All" } else { "Expand All" })
+                        .disabled(!rows.iter().any(|r| r.group.is_some()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.outline_fold.set_all(!open);
+                            cx.notify();
+                        })),
+                )
+            })
             .when(files, |d| {
                 d.child(
                     file_button("files-new-file", Glyph::NewFile, "New File").on_click(
@@ -4124,7 +4148,7 @@ impl Workspace {
                 .child(self.files.clone())
                 .into_any_element()
         } else {
-            self.render_outline(cx).into_any_element()
+            self.render_outline(rows, cx).into_any_element()
         };
 
         let theme = cx.theme();
@@ -4137,39 +4161,27 @@ impl Workspace {
             .child(body)
     }
 
-    fn render_outline(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_outline(&self, rows: Vec<outline::Row>, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        // The section containing the cursor is highlighted.
+        // The section containing the cursor is highlighted, or the
+        // collapsed group it is in.
         let current = self.buffers.get(self.active).and_then(|b| {
             let line = b.editor.read(cx).cursor_position().line;
-            self.outline
+            let i = self
+                .outline
                 .iter()
                 .enumerate()
                 .filter(|(_, o)| o.file == b.path && o.item.line <= line)
                 .map(|(i, _)| i)
-                .next_back()
+                .next_back()?;
+            outline::shown(&rows, i)
         });
 
-        let items = self.outline.iter().enumerate().map(|(i, o)| {
+        let items = rows.into_iter().filter(|r| r.visible).map(|row| {
+            let i = row.index;
+            let o = &self.outline[i];
             let kind = o.item.kind;
-            let depth = match kind {
-                OutlineKind::Figure | OutlineKind::Table => {
-                    // Indent floats under the preceding heading.
-                    self.outline[..i]
-                        .iter()
-                        .rev()
-                        .find(|p| !p.item.kind.is_float())
-                        .map_or(0, |p| p.item.kind.depth() + 1)
-                }
-                k => k.depth(),
-            };
-            let min_depth = self
-                .outline
-                .iter()
-                .map(|o| o.item.kind.depth())
-                .min()
-                .unwrap_or(0);
-            let indent = (depth.saturating_sub(min_depth) as f32) * 12.0;
+            let indent = row.depth as f32 * 12.0;
             let icon = match kind {
                 OutlineKind::Figure => Glyph::Figure,
                 OutlineKind::Table => Glyph::Table,
@@ -4181,11 +4193,34 @@ impl Workspace {
             } else {
                 o.item.title.clone().into()
             };
+            // A fixed slot, so that titles line up with or without a chevron.
+            let chevron = div()
+                .id(("outline-fold", i))
+                .flex_none()
+                .size(px(14.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .when_some(row.group, |d, key| {
+                    d.child(
+                        Icon::new(Glyph::Expand)
+                            .small()
+                            .text_color(theme.muted_foreground)
+                            .when(row.open, |i| {
+                                i.transform(Transformation::rotate(percentage(0.25)))
+                            }),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.outline_fold.toggle(key.clone());
+                        cx.notify();
+                    }))
+                });
             let (file, line) = (o.file.clone(), o.item.line);
             h_flex()
                 .id(("outline", i))
-                .gap_2()
-                .pl(px(10.0 + indent))
+                .gap_1p5()
+                .pl(px(4.0 + indent))
                 .pr_2()
                 .py_1()
                 .mx_1()
@@ -4198,6 +4233,7 @@ impl Workspace {
                 .when(!active, |d| d.text_color(theme.sidebar_foreground))
                 .when(kind.depth() <= 2, |d| d.font_weight(FontWeight::MEDIUM))
                 .hover(|s| s.bg(theme.sidebar_accent))
+                .child(chevron)
                 .child(
                     Icon::new(icon)
                         .small()
