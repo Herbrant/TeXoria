@@ -3,6 +3,171 @@
 Notable changes to TeXoria, newest first. Each release's section is also its GitHub release notes
 (`scripts/release-notes.sh`), so every release must have one before it is tagged.
 
+## [0.4.2] - 2026-10-19
+
+### Added
+
+- `texoria --help` and `texoria --version` on the command line; unknown options are refused
+  instead of being opened as files (macOS's `-psn_` argument no longer shows "Cannot open").
+  ([f87eb44](https://github.com/Herbrant/TeXoria/commit/f87eb44))
+
+### Security
+
+- An agent can no longer write `latexmkrc` through a link to it, or on Windows under another
+  spelling of its name (`latexmkrc.`, a trailing space, `::$DATA`); undoing an added file never
+  follows a folder out of the project and removes an added link, not what it points to.
+  ([5da7f0b](https://github.com/Herbrant/TeXoria/commit/5da7f0b))
+- The editor really stays read-only while an agent works: it became editable again as soon as it
+  was drawn. ([0eac005](https://github.com/Herbrant/TeXoria/commit/0eac005))
+- Changes an agent makes to the Git configuration and hooks are also noticed in worktrees,
+  submodules and with `core.hooksPath`. ([7d4dad2](https://github.com/Herbrant/TeXoria/commit/7d4dad2))
+- When an agent session ends, the bridges still connected to TeXoria's tools are hung up on.
+  ([92540e2](https://github.com/Herbrant/TeXoria/commit/92540e2))
+- Discarding untracked files in Source Control stays inside the working tree: on Windows a path
+  with `\` or a drive could leave it, and `.git/config` or a file behind a linked folder could be
+  deleted. ([ee881ad](https://github.com/Herbrant/TeXoria/commit/ee881ad))
+- The engine never runs with an empty `PATH`, which Unix reads as the project folder; one odd
+  entry no longer empties it. ([812a186](https://github.com/Herbrant/TeXoria/commit/812a186),
+  [d24713c](https://github.com/Herbrant/TeXoria/commit/d24713c))
+- A LanguageTool server is "on this computer" only when its host really is a loopback address
+  (not `localhost:pw@example.com` or an IPv4-mapped address).
+  ([f2a6630](https://github.com/Herbrant/TeXoria/commit/f2a6630))
+- Dictionary codes cannot point outside the dictionary folders.
+  ([3a9beee](https://github.com/Herbrant/TeXoria/commit/3a9beee))
+- Hovers escape the names and paths they show and link only real package names.
+  ([cdd28e6](https://github.com/Herbrant/TeXoria/commit/cdd28e6))
+- Updates stop on a `SHA256SUMS` that gives one file two hashes, install links in a Linux
+  tarball update as links instead of copying (or writing through) what they point to, and never
+  remove a download another running copy is using.
+  ([ab5e381](https://github.com/Herbrant/TeXoria/commit/ab5e381),
+  [34efbbc](https://github.com/Herbrant/TeXoria/commit/34efbbc),
+  [32cbb24](https://github.com/Herbrant/TeXoria/commit/32cbb24))
+- A settings file that cannot be read is left alone, instead of being overwritten with the
+  defaults (losing the trusted folders and the personal dictionary).
+  ([8c95cc5](https://github.com/Herbrant/TeXoria/commit/8c95cc5))
+
+### Fixed
+
+- **PDF preview.** Pages are drawn pixel for pixel at the display's exact scale, so they are
+  sharp on low-resolution displays too ([000a274](https://github.com/Herbrant/TeXoria/commit/000a274));
+  a PDF's first pages show at once instead of staying blank, Enter in the find bar no longer
+  jumps back to the first hit, and a rebuild keeps the current hit
+  ([224bb80](https://github.com/Herbrant/TeXoria/commit/224bb80)); a presentation whose page
+  disappears in a rebuild goes to the last page left
+  ([d99d67d](https://github.com/Herbrant/TeXoria/commit/d99d67d)).
+- **macOS.** Clicking the Dock icon after closing the window opens it again; closing the main
+  window also closes the Settings and presentation windows
+  ([816f21d](https://github.com/Herbrant/TeXoria/commit/816f21d)). Installing an update retries
+  mounting the disk image, and a failing tool says why
+  ([27e50b0](https://github.com/Herbrant/TeXoria/commit/27e50b0)).
+- **Windows.** Paths are shown and saved in their usual spelling, not as `\\?\C:\…`
+  ([6090160](https://github.com/Herbrant/TeXoria/commit/6090160)); Git colors show in the Files
+  view, renaming a file to its own name works, and links to folders can be deleted
+  ([ac28c32](https://github.com/Herbrant/TeXoria/commit/ac28c32),
+  [d3cc717](https://github.com/Herbrant/TeXoria/commit/d3cc717),
+  [b2c115e](https://github.com/Herbrant/TeXoria/commit/b2c115e)); names Windows cannot hold are
+  refused when creating or renaming files ([825bf45](https://github.com/Herbrant/TeXoria/commit/825bf45)).
+- **Build messages.** Errors and warnings land on the right file and line more often: pdfTeX and
+  LuaTeX logs with accented text are unwrapped correctly
+  ([fc87442](https://github.com/Herbrant/TeXoria/commit/fc87442)), the text of overfull and
+  underfull boxes no longer confuses the file being read
+  ([779f65a](https://github.com/Herbrant/TeXoria/commit/779f65a)), Tectonic's `\input`s without
+  extension are followed ([a209f01](https://github.com/Herbrant/TeXoria/commit/a209f01)), font
+  warnings keep their line ([54b6c4f](https://github.com/Herbrant/TeXoria/commit/54b6c4f)) and
+  `file:line:error` messages take the right file
+  ([14b34d9](https://github.com/Herbrant/TeXoria/commit/14b34d9)). A cancelled build no longer
+  reads a stale log ([9b79872](https://github.com/Herbrant/TeXoria/commit/9b79872)), texdoc no
+  longer hangs on long output ([254bae2](https://github.com/Herbrant/TeXoria/commit/254bae2)), and
+  a root file given without a folder builds ([8944082](https://github.com/Herbrant/TeXoria/commit/8944082)).
+- **Problems and navigation.** The live checks underline their findings as soon as a project
+  opens ([cb6604e](https://github.com/Herbrant/TeXoria/commit/cb6604e)); files and bibliographies
+  the project no longer includes are forgotten ([3dcb756](https://github.com/Herbrant/TeXoria/commit/3dcb756));
+  `.bib` entries are read correctly with `#` concatenations, quotes in braces or a missing
+  delimiter ([bbcedb5](https://github.com/Herbrant/TeXoria/commit/bbcedb5),
+  [1455069](https://github.com/Herbrant/TeXoria/commit/1455069)); more DOI spellings are accepted
+  ([fbcbdaa](https://github.com/Herbrant/TeXoria/commit/fbcbdaa)); `% !TEX root` is read in any
+  case ([bc3a436](https://github.com/Herbrant/TeXoria/commit/bc3a436)); captions inside `center`
+  or `minipage`, `\bibitem` keys with braces, comments in key lists and includes on a section's
+  line are handled ([3bf8e05](https://github.com/Herbrant/TeXoria/commit/3bf8e05),
+  [19127f3](https://github.com/Herbrant/TeXoria/commit/19127f3),
+  [0adeed1](https://github.com/Herbrant/TeXoria/commit/0adeed1),
+  [dcc2f60](https://github.com/Herbrant/TeXoria/commit/dcc2f60)); `\href` arguments are not taken
+  for labels, `%` after `\\` is a comment, and environments in comments are not closed
+  ([406edee](https://github.com/Herbrant/TeXoria/commit/406edee),
+  [2938c4f](https://github.com/Herbrant/TeXoria/commit/2938c4f),
+  [888e557](https://github.com/Herbrant/TeXoria/commit/888e557)).
+- **Project search.** Replace All changes every match even when the list stopped at 5,000
+  ([9c37778](https://github.com/Herbrant/TeXoria/commit/9c37778)); a stopped search no longer
+  shows its results under an empty field ([ab3f8a5](https://github.com/Herbrant/TeXoria/commit/ab3f8a5));
+  whole-word queries with symbols and matches in leading whitespace are found and highlighted
+  ([f199898](https://github.com/Herbrant/TeXoria/commit/f199898),
+  [6058fe9](https://github.com/Herbrant/TeXoria/commit/6058fe9),
+  [e7e6f2a](https://github.com/Herbrant/TeXoria/commit/e7e6f2a)).
+- **SyncTeX.** Forward search picks the right file when two inputs share a name, and pages,
+  `..` paths and odd numbers in a SyncTeX file are read correctly
+  ([bdcf88a](https://github.com/Herbrant/TeXoria/commit/bdcf88a),
+  [2f0b9d9](https://github.com/Herbrant/TeXoria/commit/2f0b9d9),
+  [51f1808](https://github.com/Herbrant/TeXoria/commit/51f1808),
+  [b1fdb7b](https://github.com/Herbrant/TeXoria/commit/b1fdb7b)).
+- **Vim mode.** `J`, `~`, `u`, `U`, `r`, `p` and `P` act on the visual selection
+  ([a601720](https://github.com/Herbrant/TeXoria/commit/a601720)); `cw` on a word's last
+  character and `i<`/`a<` behave like Vim's ([2a0633b](https://github.com/Herbrant/TeXoria/commit/2a0633b),
+  [fc85c38](https://github.com/Herbrant/TeXoria/commit/fc85c38)); huge counts on `p` and `.` no
+  longer freeze the editor ([33318c5](https://github.com/Herbrant/TeXoria/commit/33318c5)); and
+  several crashes with accented characters, `i$` outside a formula or a selection left past the
+  text's end are gone ([a9af31b](https://github.com/Herbrant/TeXoria/commit/a9af31b),
+  [ce90134](https://github.com/Herbrant/TeXoria/commit/ce90134),
+  [bde9c0d](https://github.com/Herbrant/TeXoria/commit/bde9c0d),
+  [334d5c3](https://github.com/Herbrant/TeXoria/commit/334d5c3),
+  [96e5975](https://github.com/Herbrant/TeXoria/commit/96e5975)).
+- **Agents.** A message sent before the agents were found is no longer dropped
+  ([4f50fb5](https://github.com/Herbrant/TeXoria/commit/4f50fb5)); a stopped build is reported to
+  the agent as stopped, not failed ([7087ea5](https://github.com/Herbrant/TeXoria/commit/7087ea5));
+  the last lines an agent writes before exiting are kept
+  ([9f29f0c](https://github.com/Herbrant/TeXoria/commit/9f29f0c)); the tool server no longer spins
+  at full CPU after a failed accept, nor drops quiet connections on Windows
+  ([cbc65d6](https://github.com/Herbrant/TeXoria/commit/cbc65d6),
+  [7be01b1](https://github.com/Herbrant/TeXoria/commit/7be01b1)).
+- **Citations.** Old arXiv identifiers (`math.GT/0309136`, `solv-int/9901001v2`) are recognized,
+  `%`, `&`, `#` and character references in arXiv titles come out right, generated keys never
+  clash, and BibTeX that would come out unbalanced is refused
+  ([d725707](https://github.com/Herbrant/TeXoria/commit/d725707),
+  [e97e17e](https://github.com/Herbrant/TeXoria/commit/e97e17e),
+  [5fe5841](https://github.com/Herbrant/TeXoria/commit/5fe5841),
+  [83d3777](https://github.com/Herbrant/TeXoria/commit/83d3777),
+  [23e0c99](https://github.com/Herbrant/TeXoria/commit/23e0c99),
+  [8df5e49](https://github.com/Herbrant/TeXoria/commit/8df5e49)).
+- **Spelling and grammar.** Dictionaries with one-character long flags load fully, spelling no
+  longer panics on a stale range, and LanguageTool's findings stay in their paragraph with a
+  bounded cache ([fd08032](https://github.com/Herbrant/TeXoria/commit/fd08032),
+  [62515fc](https://github.com/Herbrant/TeXoria/commit/62515fc),
+  [2437a69](https://github.com/Herbrant/TeXoria/commit/2437a69)).
+- **Updates.** Copies installed with `install.sh` under `/usr/local` or `/opt` update themselves,
+  and a failed tarball update removes the new libraries
+  ([31be767](https://github.com/Herbrant/TeXoria/commit/31be767),
+  [8e9c229](https://github.com/Herbrant/TeXoria/commit/8e9c229)).
+- Files ending in `.TEX` are highlighted as LaTeX, a diff shows again after a failed reload, and
+  root detection skips huge `.tex` files ([ffa7fe9](https://github.com/Herbrant/TeXoria/commit/ffa7fe9),
+  [78a9265](https://github.com/Herbrant/TeXoria/commit/78a9265),
+  [5ec4c8b](https://github.com/Herbrant/TeXoria/commit/5ec4c8b)).
+
+### Build and documentation
+
+- A much larger test suite: a shared `test-support` crate
+  ([2408ede](https://github.com/Herbrant/TeXoria/commit/2408ede)), property tests in every crate
+  ([1585c71](https://github.com/Herbrant/TeXoria/commit/1585c71)), fuzz targets for the parsers
+  ([288296a](https://github.com/Herbrant/TeXoria/commit/288296a)), the app tested headless
+  ([cfb4b83](https://github.com/Herbrant/TeXoria/commit/cfb4b83)) against a fake engine and a fake
+  agent ([4db14d8](https://github.com/Herbrant/TeXoria/commit/4db14d8),
+  [800a168](https://github.com/Herbrant/TeXoria/commit/800a168)).
+- CI measures coverage on every release platform and enforces a minimum per crate
+  ([497e644](https://github.com/Herbrant/TeXoria/commit/497e644),
+  [fff5d31](https://github.com/Herbrant/TeXoria/commit/fff5d31)).
+- A new Testing page in the developer documentation
+  ([2a4c68c](https://github.com/Herbrant/TeXoria/commit/2a4c68c)).
+
+**Full changelog**: [v0.4.1...v0.4.2](https://github.com/Herbrant/TeXoria/compare/v0.4.1...v0.4.2)
+
 ## [0.4.1] - 2026-10-17
 
 ### Fixed
