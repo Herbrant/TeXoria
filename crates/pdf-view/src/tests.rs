@@ -325,6 +325,39 @@ fn renders_a_page() {
     }
 }
 
+/// Bitmaps are BGRA, as GPUI and the PNG snapshots read them: red must not come out blue.
+#[test]
+fn bitmaps_are_bgra() {
+    let content = "1 0 0 rg 0 0 10 10 re f";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>".to_string(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+    ];
+    let (tx, rx) = mpsc::channel();
+    let Some(r) = renderer(move |e| {
+        let _ = tx.send(e);
+    }) else {
+        return;
+    };
+    r.load(1, build_pdf(&objects.each_ref().map(String::as_str)));
+    assert!(matches!(next(&rx), Event::Loaded { .. }));
+    r.request(vec![RenderKey {
+        generation: 1,
+        page: 0,
+        scale_milli: 1000,
+        dark: false,
+    }]);
+    let Event::Rendered { bitmap, .. } = next(&rx) else {
+        panic!("expected Rendered")
+    };
+    assert_eq!(&bitmap.bgra[..4], &[0, 0, 255, 255]);
+}
+
 /// A small PDF made of `objects` (numbered from 1, the first being the catalog).
 fn build_pdf(objects: &[&str]) -> Vec<u8> {
     let mut out = b"%PDF-1.7\n".to_vec();

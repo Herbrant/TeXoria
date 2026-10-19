@@ -617,6 +617,8 @@ fn render_page(doc: &PdfDocument, key: RenderKey) -> Result<Bitmap, PdfiumError>
     let config = PdfRenderConfig::new()
         .set_fixed_size(width, height)
         .set_format(PdfBitmapFormat::BGRA)
+        // pdfium-render asks for RGBA by default.
+        .set_reverse_byte_order(false)
         .render_annotations(true)
         .set_clear_color(PdfColor::WHITE);
     let bitmap = page.render_with_config(&config)?;
