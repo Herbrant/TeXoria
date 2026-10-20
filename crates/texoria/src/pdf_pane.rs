@@ -650,6 +650,9 @@ impl PdfPane {
                 .absolute()
                 .top(px(10.))
                 .right(px(14.))
+                // Over the pages: a press here must not reach them (the pane would take
+                // the focus from the field and start a selection).
+                .occlude()
                 .gap_1()
                 .p_1()
                 .rounded(theme.radius_lg)
@@ -659,7 +662,12 @@ impl PdfPane {
                 .shadow_md()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(div().w(px(200.)).child(Input::new(&f.input).small()))
+                .child(
+                    div()
+                        .w(px(200.))
+                        .debug_selector(|| "pdf-find-input".into())
+                        .child(Input::new(&f.input).small()),
+                )
                 .child(div().min_w(px(56.)).child(count))
                 .child(
                     Button::new("pdf-find-case")
@@ -1061,6 +1069,7 @@ impl PdfPane {
         let page: AnyElement = match &self.page_input {
             Some(input) => div()
                 .w(px(56.))
+                .debug_selector(|| "pdf-page-input".into())
                 .child(Input::new(input).xsmall())
                 .into_any_element(),
             None => Button::new("pdf-page")
@@ -1074,6 +1083,7 @@ impl PdfPane {
             .absolute()
             .bottom(px(14.))
             .right(px(14.))
+            .occlude()
             .gap_0p5()
             .p_0p5()
             .rounded(cx.theme().radius_lg)

@@ -896,3 +896,35 @@ fn keeps_the_reading_place_in_a_wider_window(cx: &mut TestAppContext) {
     });
     pane.read_with(cx, |p, _| assert_eq!(p.scroll.offset().y, px(-10.)));
 }
+
+#[gpui::test]
+fn clicking_the_fields_over_the_pages_keeps_their_focus(cx: &mut TestAppContext) {
+    let Some((window, pane)) = loaded(cx) else {
+        return;
+    };
+    cx.dispatch_action(window, FindInPdf);
+    assert_click_keeps_focus(cx, window, &pane, "pdf-find-input");
+    cx.dispatch_action(window, CloseFind);
+    cx.dispatch_action(window, GoToPage);
+    assert_click_keeps_focus(cx, window, &pane, "pdf-page-input");
+}
+
+/// A field over the pages keeps the focus when clicked: the press must not go on to the
+/// pane, which would take the focus (and close the page field).
+#[track_caller]
+fn assert_click_keeps_focus(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    pane: &Entity<PdfPane>,
+    selector: &'static str,
+) {
+    let mut vcx = VisualTestContext::from_window(window, cx);
+    vcx.run_until_parked();
+    let field = vcx.debug_bounds(selector).expect(selector);
+    // The pane has the focus, as after a click on a page.
+    let focus = pane.read_with(&vcx, |p, _| p.focus.clone());
+    vcx.update(|window, cx| window.focus(&focus, cx));
+    vcx.simulate_click(field.center(), Modifiers::none());
+    let pane_focused = vcx.update(|window, _| focus.is_focused(window));
+    assert!(!pane_focused, "{selector}: the pane took the focus");
+}
