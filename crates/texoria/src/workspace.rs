@@ -169,6 +169,10 @@ pub struct Workspace {
     /// The diff tab, shown instead of the editor while `diff_active`.
     diff: Option<Entity<DiffView>>,
     diff_active: bool,
+    /// The tab bar's scroll position.
+    tab_scroll: ScrollHandle,
+    /// The `(active, diff_active, buffers.len())` the tab bar was last scrolled to.
+    tab_shown: Option<(usize, bool, usize)>,
     /// A clone in progress (URL), started from the welcome screen.
     cloning: Option<(SharedString, Cancel)>,
     show_diagnostics: bool,
@@ -411,6 +415,8 @@ impl Workspace {
             last_run: 0,
             diff: None,
             diff_active: false,
+            tab_scroll: ScrollHandle::new(),
+            tab_shown: None,
             cloning: None,
             show_diagnostics: false,
             untrusted_rc: false,
@@ -4534,6 +4540,21 @@ impl Workspace {
             .children(items)
     }
 
+    /// Scrolls the tab bar to the active tab whenever it changes (a new file's is the last one),
+    /// and only then, so the bar stays where the user scrolled it.
+    fn follow_active_tab(&mut self) {
+        let shown = (self.active, self.diff_active, self.buffers.len());
+        if self.tab_shown != Some(shown) {
+            self.tab_shown = Some(shown);
+            let ix = if self.diff_active {
+                self.buffers.len()
+            } else {
+                self.active
+            };
+            self.tab_scroll.scroll_to_item(ix);
+        }
+    }
+
     fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let root_dir = self
@@ -4545,7 +4566,13 @@ impl Workspace {
             self.diff.as_ref().map(|d| d.read(cx).title().into());
         // The last tab stays, so it has no close button.
         let closable = self.buffers.len() > 1;
+        // Tabs keep their width and the bar scrolls (swipe or wheel) when they overflow.
         h_flex()
+            .id("tab-bar")
+            .debug_selector(|| "tab-bar".into())
+            .flex_none()
+            .overflow_x_scroll()
+            .track_scroll(&self.tab_scroll)
             .h(px(34.))
             .px_2()
             .gap_1()
@@ -4560,8 +4587,12 @@ impl Workspace {
                     .to_string_lossy()
                     .into_owned();
                 let active = i == self.active && !self.diff_active;
+                let selector = format!("tab {name}");
                 h_flex()
                     .id(("tab", i))
+                    .debug_selector(|| selector)
+                    .flex_none()
+                    .whitespace_nowrap()
                     .gap_1p5()
                     .pl_3()
                     .when(closable, |d| d.pr_1())
@@ -4618,6 +4649,8 @@ impl Workspace {
                 d.child(
                     h_flex()
                         .id("tab-diff")
+                        .flex_none()
+                        .whitespace_nowrap()
                         .gap_1p5()
                         .pl_3()
                         .pr_1()
@@ -5280,6 +5313,7 @@ impl Render for Workspace {
         let body = if self.buffers.is_empty() {
             self.render_welcome(cx).into_any_element()
         } else {
+            self.follow_active_tab();
             let center = match self.diff.clone().filter(|_| self.diff_active) {
                 Some(diff) => diff.into_any_element(),
                 None => Editor::new(&self.buffers[self.active].editor)

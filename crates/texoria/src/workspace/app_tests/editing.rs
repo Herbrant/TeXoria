@@ -76,6 +76,54 @@ fn tabs_open_activate_and_close(cx: &mut TestAppContext) {
     assert_eq!(session.active.as_ref(), Some(&main));
 }
 
+#[gpui::test]
+fn the_tab_bar_scrolls_and_shows_the_active_tab(cx: &mut TestAppContext) {
+    let app = Open::sample(cx, quiet());
+    let main = app.path("main.tex");
+    let files: Vec<PathBuf> = (1..=12)
+        .map(|i| app.path(&format!("chapters/a-chapter-with-a-long-name-{i:02}.tex")))
+        .collect();
+    for file in &files {
+        std::fs::write(file, "Text.\n").unwrap();
+    }
+    let mut vcx = VisualTestContext::from_window(app.window.into(), cx);
+    let mut shown = |cx: &mut TestAppContext, selector: &'static str| {
+        app.draw(cx);
+        let bar = vcx.debug_bounds("tab-bar").expect("tab-bar");
+        let tab = vcx.debug_bounds(selector).expect(selector);
+        tab.left() >= bar.left() && tab.right() <= bar.right()
+    };
+    let offset = |cx: &mut TestAppContext| app.read(cx, |ws, _| ws.tab_scroll.offset().x);
+    // The tabs overflow: the bar scrolls to each new file's tab, the last one.
+    for file in &files {
+        app.update(cx, |ws, window, cx| {
+            ws.activate_file(file.clone(), window, cx)
+        });
+    }
+    assert!(shown(cx, "tab chapters/a-chapter-with-a-long-name-12.tex"));
+    assert!(!shown(cx, "tab main.tex"));
+    assert!(app.read(cx, |ws, _| ws.tab_scroll.max_offset().x) > px(0.));
+    // A swipe scrolls it, and it stays where the user left it.
+    let before = offset(cx);
+    let mut swipe = VisualTestContext::from_window(app.window.into(), cx);
+    let bar = swipe.debug_bounds("tab-bar").unwrap();
+    swipe.simulate_event(ScrollWheelEvent {
+        position: bar.center(),
+        delta: ScrollDelta::Pixels(point(px(120.), px(0.))),
+        modifiers: Modifiers::none(),
+        touch_phase: TouchPhase::Moved,
+    });
+    let swiped = offset(cx);
+    assert!(swiped > before, "{swiped:?} {before:?}");
+    app.draw(cx);
+    assert_eq!(offset(cx), swiped);
+    // Activating a tab out of view brings it back.
+    app.update(cx, |ws, window, cx| {
+        ws.activate_file(main.clone(), window, cx)
+    });
+    assert!(shown(cx, "tab main.tex"));
+}
+
 fn app_dir(ws: &Workspace) -> PathBuf {
     ws.project_dir().unwrap()
 }
