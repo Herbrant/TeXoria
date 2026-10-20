@@ -241,6 +241,44 @@ fn reindexing_parses_only_the_buffers_that_changed(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+fn the_status_bar_counts_the_listed_problems(cx: &mut TestAppContext) {
+    let (dir, window, workspace) = sample(cx);
+    let diagnostic = |severity, message: &str| Diagnostic {
+        severity,
+        file: None,
+        line: None,
+        message: message.into(),
+    };
+    let issue = |level, key: &str| tex_project::check::Issue {
+        file: dir.path().join("main.tex"),
+        range: 0..1,
+        line: 0,
+        level,
+        code: "undefined-reference",
+        message: format!("{key} is undefined"),
+        key: Some(key.into()),
+    };
+    with(cx, window, &workspace, |ws, _, _| {
+        use tex_project::check::Level;
+        ws.diagnostics = vec![
+            diagnostic(Severity::Error, "Undefined control sequence"),
+            // What a check also reports is listed once.
+            diagnostic(Severity::Warning, "Reference `sec:x' on page 1 undefined"),
+            diagnostic(Severity::Warning, "Overfull \\hbox"),
+            diagnostic(Severity::Info, "Output written"),
+        ];
+        ws.issues = vec![issue(Level::Warning, "sec:x"), issue(Level::Error, "k")];
+        let problems = ws.problems();
+        let count = |s| problems.iter().filter(|d| d.severity == s).count();
+        assert_eq!(
+            ws.problem_counts(),
+            (count(Severity::Error), count(Severity::Warning))
+        );
+        assert_eq!(ws.problem_counts(), (2, 2));
+    });
+}
+
 fn query(text: &str) -> tex_project::search::Query {
     tex_project::search::Query {
         text: text.into(),

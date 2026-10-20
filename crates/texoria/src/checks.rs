@@ -111,13 +111,18 @@ fn underline(color: Hsla) -> HighlightStyle {
 /// An issue as a row of the Problems panel.
 pub fn diagnostic(issue: &Issue) -> Diagnostic {
     Diagnostic {
-        severity: match issue.level {
-            Level::Error => Severity::Error,
-            Level::Warning => Severity::Warning,
-        },
+        severity: severity(issue.level),
         file: Some(issue.file.clone()),
         line: Some(issue.line + 1),
         message: issue.message.clone(),
+    }
+}
+
+/// The severity of an issue of `level`.
+pub fn severity(level: Level) -> Severity {
+    match level {
+        Level::Error => Severity::Error,
+        Level::Warning => Severity::Warning,
     }
 }
 

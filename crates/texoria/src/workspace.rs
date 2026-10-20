@@ -1282,16 +1282,39 @@ impl Workspace {
     /// The problems to list: the last build's, without those a live check
     /// also reports, then the live checks'.
     fn problems(&self) -> Vec<Diagnostic> {
-        let keys: std::collections::HashSet<&str> = self
-            .issues
-            .iter()
-            .filter_map(|i| i.key.as_deref())
-            .collect();
+        let keys = self.checked_keys();
         self.diagnostics
             .iter()
             .filter(|d| !checks::duplicates(d, &keys))
             .cloned()
             .chain(self.issues.iter().map(checks::diagnostic))
+            .collect()
+    }
+
+    /// The errors and the warnings among `problems`, without copying them (the
+    /// status bar counts them on every frame).
+    fn problem_counts(&self) -> (usize, usize) {
+        let keys = self.checked_keys();
+        let severities = (self.diagnostics.iter())
+            .filter(|d| !checks::duplicates(d, &keys))
+            .map(|d| d.severity)
+            .chain(self.issues.iter().map(|i| checks::severity(i.level)));
+        let (mut errors, mut warnings) = (0, 0);
+        for s in severities {
+            match s {
+                Severity::Error => errors += 1,
+                Severity::Warning => warnings += 1,
+                Severity::Info => {}
+            }
+        }
+        (errors, warnings)
+    }
+
+    /// The keys the live checks report on.
+    fn checked_keys(&self) -> std::collections::HashSet<&str> {
+        self.issues
+            .iter()
+            .filter_map(|i| i.key.as_deref())
             .collect()
     }
 
@@ -4927,15 +4950,7 @@ impl Workspace {
             .buffers
             .get(self.active)
             .map(|b| b.editor.read(cx).cursor_position());
-        let problems = self.problems();
-        let errors = problems
-            .iter()
-            .filter(|d| d.severity == Severity::Error)
-            .count();
-        let warnings = problems
-            .iter()
-            .filter(|d| d.severity == Severity::Warning)
-            .count();
+        let (errors, warnings) = self.problem_counts();
         let engine: SharedString = self
             .engines
             .get(self.engine_ix)
