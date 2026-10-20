@@ -75,6 +75,11 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
 
+      # Dependencies are the same on every platform: once is enough.
+      - name: Target names
+        if: matrix.name == 'linux-x86_64'
+        run: ./scripts/check-target-names.sh
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 

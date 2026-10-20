@@ -79,8 +79,10 @@ depends on no workspace crate) also has the `|` cursor-marker helper, a loopback
 the network clients and an isolated Git environment. Processes are faked by binaries built with
 the tests (`tex-compile`'s `fake-engine`, `tex-agent`'s `fake-acp-agent`, through
 `CARGO_BIN_EXE_*`), and invariants are property-tested with proptest (commit
-`proptest-regressions/`). Never use `std::env::set_var` in tests: inject the value instead. See
-`docs/development/testing.md`.
+`proptest-regressions/`). Never use `std::env::set_var` in tests: inject the value instead. A
+target (test, bin, example) must not share a dependency's library name: cargo-llvm-cov's
+`cargo clean -p` would delete that library and rebuild all that depends on it on every run
+(`scripts/check-target-names.sh`, run by CI). See `docs/development/testing.md`.
 
 ## Architecture
 
