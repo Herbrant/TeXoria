@@ -117,6 +117,8 @@ pub struct Vim {
     dot: Vec<Key>,
     /// The keys of the change being made (until back in normal mode).
     recording: Option<Vec<Key>>,
+    /// The text and cursor where insert mode began, and the length of `recording` then.
+    insert_start: Option<(String, usize, usize)>,
     replaying: bool,
     /// The keys of the command being run.
     last_keys: Vec<Key>,
@@ -126,6 +128,13 @@ impl Default for Vim {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The text inserted at `start` of `before` that makes `after`, with the cursor at its end.
+fn typed_text<'a>(before: &str, start: usize, after: &'a str, cursor: usize) -> Option<&'a str> {
+    let same = after.get(..start)? == before.get(..start)?
+        && after.get(cursor..)? == before.get(start..)?;
+    same.then(|| after.get(start..cursor)).flatten()
 }
 
 /// Text with a cursor, as edited while replaying (`.`).
@@ -165,6 +174,7 @@ impl Vim {
             search: None,
             dot: Vec::new(),
             recording: None,
+            insert_start: None,
             replaying: false,
             last_keys: Vec::new(),
         }
@@ -195,6 +205,7 @@ impl Vim {
         self.pending.clear();
         self.cmdline = None;
         self.recording = None;
+        self.insert_start = None;
     }
 
     /// The range of the normal-mode cursor's block, to draw it.
@@ -213,11 +224,15 @@ impl Vim {
         {
             r.push(key);
         }
+        let was_insert = self.mode == Mode::Insert;
         let actions = match self.mode {
             Mode::Insert => self.insert_key(ctx, key),
             _ if self.cmdline.is_some() => self.cmdline_key(ctx, key),
             _ => self.command_key(ctx, key),
         };
+        if !self.replaying {
+            self.note_insertion(ctx, was_insert, &actions);
+        }
         if self.mode == Mode::Normal
             && self.pending.is_empty()
             && let Some(keys) = self.recording.take()
@@ -226,6 +241,36 @@ impl Vim {
             self.dot = keys;
         }
         actions
+    }
+
+    /// Record what an insertion typed, as it is in the text: the keys do not say it all (an
+    /// accent typed with a dead key, an input method's text, the editor's indentation).
+    fn note_insertion(&mut self, ctx: &Ctx, was_insert: bool, actions: &[Action]) {
+        match (was_insert, self.mode == Mode::Insert, &mut self.recording) {
+            // Entering insert mode: the text once this key's edits are made.
+            (false, true, Some(keys)) => {
+                let mut sim = Sim {
+                    text: ctx.text.to_string(),
+                    cursor: ctx.cursor,
+                };
+                sim.apply(actions);
+                self.insert_start = Some((sim.text, sim.cursor, keys.len()));
+            }
+            // Leaving it: what is now between where it began and the cursor, if the text
+            // around is as it was (else the keys, as they were typed).
+            (true, false, Some(keys)) => {
+                if let Some((before, start, from)) = self.insert_start.take()
+                    && let Some(typed) = typed_text(&before, start, ctx.text, ctx.cursor)
+                    && let Some(&leave) = keys.last()
+                {
+                    keys.truncate(from);
+                    keys.extend(typed.chars().map(Key::Char));
+                    keys.push(leave);
+                }
+            }
+            (_, false, _) => self.insert_start = None,
+            _ => {}
+        }
     }
 
     fn insert_key(&mut self, ctx: &Ctx, key: Key) -> Vec<Action> {

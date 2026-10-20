@@ -199,6 +199,24 @@ fn repeats_changes() {
 }
 
 #[test]
+fn repeats_text_typed_without_keys() {
+    // An accent from a dead key, an input method's text: in the editor, never a key for Vim.
+    let typed = |marked: &str, text: &str| marked.replacen('|', &format!("{text}|"), 1);
+    let mut vim = Vim::new();
+    let s = run_with(&mut vim, "|foo bar", "ciw");
+    let s = typed(&s, "ü");
+    assert_eq!(run_with(&mut vim, &s, "<esc>w."), "ü |ü");
+    // With keys typed around it.
+    let mut vim = Vim::new();
+    let s = run_with(&mut vim, "|ab", "ix");
+    let s = typed(&s, "é");
+    assert_eq!(run_with(&mut vim, &s, "y<esc>."), "xéxé|yyab");
+    // Edits before where the insertion began: the keys, as typed.
+    let mut vim = Vim::new();
+    assert_eq!(run_with(&mut vim, "|abc", "A<bs><bs>X<esc>."), "|X");
+}
+
+#[test]
 fn visual_mode() {
     assert_eq!(run("|foo bar", "vwd"), "|ar");
     assert_eq!(run("a\n|b\nc\nd", "Vjd"), "a\n|d");
