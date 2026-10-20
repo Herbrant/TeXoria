@@ -80,6 +80,17 @@ jobs:
       - name: Fetch PDFium
         run: ./scripts/fetch-pdfium.sh
 
+      # Tectonic downloads its support files on first use: keep them between runs.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/Tectonic
+            ~/Library/Caches/Tectonic
+            ~/AppData/Local/TectonicProject
+          key: tectonic-${{ matrix.name }}-${{ hashFiles('scripts/fetch-tectonic.sh') }}
+      - name: Fetch Tectonic
+        run: ./scripts/fetch-tectonic.sh
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -91,10 +102,18 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # The bundled engine's test (ignored by default: it downloads the TeX bundle) runs in the
+      # same instrumented build: --no-report keeps the first run's profiles, and the same
+      # targets with a test filter (not `--test real_engine`, which would resolve other
+      # features) rebuild nothing. There are no doctests (cargo-llvm-cov runs them only on
+      # nightly): write unit tests instead.
       - name: Test with coverage
         run: |
-          cargo llvm-cov --workspace --no-fail-fast --json --summary-only \
-            --output-path target/coverage.json
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --workspace --no-fail-fast --no-report
+          TEXORIA_REQUIRE_TECTONIC=1 cargo llvm-cov --workspace --no-report \
+            -- --ignored compiles_sample_with_tectonic
+          cargo llvm-cov report --json --summary-only --output-path target/coverage.json
           cargo llvm-cov report --lcov --output-path target/lcov.info
 
       - name: Coverage minimums
@@ -108,24 +127,6 @@ jobs:
             target/coverage.json
             target/lcov.info
           if-no-files-found: ignore
-
-      - name: Doctests
-        run: cargo test --workspace --doc
-
-      # Tectonic downloads its support files on first use: keep them between runs.
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/Tectonic
-            ~/Library/Caches/Tectonic
-            ~/AppData/Local/TectonicProject
-          key: tectonic-${{ matrix.name }}-${{ hashFiles('scripts/fetch-tectonic.sh') }}
-      - name: Test the bundled engine (Tectonic)
-        env:
-          TEXORIA_REQUIRE_TECTONIC: 1
-        run: |
-          ./scripts/fetch-tectonic.sh
-          cargo test -p tex-compile --test real_engine -- --ignored compiles_sample_with_tectonic
 
       - name: Build release
         run: cargo build -p texoria --release

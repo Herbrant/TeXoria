@@ -77,7 +77,10 @@ sequences never leave the text, conversions round-trip. A failing case is saved 
 CI measures line coverage with [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) and
 fails when a crate falls below its minimum in `scripts/coverage-thresholds.tsv`. The job summary
 shows the table for each platform, and the lcov reports are kept as artifacts. Raise a crate's
-minimum when its tests improve; never lower one to make CI pass.
+minimum when its tests improve; never lower one to make CI pass. The Tectonic test runs in the
+same instrumented build, as a second `cargo llvm-cov --workspace --no-report` run (with the test
+name as filter) merged into one report. CI runs no doctests (there are none, and cargo-llvm-cov only runs them on nightly):
+write unit tests instead.
 
 ```sh
 rustup component add llvm-tools-preview && cargo install cargo-llvm-cov
