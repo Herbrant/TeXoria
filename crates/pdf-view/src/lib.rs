@@ -621,18 +621,20 @@ fn render_page(doc: &PdfDocument, key: RenderKey) -> Result<Bitmap, PdfiumError>
         .set_reverse_byte_order(false)
         .render_annotations(true)
         .set_clear_color(PdfColor::WHITE);
-    let bitmap = page.render_with_config(&config)?;
-    let (bw, bh) = (bitmap.width() as u32, bitmap.height() as u32);
-    let mut bgra = bitmap.as_raw_bytes();
-    // PDFium rows are 4-byte aligned; with 4 bytes per pixel there is no
-    // padding, but guard against a surprising stride anyway.
-    bgra.truncate(bw as usize * bh as usize * 4);
+    // Rendered straight into the buffer handed to the UI: at a high zoom a page is up to
+    // `MAX_PIXELS`, and a copy would double that. PDFium rows are 4-byte aligned: with 4 bytes
+    // per pixel there is no padding.
+    let mut bgra = vec![0; width as usize * height as usize * 4];
+    {
+        let mut bitmap = PdfBitmap::from_bytes(width, height, PdfBitmapFormat::BGRA, &mut bgra)?;
+        page.render_into_bitmap_with_config(&mut bitmap, &config)?;
+    }
     if key.dark {
         darken(&mut bgra);
     }
     Ok(Bitmap {
-        width: bw,
-        height: bh,
+        width: width as u32,
+        height: height as u32,
         bgra,
     })
 }
