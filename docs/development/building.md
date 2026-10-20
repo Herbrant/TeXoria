@@ -59,6 +59,10 @@ cargo packager --release -p texoria --formats appimage
 one must also be added to the package dependencies in `crates/texoria/packaging/linux/nfpm.yaml`
 and `crates/texoria/packaging/aur/PKGBUILD.in`.
 
+CI does not build in release mode: the release workflow (`.github/workflows/release.yml`) builds
+every package each night when `main` has changed, without publishing anything, and can be run by
+hand to get the packages as workflow artifacts.
+
 ## Other scripts
 
 | Script | Purpose |

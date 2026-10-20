@@ -31,8 +31,9 @@ cargo packager --release -p texoria --formats nsis|appimage   # Windows installe
 CI (`.github/workflows/ci.yml`, on every release platform: macOS arm64/x64, Linux x64/arm64,
 Windows) runs fmt check, clippy with `-D warnings`, the tests under cargo-llvm-cov with a minimum
 line coverage per crate (`scripts/coverage-check.sh`, `scripts/coverage-thresholds.tsv`: raise
-a minimum when tests improve, never lower it), the Tectonic end-to-end test and a release build
-— keep them green. Code compiled only on Windows or only on Unix (cfg'd tests and their
+a minimum when tests improve, never lower it), the Tectonic end-to-end test included — keep
+them green. The release build and the packaging are checked by `release.yml`, which runs every
+night on main (if it changed since the last nightly run) and then only builds artifacts. Code compiled only on Windows or only on Unix (cfg'd tests and their
 helpers) is linted on that system only, so check it with care. `.github/workflows/fuzz.yml` runs
 the cargo-fuzz targets of `fuzz/` (nightly). `rustfmt.toml` sets `max_width = 100`.
 
@@ -52,7 +53,8 @@ Ubuntu 22.04 x64/arm64 for an old enough glibc, Windows x64), publishes the GitH
 comment `texoria X.Y.Z`, checked against `crates/tex-update/src/texoria.pub`), and renders `crates/texoria/packaging/{homebrew,aur}/*.in`
 (`scripts/render-manifests.sh`) into the cask pushed to `Herbrant/homebrew-tap`
 (secret `HOMEBREW_TAP_TOKEN`) and the AUR `texoria-bin` package (secret `AUR_SSH_PRIVATE_KEY`).
-Pre-release tags (`v1.2.0-rc.1`) skip Homebrew and the AUR; a manual run only builds artifacts.
+Pre-release tags (`v1.2.0-rc.1`) skip Homebrew and the AUR; a manual or nightly run only builds
+artifacts, and the nightly run saves the cache that a tag's build starts from.
 The Homebrew/AUR step is `.github/workflows/publish.yml` (reads `SHA256SUMS` from the release):
 run it by hand with the tag to retry it.
 Asset names (`texoria-<v>-<os>-<arch>.<ext>`, `aarch64`/`x86_64`) are referenced by the templates

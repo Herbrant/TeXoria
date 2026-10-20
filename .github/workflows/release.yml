@@ -5,10 +5,14 @@ name: Release
 # SHA256SUMS (for the in-app updater, crates/tex-update), and updates the
 # Homebrew cask and the AUR package (publish.yml). Tags with a pre-release suffix (v1.2.0-rc.1)
 # are published as pre-releases and skip Homebrew/AUR. Running the workflow by hand only builds
-# the packages (downloadable as workflow artifacts).
+# the packages (downloadable as workflow artifacts), and so does the nightly run, which checks
+# the release build and the packaging of main (CI does not) and keeps the cache that a tag's
+# build starts from.
 on:
   push:
     tags: ["v*"]
+  schedule:
+    - cron: "23 2 * * *"
   workflow_dispatch:
 
 permissions:
@@ -23,11 +27,27 @@ env:
 jobs:
   version:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      skip: ${{ steps.changed.outputs.skip }}
     steps:
       - uses: actions/checkout@v7
+      # The nightly run builds nothing if main has not changed since the last one.
+      - id: changed
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --event schedule \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // ""')"
+          if [ "$last" = "$GITHUB_SHA" ]; then
+            echo "Nothing new since the last nightly build ($last)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       - id: version
         env:
           REF_TYPE: ${{ github.ref_type }}
@@ -51,6 +71,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     needs: version
+    if: needs.version.outputs.skip != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -70,7 +91,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      # Saved by the runs on main (the nightly one): a tag can read main's caches, but a cache
+      # saved by a tag's run could only be read by that tag.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@0.11.8
@@ -125,6 +150,7 @@ jobs:
         with:
           name: ${{ matrix.name }}
           if-no-files-found: error
+          retention-days: ${{ github.ref_type == 'tag' && 30 || 3 }}
           path: |
             target/dist/*.dmg
             target/dist/*.AppImage

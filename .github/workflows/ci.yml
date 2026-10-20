@@ -34,7 +34,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Every platform a release is built for (release.yml).
+        # Every platform a release is built for (release.yml, which also checks the release
+        # build and the packaging every night).
         include:
           - { name: macos-aarch64, os: macos-latest }
           - { name: macos-x86_64, os: macos-15-intel }
@@ -127,6 +128,3 @@ jobs:
             target/coverage.json
             target/lcov.info
           if-no-files-found: ignore
-
-      - name: Build release
-        run: cargo build -p texoria --release
