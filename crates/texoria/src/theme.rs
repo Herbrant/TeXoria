@@ -56,3 +56,24 @@ impl ThemeExt for App {
         Theme::global(self).is_dark()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::THEMES;
+
+    /// The editor paints a diagnostic's popover with its severity's background: a translucent
+    /// one lets the text underneath show through and makes the message unreadable.
+    #[test]
+    fn diagnostic_backgrounds_are_opaque() {
+        let file: serde_json::Value = serde_json::from_str(THEMES).unwrap();
+        let themes = file["themes"].as_array().unwrap();
+        assert_eq!(themes.len(), 2);
+        for theme in themes {
+            for severity in ["error", "warning", "info", "hint"] {
+                let key = format!("{severity}.background");
+                let color = theme["highlight"][&key].as_str().unwrap();
+                assert_eq!(color.len(), 7, "{} {key} = {color}", theme["name"]);
+            }
+        }
+    }
+}
