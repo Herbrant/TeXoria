@@ -18,6 +18,7 @@
 - [Building from source](development/building.md): build, test and package TeXoria
 - [Testing](development/testing.md): test helpers, coverage, property tests and fuzzing
 - [Architecture](development/architecture.md): how the crates fit together
+- [Performance](development/performance.md): measuring memory and CPU, reference numbers
 - [Releasing](development/releasing.md): cutting a new version
 
 See also [CHANGELOG.md](../CHANGELOG.md), [CONTRIBUTING.md](../CONTRIBUTING.md) and

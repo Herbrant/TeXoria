@@ -1,6 +1,7 @@
 //! Helpers shared by the workspace's tests. Only ever a dev-dependency, and it depends on no
 //! other workspace crate (a dev-dependency cycle would build two copies of that crate).
 
+pub mod alloc;
 pub mod git;
 pub mod http;
 

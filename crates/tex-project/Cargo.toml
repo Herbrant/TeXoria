@@ -10,5 +10,7 @@ regex.workspace = true
 
 [dev-dependencies]
 test-support.workspace = true
+# The spelling's extraction, timed with the index by examples/index-perf.rs.
+tex-spell.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
