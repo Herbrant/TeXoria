@@ -358,6 +358,49 @@ fn files_changed_on_disk_are_reloaded(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn unsaved_edits_never_overwrite_a_file_changed_on_disk(cx: &mut TestAppContext) {
+    let app = Open::sample(cx, quiet());
+    let main = app.path("main.tex");
+    let theirs = "\\documentclass{article}\n\\begin{document}\nTheirs\n\\end{document}\n";
+    let mine = |cx: &mut TestAppContext| app.text(cx, &main);
+    let conflict = |cx: &mut TestAppContext| app.read(cx, |ws, _| ws.buffers[0].conflict);
+
+    // Edited here, changed elsewhere meanwhile (another editor, git in a terminal).
+    app.type_at(cx, &main, 0, "% mine\n");
+    std::fs::write(&main, theirs).unwrap();
+    // A save (here a build's) leaves the file alone and asks which version to keep.
+    app.dispatch(cx, crate::Build);
+    assert_eq!(std::fs::read_to_string(&main).unwrap(), theirs);
+    assert!(conflict(cx) && app.has_dialog(cx));
+    assert!(mine(cx).starts_with("% mine\n"));
+    // Saving again does not overwrite it either, nor ask twice.
+    app.dispatch(cx, crate::Save);
+    assert_eq!(std::fs::read_to_string(&main).unwrap(), theirs);
+    // Keep my edits: written over the file.
+    app.update(cx, |ws, window, cx| ws.resolve_conflicts(true, window, cx));
+    assert_eq!(std::fs::read_to_string(&main).unwrap(), mine(cx));
+    assert!(!conflict(cx) && app.read(cx, |ws, _| !ws.buffers[0].dirty));
+
+    // Found when the window comes back to the front; load from disk: the edits go.
+    app.update(cx, |_, window, cx| window.close_all_dialogs(cx));
+    app.type_at(cx, &main, 0, "% mine again\n");
+    std::fs::write(&main, theirs).unwrap();
+    app.update(cx, |ws, window, cx| ws.reload_from_disk(window, cx));
+    assert!(conflict(cx) && app.has_dialog(cx));
+    assert!(mine(cx).starts_with("% mine again\n"));
+    app.update(cx, |ws, window, cx| ws.resolve_conflicts(false, window, cx));
+    assert_eq!(mine(cx), theirs);
+    assert!(!conflict(cx) && app.read(cx, |ws, _| !ws.buffers[0].dirty));
+    // Saved as usual from then on.
+    app.type_at(cx, &main, 0, "% after\n");
+    app.dispatch(cx, crate::Save);
+    assert_eq!(
+        std::fs::read_to_string(&main).unwrap(),
+        format!("% after\n{theirs}")
+    );
+}
+
+#[gpui::test]
 fn outline_groups_start_collapsed(cx: &mut TestAppContext) {
     let settings = tempfile::tempdir().unwrap();
     let app = Open::sample(cx, saved_in(settings.path()));
