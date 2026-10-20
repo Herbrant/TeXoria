@@ -26,7 +26,7 @@ use tex_agent::{acp, prompt::Rewrite};
 use tex_compile::{Compiler, Engine, Event as CompileEvent, Job, Severity, Status};
 use tex_git::{Cancel, Credential, Git};
 use tex_log::Diagnostic;
-use tex_project::{Project, ProjectOutlineItem, files};
+use tex_project::{Parsed, Project, ProjectOutlineItem, files};
 use tex_spell::{Source, Speller, catalog};
 use tex_syntax::OutlineKind;
 
@@ -210,6 +210,7 @@ pub struct Workspace {
     _live: Task<()>,
     _checks: Task<()>,
     _count: Task<()>,
+    _reindex: Task<()>,
     _update_checks: Task<()>,
     _compile_events: Task<()>,
     _tool_calls: Task<()>,
@@ -442,6 +443,7 @@ impl Workspace {
             _live: Task::ready(()),
             _checks: Task::ready(()),
             _count: Task::ready(()),
+            _reindex: Task::ready(()),
             _update_checks: Task::ready(()),
             _compile_events: Task::ready(()),
             _tool_calls: tool_task,
@@ -776,6 +778,7 @@ impl Workspace {
         if self.root.as_deref() != Some(&root) {
             self.root = Some(root.clone());
             *self.project.write().unwrap() = Project::open(&root);
+            self._reindex = Task::ready(());
             for b in &mut self.buffers {
                 b.indexed = None;
             }
@@ -1087,21 +1090,76 @@ impl Workspace {
     }
 
     /// Re-index open buffers so outline and completions follow unsaved edits. Only the
-    /// buffers whose text changed since are parsed again.
+    /// buffers whose text changed since are parsed again, in the background (a big file
+    /// takes a tenth of a second), and the project is locked only to take the results.
     fn reindex(&mut self, cx: &mut Context<Self>) {
         let mut texts = Vec::new();
+        let mut jobs = Vec::new();
         {
-            let mut project = self.project.write().unwrap();
-            for b in &mut self.buffers {
-                let text = b.editor.read(cx).text().to_string();
+            let project = self.project.read().unwrap();
+            for b in &self.buffers {
+                let text: Arc<str> = Arc::from(b.editor.read(cx).text().to_string());
                 let hash = text_hash(&text);
                 if b.indexed != Some(hash) {
-                    project.update(&b.path, &text);
-                    b.indexed = Some(hash);
+                    let bib = project.is_bib(&b.path);
+                    jobs.push((b.path.clone(), bib, text.clone(), hash));
                 }
                 texts.push((b.editor.clone(), text));
             }
         }
+        if jobs.is_empty() {
+            self.reindexed(texts, cx);
+            return;
+        }
+        let cache = self.count_cache.clone();
+        // A newer re-index replaces this one: buffers it did not mark indexed are in it.
+        self._reindex = cx.spawn(async move |this, cx| {
+            let parsed = cx
+                .background_spawn(async move {
+                    let parse = |path: &PathBuf, bib, text: &str, hash| {
+                        if bib {
+                            return Parsed::Bib(tex_project::bib::parse(text));
+                        }
+                        let tree = tex_syntax::parse(text, None);
+                        // The word count's too, from the same tree.
+                        let counts = (tree.as_ref())
+                            .map(|t| tex_spell::extract::count(t, text))
+                            .unwrap_or_default();
+                        cache.lock().unwrap().insert(path.clone(), (hash, counts));
+                        Parsed::Tex(Box::new(
+                            tree.map(|t| tex_syntax::Index::build(&t, text))
+                                .unwrap_or_default(),
+                        ))
+                    };
+                    (jobs.into_iter())
+                        .map(|(path, bib, text, hash)| {
+                            let parsed = parse(&path, bib, &text, hash);
+                            (path, hash, parsed)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                {
+                    let mut project = this.project.write().unwrap();
+                    for (path, hash, parsed) in parsed {
+                        // Parsed as the wrong kind: the file became or stopped being a
+                        // bibliography meanwhile, and is parsed again next time.
+                        let kind_ok = matches!(parsed, Parsed::Bib(_)) == project.is_bib(&path);
+                        project.apply(&path, parsed);
+                        if let Some(b) = this.buffers.iter_mut().find(|b| b.path == path) {
+                            b.indexed = kind_ok.then_some(hash);
+                        }
+                    }
+                }
+                this.reindexed(texts, cx);
+            })
+            .ok();
+        });
+    }
+
+    /// What follows a re-index from `texts`, the buffers' text.
+    fn reindexed(&mut self, texts: Vec<(Entity<EditorState>, Arc<str>)>, cx: &mut Context<Self>) {
         self.refresh_outline(cx);
         self.count_words(&texts, cx);
         self.run_checks(texts, cx);
@@ -1118,9 +1176,9 @@ impl Workspace {
 
     /// Count the words of every file of the project in the background,
     /// reading open files from `texts`.
-    fn count_words(&mut self, texts: &[(Entity<EditorState>, String)], cx: &mut Context<Self>) {
+    fn count_words(&mut self, texts: &[(Entity<EditorState>, Arc<str>)], cx: &mut Context<Self>) {
         let files = self.project.read().unwrap().files();
-        let open: std::collections::HashMap<PathBuf, String> = texts
+        let open: std::collections::HashMap<PathBuf, Arc<str>> = texts
             .iter()
             .filter_map(|(editor, text)| {
                 let b = self.buffers.iter().find(|b| &b.editor == editor)?;
@@ -1134,19 +1192,23 @@ impl Workspace {
                     let mut cache = cache.lock().unwrap();
                     let mut out = Vec::new();
                     for file in files {
-                        let Some(text) = open
-                            .get(&file)
-                            .cloned()
-                            .or_else(|| tex_project::read_regular(&file))
-                        else {
-                            continue;
+                        let read;
+                        let text = match open.get(&file) {
+                            Some(text) => &**text,
+                            None => match tex_project::read_regular(&file) {
+                                Some(text) => {
+                                    read = text;
+                                    read.as_str()
+                                }
+                                None => continue,
+                            },
                         };
-                        let hash = text_hash(&text);
+                        let hash = text_hash(text);
                         let counts = match cache.get(&file) {
                             Some((cached, counts)) if *cached == hash => *counts,
                             _ => {
-                                let counts = tex_syntax::parse(&text, None)
-                                    .map(|t| tex_spell::extract::count(&t, &text))
+                                let counts = tex_syntax::parse(text, None)
+                                    .map(|t| tex_spell::extract::count(&t, text))
                                     .unwrap_or_default();
                                 cache.insert(file.clone(), (hash, counts));
                                 counts
@@ -1229,7 +1291,7 @@ impl Workspace {
 
     /// Check the project (as indexed from `texts`, the buffers' text) in the
     /// background, then underline what was found.
-    fn run_checks(&mut self, texts: Vec<(Entity<EditorState>, String)>, cx: &mut Context<Self>) {
+    fn run_checks(&mut self, texts: Vec<(Entity<EditorState>, Arc<str>)>, cx: &mut Context<Self>) {
         if !self.settings.live_checks || self.root.is_none() {
             self._checks = Task::ready(());
             if !self.issues.is_empty() {
@@ -1258,8 +1320,8 @@ impl Workspace {
                     let checked = texts
                         .iter()
                         .find(|(e, _)| *e == b.editor)
-                        .map_or(&b.saved, |(_, t)| t);
-                    let same = *b.editor.read(cx).text() == **checked;
+                        .map_or(b.saved.as_str(), |(_, t)| t);
+                    let same = *b.editor.read(cx).text() == *checked;
                     if same {
                         this.underline_issues(ix, cx);
                     }

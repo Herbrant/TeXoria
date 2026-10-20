@@ -29,6 +29,14 @@ pub struct ProjectLabel {
     pub label: Label,
 }
 
+/// A file's text parsed for `Project::apply`, away from the project (on another
+/// thread, without holding its lock): `Project::is_bib` tells which kind.
+#[derive(Debug)]
+pub enum Parsed {
+    Tex(Box<Index>),
+    Bib(Vec<BibEntry>),
+}
+
 #[derive(Debug, Default)]
 pub struct Project {
     root: PathBuf,
@@ -72,11 +80,27 @@ impl Project {
     /// and bibliographies no longer referenced. A bibliography of the project is
     /// re-parsed instead.
     pub fn update(&mut self, path: &Path, text: &str) {
-        if let Some(entries) = self.bibs.get_mut(path) {
-            *entries = bib::parse(text);
-            return;
-        }
-        let index = Index::from_text(text);
+        let parsed = match self.is_bib(path) {
+            true => Parsed::Bib(bib::parse(text)),
+            false => Parsed::Tex(Box::new(Index::from_text(text))),
+        };
+        self.apply(path, parsed);
+    }
+
+    /// What `update` does once the text is parsed (the slow part, which needs no
+    /// project: see `Parsed`). A text parsed as the wrong kind, because the file became
+    /// or stopped being one of the project's bibliographies since, is ignored.
+    pub fn apply(&mut self, path: &Path, parsed: Parsed) {
+        let index = match parsed {
+            Parsed::Bib(new) => {
+                if let Some(entries) = self.bibs.get_mut(path) {
+                    *entries = new;
+                }
+                return;
+            }
+            Parsed::Tex(_) if self.is_bib(path) => return,
+            Parsed::Tex(index) => *index,
+        };
         let includes = index.includes.clone();
         self.files.insert(path.to_path_buf(), index);
         self.buffers.insert(path.to_path_buf());
@@ -626,6 +650,15 @@ mod tests {
         assert_eq!(p.root(), main);
         assert_eq!(p.root_dir(), dir.path());
         assert_eq!(p.packages().count(), 0);
+
+        // Parsed elsewhere, then applied: a text parsed as the wrong kind is ignored.
+        p.apply(&bib, Parsed::Tex(Box::new(Index::from_text("\\label{x}"))));
+        assert!(!p.contains(&bib));
+        assert_eq!(keys(&p), ["c"]);
+        p.apply(&main, Parsed::Bib(bib::parse("@misc{d, title={D}}")));
+        assert!(!p.is_bib(&main));
+        p.apply(&bib, Parsed::Bib(bib::parse("@misc{d, title={D}}")));
+        assert_eq!(keys(&p), ["d"]);
     }
 
     #[test]

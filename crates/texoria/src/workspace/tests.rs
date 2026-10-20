@@ -202,16 +202,15 @@ fn reindexing_parses_only_the_buffers_that_changed(cx: &mut TestAppContext) {
     let (dir, window, workspace) = sample(cx);
     let main = paths::canonical(&dir.path().join("main.tex"));
     let methods = paths::canonical(&dir.path().join("chapters/methods.tex"));
-    let titles = |cx: &mut TestAppContext| {
-        workspace.read_with(cx, |ws, _| {
-            (ws.outline.iter())
-                .map(|i| i.item.title.clone())
-                .collect::<Vec<_>>()
-        })
+    let has = |cx: &mut TestAppContext, title: &str| {
+        workspace.read_with(cx, |ws, _| ws.outline.iter().any(|i| i.item.title == title))
     };
     with(cx, window, &workspace, |ws, window, cx| {
         ws.activate_file(methods.clone(), window, cx);
         ws.reindex(cx);
+    });
+    cx.run_until_parked();
+    with(cx, window, &workspace, |ws, window, cx| {
         // An index that main.tex's text would not give: kept while main.tex is unchanged.
         let tampered = "\\section{Tampered}\n\\input{chapters/methods}\n";
         ws.project.write().unwrap().update(&main, tampered);
@@ -222,23 +221,14 @@ fn reindexing_parses_only_the_buffers_that_changed(cx: &mut TestAppContext) {
         });
         ws.reindex(cx);
     });
-    let after_edit = titles(cx);
-    assert!(
-        after_edit.contains(&"Tampered".to_string()),
-        "{after_edit:?}"
-    );
-    assert!(after_edit.contains(&"Added".to_string()), "{after_edit:?}");
+    // Parsed in the background.
+    assert!(!has(cx, "Added"));
+    cx.run_until_parked();
+    assert!(has(cx, "Added") && has(cx, "Tampered"));
 
     with(cx, window, &workspace, |ws, _, cx| ws.reindex_all(cx));
-    let after_all = titles(cx);
-    assert!(
-        !after_all.contains(&"Tampered".to_string()),
-        "{after_all:?}"
-    );
-    assert!(
-        after_all.contains(&"Introduction".to_string()),
-        "{after_all:?}"
-    );
+    cx.run_until_parked();
+    assert!(!has(cx, "Tampered") && has(cx, "Introduction") && has(cx, "Added"));
 }
 
 #[gpui::test]

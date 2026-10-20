@@ -505,6 +505,7 @@ fn outline_groups_start_collapsed(cx: &mut TestAppContext) {
     let at = app.text(cx, &main).find("\\section{Results}").unwrap();
     app.type_at(cx, &main, at, "\\subsection{Aside}\n");
     app.update(cx, |ws, _, cx| ws.reindex(cx));
+    cx.run_until_parked();
     assert_eq!(
         visible(cx),
         ["Introduction", "Methods", "Results", "Discussion"]
