@@ -108,7 +108,8 @@ glyphs! {
     Regex => "regex",
     ReplaceAll => "replace-all",
     Export => "download",
-    Presentation => "presentation",
+    Window => "app-window",
+    PanelRight => "panel-right",
 }
 
 pub struct Assets;

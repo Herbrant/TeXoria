@@ -244,8 +244,12 @@ texoria ─┬─ tex-compile ── tex-log
     The pane takes the focus on click: in its key context (`PdfPane`) ⌘= / ⌘- / ⌘0 zoom the PDF,
     elsewhere they resize the editor's text (`Settings::editor_font_size`). Links, page text
     (selection) and search hits are `pdf_view::Query`s answered on the worker, per document
-    generation. `presentation.rs` is the full-screen window: it asks the pane's renderer for its
-    page (`PdfPane::present`) and frees the bitmaps it drew itself (they live in its window).
+    generation. `preview_window.rs` is the PDF's own window (`TogglePreviewWindow`): the same
+    `PdfPane` entity moves there (`PdfPane::leave_window` hands back the bitmaps for the old
+    window to free from its atlas), and it passes the main window's actions on through the
+    workspace's focus handle. Its placement (display UUID, bounds, full screen) is kept in
+    `Settings::preview_window`. Never read the `Workspace` while another window draws: GPUI
+    then binds the entity to that window, and its `subscribe_in` callbacks run there.
   - `agent_panel.rs` is the Agent sidebar (alternates with the outline). Agents only start in
     projects allowed in `Settings::agent_projects` (exact directories, like trust), and the
     agents are looked for on first use. A turn emits `AgentPanelEvent::Busy`: the workspace
@@ -280,7 +284,7 @@ texoria ─┬─ tex-compile ── tex-log
     `RangeDecoration` (the editor has no cursor shapes).
   - Actions/keybindings/menus are declared in `main.rs` (`secondary-*` = ⌘ on macOS, Ctrl elsewhere).
     On macOS the app outlives its window: `reopen` (the Dock icon) opens the last project in a
-    new one. Closing the main window also closes the Settings and presentation windows.
+    new one. Closing the main window also closes the Settings and PDF windows.
   - The app icon's sources are `assets/logo/texoria.svg` (and `texoria-small.svg` for ≤ 48 px);
     the rasterized PNG/`.icns`/`.ico` in `crates/texoria/packaging` are committed. `build.rs`
     embeds the `.ico` as Windows resource ID 1, which is where GPUI loads the window icon from.

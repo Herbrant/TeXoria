@@ -44,13 +44,17 @@ Once you have clicked the preview, ⌘F (Ctrl+F) opens a find bar at the top of 
 ⇧↵ (or the arrows) go to the next and previous one, the button next to them matches the case,
 and Esc closes the bar. The search runs again when the PDF is rebuilt.
 
-## Presenting
+## The PDF in its own window
 
-*View* → *Present PDF* (⇧⌘↵), or the presentation button of the toolbar, shows the PDF full
-screen, one page at a time, from the page the preview is on: handy for a Beamer talk. →, ↓,
-Space, Page Down, ↵ or a click go to the next page; ←, ↑, Page Up or Backspace to the previous
-one; Home and End to the first and last; Esc ends the presentation. Rebuilding the document
-updates it.
+*View* → *PDF in Separate Window* (⇧⌘↵), or the window button of the preview's toolbar, moves
+the PDF to a window of its own, which you can put on another display or make full screen: the
+editor then takes the whole main window. The preview works there as it does next to the editor
+(zoom, pages, find, SyncTeX both ways: a jump to the source brings the editor's window forward),
+and the main shortcuts (⌘R, ⌘J, ⌘S, live preview…) work from it too.
+
+⇧⌘↵ again, the same toolbar button, ⌘W in the PDF's window or closing that window put the PDF
+back next to the editor. TeXoria always starts with one window, and opens the PDF's window
+where it was last (on the same display if it is still connected, full screen if it was).
 
 ## Copying text
 

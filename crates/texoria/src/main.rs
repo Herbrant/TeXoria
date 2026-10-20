@@ -16,7 +16,7 @@ mod outline;
 mod overleaf;
 mod paths;
 mod pdf_pane;
-mod presentation;
+mod preview_window;
 mod search_panel;
 mod settings;
 mod settings_window;
@@ -77,7 +77,7 @@ actions!(
         FindInProject,
         FormatDocument,
         ExportPdf,
-        Present,
+        TogglePreviewWindow,
         AddCitation,
         ToggleVimMode,
         Quit,
@@ -90,7 +90,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-o", OpenFolder, None),
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-shift-s", ExportPdf, None),
-        KeyBinding::new("secondary-shift-enter", Present, None),
+        KeyBinding::new("secondary-shift-enter", TogglePreviewWindow, None),
         KeyBinding::new("secondary-shift-c", AddCitation, None),
         KeyBinding::new("secondary-r", Build, None),
         KeyBinding::new("secondary-.", CancelBuild, None),
@@ -204,7 +204,7 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Fit PDF Page", pdf_pane::FitPage),
             MenuItem::action("Go to PDF Page…", pdf_pane::GoToPage),
             MenuItem::action("Find in PDF…", pdf_pane::FindInPdf),
-            MenuItem::action("Present PDF", Present),
+            MenuItem::action("PDF in Separate Window", TogglePreviewWindow),
             MenuItem::separator(),
             MenuItem::action("Light/Dark", ToggleTheme),
         ]),
@@ -240,7 +240,6 @@ fn init(cx: &mut App) {
     theme::init(None, cx);
     latex::register();
     bind_keys(cx);
-    presentation::bind_keys(cx);
     set_menus(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
@@ -294,7 +293,18 @@ fn open_main_window(path: Option<PathBuf>, cx: &mut App) {
 /// The app was opened again (its Dock icon clicked) with no window on screen: show the
 /// minimized one, or open the last project in a new one.
 fn reopen(cx: &mut App) {
-    if let Some(window) = cx.windows().into_iter().next() {
+    let windows = cx.windows();
+    // The main window rather than the preview's.
+    let main = windows
+        .iter()
+        .find(|w| {
+            w.downcast::<gpui_kit::base::Root>().is_some_and(|root| {
+                root.read(cx)
+                    .is_ok_and(|r| r.view().clone().downcast::<Workspace>().is_ok())
+            })
+        })
+        .or(windows.first());
+    if let Some(window) = main {
         window.update(cx, |_, w, _| w.activate_window()).ok();
         return;
     }

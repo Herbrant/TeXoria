@@ -647,9 +647,8 @@ fn editor_commands_change_the_text(cx: &mut TestAppContext) {
         .editor(cx, &main)
         .read_with(cx, |e, _| e.cursor_position().line);
     assert_eq!(line, 14);
-    // Forward search and the presentation need a PDF: nothing happens without one.
+    // Forward search needs a PDF: nothing happens without one.
     app.dispatch(cx, crate::ForwardSearch);
-    app.dispatch(cx, crate::Present);
     pdf.update(cx, |_, cx| cx.emit(PdfPaneEvent::Export));
     cx.run_until_parked();
     assert_eq!(app.notifications(cx), 1);

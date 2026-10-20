@@ -48,7 +48,7 @@ use crate::latex::{
 use crate::outline::{self, Fold};
 use crate::overleaf;
 use crate::pdf_pane::{PdfPane, PdfPaneEvent};
-use crate::presentation::Presentation;
+use crate::preview_window::{self, PreviewWindow};
 use crate::search_panel::{SearchPanel, SearchPanelEvent};
 use crate::settings::{Session, Settings, SpellLanguage, ThemeChoice};
 use crate::settings_window::SettingsWindow;
@@ -59,9 +59,9 @@ use crate::{
     AddCitation, Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit,
     DecreaseFontSize, EditWithAgent, ExportPdf, Fetch, FindInProject, FixWithAgent, FormatDocument,
     ForwardSearch, IncreaseFontSize, NewBranch, Open, OpenFolder, OpenFromOverleaf, OpenSettings,
-    Present, Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf,
-    ToggleAgent, ToggleComment, ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline,
-    ToggleSoftWrap, ToggleTheme, ToggleVimMode, ZoomIn, ZoomOut, ZoomToFit,
+    Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent,
+    ToggleComment, ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline,
+    TogglePreviewWindow, ToggleSoftWrap, ToggleTheme, ToggleVimMode, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
@@ -182,6 +182,11 @@ pub struct Workspace {
     focus: FocusHandle,
     was_dark: bool,
     settings_window: Option<AnyWindowHandle>,
+    /// The PDF is in a window of its own, not next to the editor.
+    preview_detached: bool,
+    /// That window, once open.
+    preview_window: Option<AnyWindowHandle>,
+    preview_view: WeakEntity<PreviewWindow>,
     spell: Spell,
     grammar: Grammar,
     _grammar_start: Task<()>,
@@ -257,10 +262,14 @@ impl Workspace {
                 window,
                 |this, _, ev: &PdfPaneEvent, window, cx| match ev {
                     PdfPaneEvent::InverseSearch { file, line } => {
-                        this.reveal(file.clone(), line.saturating_sub(1), window, cx)
+                        this.reveal(file.clone(), line.saturating_sub(1), window, cx);
+                        // From the PDF's own window: the editor's comes forward.
+                        if this.preview_detached {
+                            window.activate_window();
+                        }
                     }
                     PdfPaneEvent::Export => this.export_pdf(window, cx),
-                    PdfPaneEvent::Present => this.present(cx),
+                    PdfPaneEvent::ToggleWindow => this.toggle_preview_window(window, cx),
                 },
             ),
             cx.subscribe_in(&git, window, Self::on_git_event),
@@ -298,6 +307,7 @@ impl Workspace {
         // Never lose edits made since the last (debounced) save.
         subscriptions.push(cx.on_app_quit(|this, cx| {
             this.save_all(cx);
+            this.remember_preview_window(cx);
             this.grammar.stop();
             async {}
         }));
@@ -312,7 +322,9 @@ impl Workspace {
                 })
                 .unwrap_or(true);
             if close {
-                // The Settings and presentation windows belong to this one. Left open,
+                weak.update(cx, |this, cx| this.remember_preview_window(cx))
+                    .ok();
+                // The Settings and preview windows belong to this one. Left open,
                 // they would keep the app running elsewhere than on macOS, and there
                 // keep its Dock icon from opening a new window.
                 let main = window.window_handle();
@@ -401,6 +413,9 @@ impl Workspace {
             focus: cx.focus_handle(),
             was_dark: cx.theme_is_dark(),
             settings_window: None,
+            preview_detached: false,
+            preview_window: None,
+            preview_view: WeakEntity::new_invalid(),
             spell,
             grammar: Grammar::default(),
             _grammar_start: Task::ready(()),
@@ -754,6 +769,7 @@ impl Workspace {
             self.sync_agent(cx);
             self.files
                 .update(cx, |f, cx| f.set_project(Some(root.clone()), cx));
+            self.name_preview_window(cx);
             let dir = self.project_dir();
             self.search.update(cx, |s, cx| s.set_dir(dir, cx));
             // Show a previous build right away, if any.
@@ -2453,33 +2469,107 @@ impl Workspace {
         .detach();
     }
 
-    /// Show the PDF full screen in a window of its own, from the page the
-    /// preview is on.
-    fn present(&mut self, cx: &mut Context<Self>) {
-        let (page, pages) = {
-            let pdf = self.pdf.read(cx);
-            (pdf.current_page(), pdf.presentation().1)
-        };
-        if pages == 0 {
+    /// Move the PDF to a window of its own (to put on another display), or
+    /// back next to the editor.
+    fn toggle_preview_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview_detached {
+            return self.dock_preview(cx);
+        }
+        self.preview_detached = true;
+        // Its bitmaps are uploaded again in the new window.
+        let drawn = self.pdf.update(cx, |pdf, cx| {
+            pdf.set_detached(true, cx);
+            pdf.leave_window(cx)
+        });
+        for image in drawn {
+            let _ = window.drop_image(image);
+        }
+        let options = preview_window::options(self.settings.preview_window.as_ref(), cx);
+        let pane = self.pdf.clone();
+        let workspace = cx.entity().downgrade();
+        let (main, focus) = (window.window_handle(), self.focus.clone());
+        let name = self.root_name();
+        // The new window reads the workspace, which is being updated here.
+        cx.defer(move |cx| {
+            let opened = gpui_kit::open_window(options, cx, {
+                let workspace = workspace.clone();
+                move |window, cx| {
+                    let closing = workspace.clone();
+                    window.on_window_should_close(cx, move |window, cx| {
+                        let placement = preview_window::placement(window, cx);
+                        closing
+                            .update(cx, |w, cx| {
+                                w.settings.preview_window = Some(placement);
+                                w.dock_preview(cx)
+                            })
+                            .ok();
+                        true
+                    });
+                    cx.new(|cx| PreviewWindow::new(pane, name, workspace, main, focus, window, cx))
+                }
+            });
+            workspace
+                .update(cx, |w, cx| match opened {
+                    // Docked again meanwhile.
+                    Ok((handle, _)) if !w.preview_detached => {
+                        handle.update(cx, |_, w, _| w.remove_window()).ok();
+                    }
+                    Ok((handle, view)) => {
+                        w.preview_window = Some(handle);
+                        w.preview_view = view.downgrade();
+                    }
+                    Err(e) => {
+                        log::error!("opening the PDF's window: {e}");
+                        w.dock_preview(cx);
+                    }
+                })
+                .ok();
+        });
+        cx.notify();
+    }
+
+    /// Put the PDF back next to the editor, and close its window.
+    fn dock_preview(&mut self, cx: &mut Context<Self>) {
+        if !self.preview_detached {
             return;
         }
-        let pane = self.pdf.clone();
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
-            app_id: Some("texoria".into()),
-            titlebar: None,
-            ..Default::default()
-        };
-        // The new window reads the preview, which may be being updated.
-        cx.defer(move |cx| {
-            let opened = gpui_kit::open_window(options, cx, move |window, cx| {
-                window.defer(cx, |window, _| window.toggle_fullscreen());
-                cx.new(|cx| Presentation::new(pane, page, window, cx))
-            });
-            if let Err(e) = opened {
-                log::error!("opening the presentation: {e}");
-            }
+        self.remember_preview_window(cx);
+        self.preview_detached = false;
+        if let Some(handle) = self.preview_window.take() {
+            // Its bitmaps go with it. Fails when it is closing already.
+            handle.update(cx, |_, w, _| w.remove_window()).ok();
+        }
+        self.pdf.update(cx, |pdf, cx| {
+            pdf.set_detached(false, cx);
+            pdf.leave_window(cx);
         });
+        cx.notify();
+    }
+
+    /// Name the PDF's window after the root file.
+    fn name_preview_window(&mut self, cx: &mut Context<Self>) {
+        let (Some(handle), Some(view)) = (self.preview_window, self.preview_view.upgrade()) else {
+            return;
+        };
+        let name = self.root_name();
+        handle
+            .update(cx, |_, window, cx| {
+                view.update(cx, |v, cx| v.set_root_name(name, window, cx))
+            })
+            .ok();
+    }
+
+    /// Save where the PDF's window is, to open it there next time.
+    fn remember_preview_window(&mut self, cx: &mut Context<Self>) {
+        if let Some(placement) = self.preview_window.and_then(|h| {
+            h.update(cx, |_, w, cx| preview_window::placement(w, cx))
+                .ok()
+        }) {
+            self.settings.preview_window = Some(placement);
+        }
+        if self.preview_detached {
+            self.settings.save();
+        }
     }
 
     /// Let the project's documents run programs, and build again.
@@ -2636,6 +2726,12 @@ impl Workspace {
     }
 
     // ── Coding agents ────────────────────────────────────────────────────
+
+    /// The root file's name, for window titles.
+    pub(crate) fn root_name(&self) -> Option<String> {
+        let name = self.root.as_ref()?.file_name()?;
+        Some(name.to_string_lossy().into_owned())
+    }
 
     fn project_dir(&self) -> Option<PathBuf> {
         self.root
@@ -5091,13 +5187,16 @@ impl Render for Workspace {
                 )
                 .child(resizable_panel().child(editor_column))
                 .child(
-                    resizable_panel().size(px(620.)).child(
-                        div()
-                            .size_full()
-                            .border_l_1()
-                            .border_color(theme.border)
-                            .child(self.pdf.clone()),
-                    ),
+                    resizable_panel()
+                        .size(px(620.))
+                        .visible(!self.preview_detached)
+                        .child(
+                            div()
+                                .size_full()
+                                .border_l_1()
+                                .border_color(theme.border)
+                                .child(self.pdf.clone()),
+                        ),
                 )
                 .into_any_element()
         };
@@ -5148,7 +5247,9 @@ impl Render for Workspace {
                     this.pdf.update(cx, |p, cx| p.open_find(window, cx))
                 }),
             )
-            .on_action(cx.listener(|this, _: &Present, _, cx| this.present(cx)))
+            .on_action(cx.listener(|this, _: &TogglePreviewWindow, window, cx| {
+                this.toggle_preview_window(window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &AddCitation, window, cx| this.prompt_citation(window, cx)),
             )

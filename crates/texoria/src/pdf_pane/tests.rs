@@ -292,15 +292,13 @@ fn without_pdfium_there_is_no_preview(cx: &mut TestAppContext) {
     assert_eq!(text.try_recv().unwrap(), None);
     pane.read_with(cx, |p, _| {
         assert_eq!(p.page_count(), 0);
-        assert_eq!(p.page_size(0), None);
-        assert_eq!(p.presentation().1, 0);
+        assert!(p.pages.is_empty());
     });
     // Nothing to go to.
     update(cx, window, &pane, |p, window, cx| {
         p.go_to(3, None, cx);
         p.prompt_page(window, cx);
         assert!(p.page_input.is_none());
-        p.stop_presenting(cx);
     });
 }
 
@@ -311,7 +309,7 @@ fn shows_the_pages_and_their_links(cx: &mut TestAppContext) {
     };
     pane.read_with(cx, |p, _| {
         assert!(p.error.is_none());
-        let size = p.page_size(0).unwrap();
+        let size = p.pages[0];
         assert!(size.width > 500.0 && size.height > 700.0, "{size:?}");
         assert!(p.viewport.width > px(0.), "laid out");
         let links = &p.links[&0];
@@ -671,7 +669,7 @@ fn answers_the_agents(cx: &mut TestAppContext) {
         got.0.is_some() && got.1.is_some() && got.2.is_some() && got.3.is_some()
     });
     let bitmap = got.0.unwrap().unwrap();
-    let size = pane.read_with(cx, |p, _| p.page_size(0).unwrap());
+    let size = pane.read_with(cx, |p, _| p.pages[0]);
     assert_eq!(bitmap.width, (size.width * 0.5).round() as u32);
     let all = got.1.unwrap().unwrap();
     assert!(all.contains("The needle is here") && all.contains("Another needle"));
@@ -791,46 +789,29 @@ fn synctex_both_ways(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn presents_pages_from_its_renderer(cx: &mut TestAppContext) {
+fn leaves_its_window_with_the_bitmaps_drawn_there(cx: &mut TestAppContext) {
     let Some((window, pane)) = loaded(cx) else {
         return;
     };
-    update(cx, window, &pane, |p, _, cx| p.present(5, 1000, cx));
-    // Clamped to the document.
-    pane.read_with(cx, |p, _| {
-        assert_eq!(p.presenting.as_ref().unwrap().page, 1)
+    update(cx, window, &pane, |p, window, cx| {
+        p.open_find(window, cx);
+        p.prompt_page(window, cx);
+        assert!(p.find.is_some() && p.page_input.is_some());
+        p.set_detached(true, cx);
     });
-    wait(cx, window, &pane, "the presented page", |cx| {
-        pane.read_with(cx, |p, _| p.presentation().0.is_some())
+    let drawn = update(cx, window, &pane, |p, _, cx| {
+        let shown = p.shown.len();
+        let drawn = p.leave_window(cx);
+        assert_eq!(drawn.len(), shown);
+        assert!(p.to_drop.is_empty());
+        // Fields of the old window are gone; the new layout asks for pages again.
+        assert!(p.find.is_none() && p.page_input.is_none());
+        assert!(p.last_request.is_empty());
+        drawn
     });
-    // The same again: nothing new to render.
-    let request = pane.read_with(cx, |p, _| p.last_request.clone());
-    update(cx, window, &pane, |p, _, cx| p.present(1, 1000, cx));
-    pane.read_with(cx, |p, _| assert_eq!(p.last_request, request));
-    // Another scale.
-    update(cx, window, &pane, |p, _, cx| p.present(0, 1500, cx));
-    wait(cx, window, &pane, "the new scale", |cx| {
-        pane.read_with(cx, |p, _| {
-            p.presenting
-                .as_ref()
-                .is_some_and(|s| s.key.is_some_and(|k| k.scale_milli == 1500) && s.image.is_some())
-        })
+    assert!(!drawn.is_empty());
+    wait(cx, window, &pane, "the pages laid out again", |cx| {
+        pane.read_with(cx, |p, _| p.viewport.width > px(0.))
     });
-    // A reload renders it again.
-    update(cx, window, &pane, |p, _, cx| {
-        p.load(fixture("links/links.pdf"), None, cx)
-    });
-    wait(cx, window, &pane, "the reloaded page", |cx| {
-        pane.read_with(cx, |p, _| {
-            p.presenting
-                .as_ref()
-                .and_then(|s| s.key)
-                .is_some_and(|k| k.generation == 2)
-        })
-    });
-    update(cx, window, &pane, |p, _, cx| {
-        p.stop_presenting(cx);
-        p.stop_presenting(cx);
-    });
-    pane.read_with(cx, |p, _| assert_eq!(p.presentation().0, None));
+    pane.read_with(cx, |p, _| assert!(p.is_detached()));
 }

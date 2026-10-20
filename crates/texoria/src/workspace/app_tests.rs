@@ -5,6 +5,7 @@ mod agents;
 mod builds;
 mod editing;
 mod pdf;
+mod preview;
 mod tools;
 
 use std::path::{Path, PathBuf};

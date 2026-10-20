@@ -64,22 +64,13 @@ pub enum PdfPaneEvent {
     InverseSearch { file: PathBuf, line: u32 },
     /// Save a copy of the PDF somewhere.
     Export,
-    /// Show the PDF full screen, from the current page.
-    Present,
+    /// Move the preview to a window of its own, or back.
+    ToggleWindow,
 }
 
 struct Shown {
     key: RenderKey,
     image: Arc<RenderImage>,
-}
-
-/// A page shown by the presentation window, rendered by this pane's renderer.
-struct Presenting {
-    page: usize,
-    scale_milli: u32,
-    image: Option<Arc<RenderImage>>,
-    /// The bitmap `image` is, or the one awaited.
-    key: Option<RenderKey>,
 }
 
 /// Text selected by dragging on a page, between two points (PDF points).
@@ -156,9 +147,8 @@ pub struct PdfPane {
     texts: HashMap<usize, Vec<TextChar>>,
     asked_text: HashSet<usize>,
     selection: Option<Selection>,
-    presenting: Option<Presenting>,
-    /// The bitmaps the pane itself wants (the presentation's come first).
-    pane_wanted: Vec<RenderKey>,
+    /// Shown in a window of its own rather than next to the editor.
+    detached: bool,
     /// Snapshots and texts asked for by the agents' tools.
     snapshots: HashMap<u64, smol::channel::Sender<Option<Bitmap>>>,
     texts_wanted: HashMap<u64, smol::channel::Sender<Option<String>>>,
@@ -234,8 +224,7 @@ impl PdfPane {
             texts: HashMap::new(),
             asked_text: HashSet::new(),
             selection: None,
-            presenting: None,
-            pane_wanted: Vec::new(),
+            detached: false,
             snapshots: HashMap::new(),
             texts_wanted: HashMap::new(),
             query_seq: 0,
@@ -289,12 +278,6 @@ impl PdfPane {
         }
     }
 
-    /// The page shown by the presentation window.
-    #[cfg(test)]
-    pub(crate) fn presented_page(&self) -> Option<usize> {
-        self.presenting.as_ref().map(|p| p.page)
-    }
-
     fn on_render_event(&mut self, event: RenderEvent, cx: &mut Context<Self>) {
         match event {
             RenderEvent::Loaded { generation, pages } => {
@@ -311,10 +294,6 @@ impl PdfPane {
                 self.texts.clear();
                 self.asked_text.clear();
                 self.selection = None;
-                // The presented page is rendered again from the new document.
-                if let Some(p) = &mut self.presenting {
-                    p.key = None;
-                }
                 // Hits move with the text.
                 self.search_again(cx);
                 self.synctex = self.pending_synctex.take();
@@ -329,10 +308,6 @@ impl PdfPane {
                         self.to_drop.push(s.image);
                     }
                 }
-                if let Some(p) = &mut self.presenting {
-                    p.page = p.page.min(self.pages.len().saturating_sub(1));
-                }
-                self.send_requests();
             }
             RenderEvent::LoadFailed { generation, error } => {
                 if generation == self.generation {
@@ -347,14 +322,6 @@ impl PdfPane {
             }
             RenderEvent::Rendered { key, bitmap } => {
                 if key.page >= self.pages.len() {
-                    return;
-                }
-                // The presentation window draws (and frees) its bitmaps itself.
-                if let Some(p) = self.presenting.as_mut().filter(|p| p.key == Some(key))
-                    && !self.pane_wanted.contains(&key)
-                {
-                    p.image = to_render_image(bitmap).or(p.image.take());
-                    cx.notify();
                     return;
                 }
                 let newer = self.shown.get(&key.page).is_none_or(|s| {
@@ -904,8 +871,12 @@ impl PdfPane {
                 wanted.push(key);
             }
         }
-        self.pane_wanted = wanted;
-        self.send_requests();
+        if wanted != self.last_request
+            && let Some(renderer) = &self.renderer
+        {
+            renderer.request(wanted.clone());
+            self.last_request = wanted;
+        }
     }
 
     /// The scale to rasterize at for `wanted`: at once after a pause, but
@@ -929,40 +900,6 @@ impl PdfPane {
             self.scale_milli = wanted;
         }
         self.scale_milli
-    }
-
-    /// Ask the renderer for the presentation's page, then the pane's.
-    fn send_requests(&mut self) {
-        let Some(renderer) = &self.renderer else {
-            return;
-        };
-        let mut wanted = Vec::new();
-        if let Some(p) = &mut self.presenting
-            && p.page < self.pages.len()
-        {
-            let key = RenderKey {
-                generation: self.doc_generation,
-                page: p.page,
-                scale_milli: p.scale_milli,
-                dark: false,
-            };
-            let have = p.key == Some(key) && p.image.is_some();
-            p.key = Some(key);
-            if !have {
-                wanted.push(key);
-            }
-        }
-        let first = wanted.first().copied();
-        wanted.extend(
-            self.pane_wanted
-                .iter()
-                .copied()
-                .filter(|k| Some(*k) != first),
-        );
-        if wanted != self.last_request {
-            renderer.request(wanted.clone());
-            self.last_request = wanted;
-        }
     }
 
     // ── For the agents ───────────────────────────────────────────────────
@@ -1010,49 +947,33 @@ impl PdfPane {
         rx
     }
 
-    // ── Presentation ─────────────────────────────────────────────────────
+    // ── Windows ──────────────────────────────────────────────────────────
 
-    /// Show `page` in the presentation window, at `scale_milli` pixels per
-    /// point (thousandths).
-    pub fn present(&mut self, page: usize, scale_milli: u32, cx: &mut Context<Self>) {
-        let page = page.min(self.pages.len().saturating_sub(1));
-        match &mut self.presenting {
-            Some(p) if p.page == page && p.scale_milli == scale_milli => return,
-            Some(p) => {
-                p.page = page;
-                p.scale_milli = scale_milli;
-            }
-            None => {
-                self.presenting = Some(Presenting {
-                    page,
-                    scale_milli,
-                    image: None,
-                    key: None,
-                })
-            }
-        }
-        self.send_requests();
+    /// Whether the pane is shown in a window of its own.
+    pub fn set_detached(&mut self, detached: bool, cx: &mut Context<Self>) {
+        self.detached = detached;
         cx.notify();
     }
 
-    pub fn stop_presenting(&mut self, cx: &mut Context<Self>) {
-        if self.presenting.take().is_some() {
-            self.send_requests();
-            cx.notify();
-        }
+    #[cfg(test)]
+    pub(crate) fn is_detached(&self) -> bool {
+        self.detached
     }
 
-    /// The presented page's bitmap (the previous one until the new one is
-    /// ready) and the number of pages.
-    pub fn presentation(&self) -> (Option<Arc<RenderImage>>, usize) {
-        (
-            self.presenting.as_ref().and_then(|p| p.image.clone()),
-            self.pages.len(),
-        )
-    }
-
-    pub fn page_size(&self, page: usize) -> Option<PageSize> {
-        self.pages.get(page).copied()
+    /// Get ready to be drawn in another window. Returns the bitmaps drawn so
+    /// far, for the old window to free (the new one uploads them again); the
+    /// find bar and the page field close, since their fields belong to the
+    /// old window.
+    pub fn leave_window(&mut self, cx: &mut Context<Self>) -> Vec<Arc<RenderImage>> {
+        self.find = None;
+        self.page_input = None;
+        self._page_input = None;
+        self.viewport = Size::default();
+        self.last_request.clear();
+        cx.notify();
+        let mut images = std::mem::take(&mut self.to_drop);
+        images.extend(self.shown.values().map(|s| s.image.clone()));
+        images
     }
 
     /// Ask for the links of the visible pages not asked yet.
@@ -1127,11 +1048,19 @@ impl PdfPane {
             .text_color(cx.theme().muted_foreground)
             .child(page)
             .child(
-                Button::new("pdf-present")
+                Button::new("pdf-window")
                     .ghost()
-                    .icon(Glyph::Presentation)
-                    .tooltip("Present (⇧⌘↵)")
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PdfPaneEvent::Present))),
+                    .icon(if self.detached {
+                        Glyph::PanelRight
+                    } else {
+                        Glyph::Window
+                    })
+                    .tooltip(if self.detached {
+                        "Back to the main window (⇧⌘↵)"
+                    } else {
+                        "Open in a separate window (⇧⌘↵)"
+                    })
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PdfPaneEvent::ToggleWindow))),
             )
             .child(
                 Button::new("pdf-export")
@@ -1220,8 +1149,11 @@ impl Render for PdfPane {
                 .error
                 .clone()
                 .unwrap_or_else(|| "The preview appears after the first build.".into());
+            // Focusable even so: in its own window, the keys typed there
+            // reach that window's actions.
             return div()
                 .id("pdf-pane")
+                .track_focus(&self.focus)
                 .size_full()
                 .child(empty(msg))
                 .into_any_element();

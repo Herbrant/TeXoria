@@ -72,6 +72,8 @@ pub struct Settings {
     pub check_updates: bool,
     /// When a check last found no new release (Unix seconds).
     pub last_update_check: Option<u64>,
+    /// Where the PDF's own window was last, to open it there again.
+    pub preview_window: Option<WindowPlacement>,
     /// Why the file could not be read in full, to tell the user once.
     #[serde(skip)]
     pub load_error: Option<String>,
@@ -92,6 +94,28 @@ pub struct Session {
     pub active: Option<PathBuf>,
     /// Where the PDF was last exported.
     pub export: Option<PathBuf>,
+}
+
+/// A window's place on screen: its display and its bounds on that display.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowPlacement {
+    /// The display's UUID, if it has one.
+    pub display: Option<String>,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub state: WindowState,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WindowState {
+    #[default]
+    Windowed,
+    Maximized,
+    Fullscreen,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +198,7 @@ impl Default for Settings {
             agent_projects: Vec::new(),
             check_updates: true,
             last_update_check: None,
+            preview_window: None,
             load_error: None,
             file: None,
         }
@@ -469,6 +494,29 @@ mod tests {
         let back = Settings::load_from(file);
         assert!(back.vim_mode);
         assert!(back.load_error.is_none());
+    }
+
+    #[test]
+    fn remembers_the_preview_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.toml");
+        let mut s = Settings::load_from(file.clone());
+        assert_eq!(s.preview_window, None);
+        let placement = WindowPlacement {
+            display: Some("7A1B".into()),
+            x: 10.0,
+            y: -20.5,
+            width: 800.0,
+            height: 1000.0,
+            state: WindowState::Fullscreen,
+        };
+        s.preview_window = Some(placement.clone());
+        s.save();
+        assert_eq!(Settings::load_from(file).preview_window, Some(placement));
+        // Another version's state only loses the placement.
+        let s = Settings::parse("vim_mode = true\n[preview_window]\nstate = \"tiled\"\n");
+        assert!(s.vim_mode);
+        assert_eq!(s.preview_window, None);
     }
 
     #[test]
