@@ -21,6 +21,11 @@ env:
   TEXORIA_REQUIRE_TEX: 1
   # The app's tests run the fake engine and agent built with tex-compile's and tex-agent's.
   TEXORIA_REQUIRE_FAKES: 1
+  # Smaller builds and caches (all caches share 10 GB, and an evicted one costs a full rebuild):
+  # file and line numbers are enough for a test's backtrace, and coverage does not use debuginfo.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # Every run builds the workspace from scratch: incremental data would only be written.
+  CARGO_INCREMENTAL: 0
 
 jobs:
   test:
@@ -44,7 +49,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy, llvm-tools-preview
+      # Pull requests read main's cache without adding their own.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
