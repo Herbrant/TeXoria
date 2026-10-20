@@ -4547,7 +4547,7 @@ impl Workspace {
             .child(body)
     }
 
-    fn render_outline(&self, rows: Vec<outline::Row>, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_outline(&self, rows: Vec<outline::Row>, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         // The section containing the cursor is highlighted, or the
         // collapsed group it is in.
@@ -4563,92 +4563,108 @@ impl Workspace {
             outline::shown(&rows, i)
         });
 
-        let items = rows.into_iter().filter(|r| r.visible).map(|row| {
-            let i = row.index;
-            let o = &self.outline[i];
-            let kind = o.item.kind;
-            let indent = row.depth as f32 * 12.0;
-            let icon = match kind {
-                OutlineKind::Figure => Glyph::Figure,
-                OutlineKind::Table => Glyph::Table,
-                _ => Glyph::Section,
-            };
-            let active = current == Some(i);
-            let title: SharedString = if o.item.title.is_empty() {
-                "Untitled".into()
-            } else {
-                o.item.title.clone().into()
-            };
-            // A fixed slot, so that titles line up with or without a chevron.
-            let chevron = div()
-                .id(("outline-fold", i))
-                .debug_selector(|| format!("outline-fold {title}"))
-                .flex_none()
-                .size(px(14.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .when_some(row.group, |d, key| {
-                    d.child(
-                        Icon::new(Glyph::Expand)
-                            .small()
-                            .text_color(theme.muted_foreground)
-                            .when(row.open, |i| {
-                                i.transform(Transformation::rotate(percentage(0.25)))
-                            }),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.outline_fold.toggle(key.clone());
-                        cx.notify();
-                    }))
-                });
-            let (file, line) = (o.file.clone(), o.item.line);
-            h_flex()
-                .id(("outline", i))
-                .debug_selector(|| format!("outline {title}"))
-                .gap_1p5()
-                .pl(px(4.0 + indent))
-                .pr_2()
-                .py_1()
-                .mx_1()
-                .rounded(theme.radius)
+        // Only the rows in view are laid out: a long document has hundreds, and the
+        // window is drawn again for every blink of the cursor.
+        let rows: Vec<outline::Row> = rows.into_iter().filter(|r| r.visible).collect();
+        if self.outline.is_empty() {
+            return div()
+                .flex_1()
+                .px_4()
                 .text_base()
-                .cursor_pointer()
-                .when(active, |d| {
-                    d.bg(theme.sidebar_accent).text_color(theme.foreground)
-                })
-                .when(!active, |d| d.text_color(theme.sidebar_foreground))
-                .when(kind.depth() <= 2, |d| d.font_weight(FontWeight::MEDIUM))
-                .hover(|s| s.bg(theme.sidebar_accent))
-                .child(chevron)
-                .child(
-                    Icon::new(icon)
-                        .small()
-                        .text_color(theme.muted_foreground.opacity(0.8)),
-                )
-                .child(div().truncate().child(title))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.reveal(file.clone(), line, window, cx)
-                }))
-        });
+                .text_color(theme.muted_foreground)
+                .child("No sections yet")
+                .into_any_element();
+        }
+        uniform_list(
+            "outline-list",
+            rows.len(),
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .map(|k| this.render_outline_row(&rows[k], current, cx))
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .flex_1()
+        .min_h_0()
+        .pb_4()
+        .into_any_element()
+    }
 
-        v_flex()
-            .id("outline-list")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .pb_4()
-            .when(self.outline.is_empty(), |d| {
+    /// A row of the outline; `current` is the one holding the cursor.
+    fn render_outline_row(
+        &self,
+        row: &outline::Row,
+        current: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = cx.theme();
+        let i = row.index;
+        let o = &self.outline[i];
+        let kind = o.item.kind;
+        let indent = row.depth as f32 * 12.0;
+        let icon = match kind {
+            OutlineKind::Figure => Glyph::Figure,
+            OutlineKind::Table => Glyph::Table,
+            _ => Glyph::Section,
+        };
+        let active = current == Some(i);
+        let title: SharedString = if o.item.title.is_empty() {
+            "Untitled".into()
+        } else {
+            o.item.title.clone().into()
+        };
+        // A fixed slot, so that titles line up with or without a chevron.
+        let chevron = div()
+            .id(("outline-fold", i))
+            .debug_selector(|| format!("outline-fold {title}"))
+            .flex_none()
+            .size(px(14.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when_some(row.group.clone(), |d, key| {
                 d.child(
-                    div()
-                        .px_4()
-                        .text_base()
+                    Icon::new(Glyph::Expand)
+                        .small()
                         .text_color(theme.muted_foreground)
-                        .child("No sections yet"),
+                        .when(row.open, |i| {
+                            i.transform(Transformation::rotate(percentage(0.25)))
+                        }),
                 )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.outline_fold.toggle(key.clone());
+                    cx.notify();
+                }))
+            });
+        let (file, line) = (o.file.clone(), o.item.line);
+        h_flex()
+            .id(("outline", i))
+            .debug_selector(|| format!("outline {title}"))
+            .gap_1p5()
+            .pl(px(4.0 + indent))
+            .pr_2()
+            .py_1()
+            .mx_1()
+            .rounded(theme.radius)
+            .text_base()
+            .cursor_pointer()
+            .when(active, |d| {
+                d.bg(theme.sidebar_accent).text_color(theme.foreground)
             })
-            .children(items)
+            .when(!active, |d| d.text_color(theme.sidebar_foreground))
+            .when(kind.depth() <= 2, |d| d.font_weight(FontWeight::MEDIUM))
+            .hover(|s| s.bg(theme.sidebar_accent))
+            .child(chevron)
+            .child(
+                Icon::new(icon)
+                    .small()
+                    .text_color(theme.muted_foreground.opacity(0.8)),
+            )
+            .child(div().truncate().child(title))
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.reveal(file.clone(), line, window, cx)),
+            )
     }
 
     /// Scrolls the tab bar to the active tab whenever it changes (a new file's is the last one),
