@@ -81,12 +81,13 @@ jobs:
       - name: Fetch PDFium
         run: ./scripts/fetch-pdfium.sh
 
-      # Tectonic downloads its support files on first use: keep them between runs.
+      # Tectonic downloads its support files on first use: keep them between runs (its cache
+      # folder on Linux, macOS and Windows).
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/Tectonic
-            ~/Library/Caches/Tectonic
+            ~/.cache/tectonic
+            ~/Library/Caches/TectonicProject.Tectonic
             ~/AppData/Local/TectonicProject
           key: tectonic-${{ matrix.name }}-${{ hashFiles('scripts/fetch-tectonic.sh') }}
       - name: Fetch Tectonic
