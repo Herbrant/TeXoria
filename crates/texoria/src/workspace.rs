@@ -4196,6 +4196,7 @@ impl Workspace {
             // A fixed slot, so that titles line up with or without a chevron.
             let chevron = div()
                 .id(("outline-fold", i))
+                .debug_selector(|| format!("outline-fold {title}"))
                 .flex_none()
                 .size(px(14.))
                 .flex()
@@ -4219,6 +4220,7 @@ impl Workspace {
             let (file, line) = (o.file.clone(), o.item.line);
             h_flex()
                 .id(("outline", i))
+                .debug_selector(|| format!("outline {title}"))
                 .gap_1p5()
                 .pl(px(4.0 + indent))
                 .pr_2()

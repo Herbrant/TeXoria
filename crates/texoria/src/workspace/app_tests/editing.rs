@@ -3,7 +3,7 @@
 
 use super::*;
 use core::prelude::v1::test;
-use gpui_kit::gpui;
+use gpui_kit::{Modifiers, VisualTestContext, gpui};
 
 #[gpui::test]
 fn tabs_open_activate_and_close(cx: &mut TestAppContext) {
@@ -354,24 +354,44 @@ fn outline_groups_start_collapsed(cx: &mut TestAppContext) {
                 .collect()
         })
     };
-    let toggle = |cx: &mut TestAppContext, title: &str| {
-        app.update(cx, |ws, _, cx| {
-            let rows = outline::layout(&ws.outline, &ws.outline_fold);
-            let row = rows
-                .into_iter()
-                .find(|r| ws.outline[r.index].item.title == title)
-                .unwrap();
-            ws.outline_fold.toggle(row.group.unwrap());
-            cx.notify();
-        })
+    let click = |cx: &mut TestAppContext, selector: &'static str| {
+        let mut vcx = VisualTestContext::from_window(app.window.into(), cx);
+        let bounds = vcx.debug_bounds(selector).expect(selector);
+        vcx.simulate_click(bounds.center(), Modifiers::none());
     };
     app.draw(cx);
     assert_eq!(visible(cx), ["Introduction", "Methods", "Results"]);
-    toggle(cx, "Results");
-    app.draw(cx);
+    // The arrow opens the group without leaving the cursor's place.
+    click(cx, "outline-fold Results");
     assert_eq!(
         visible(cx),
         ["Introduction", "Methods", "Results", "Discussion"]
+    );
+    assert_eq!(
+        app.read(cx, |ws, cx| ws.buffers[ws.active]
+            .editor
+            .read(cx)
+            .cursor_position()
+            .line),
+        0
+    );
+    // The title jumps to the heading and leaves the group as it is.
+    click(cx, "outline Results");
+    assert_eq!(
+        visible(cx),
+        ["Introduction", "Methods", "Results", "Discussion"]
+    );
+    let results = app
+        .text(cx, &main)
+        .lines()
+        .position(|l| l == "\\section{Results}");
+    assert_eq!(
+        app.read(cx, |ws, cx| ws.buffers[ws.active]
+            .editor
+            .read(cx)
+            .cursor_position()
+            .line),
+        results.unwrap() as u32
     );
     // Re-indexing an edit keeps the open group open, and new groups closed.
     let at = app.text(cx, &main).find("\\section{Results}").unwrap();
