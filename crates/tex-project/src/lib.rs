@@ -393,15 +393,23 @@ pub fn find_root(file: &Path, text: &str) -> PathBuf {
                 continue;
             }
             let idx = Index::from_text(&src);
-            let includes_us = idx
-                .includes
-                .iter()
-                .any(|i| i.kind == IncludeKind::Tex && resolve_tex(d, &i.path) == normalize(file));
+            let includes_us = idx.includes.iter().any(|i| match i.kind {
+                IncludeKind::Tex => resolve_tex(d, &i.path) == normalize(file),
+                IncludeKind::Bib => resolve_bib(d, &i.path) == normalize(file),
+                IncludeKind::Graphics => false,
+            });
             if includes_us {
                 return p;
             }
         }
         candidate_dir = d.parent();
+    }
+    // Not a LaTeX source (a `.bib` no document names, a package, notes): the folder's
+    // document, which a build of the file itself would not be.
+    if file.extension().is_none_or(|e| e != "tex")
+        && let Some(main) = main_file::main_files(dir).into_iter().next()
+    {
+        return main;
     }
     file.to_path_buf()
 }
@@ -741,6 +749,33 @@ mod tests {
         ]);
         let ch = dir.path().join("a/b/c/ch.tex");
         assert_eq!(find_root(&ch, ""), ch);
+    }
+
+    #[test]
+    fn other_files_belong_to_the_folders_document() {
+        let dir = project(&[
+            (
+                "main.tex",
+                "\\documentclass{article}\\bibliography{bib/refs,other}",
+            ),
+            ("bib/refs.bib", "@book{a,}"),
+            ("other.bib", "@book{b,}"),
+            ("unused.bib", "@book{c,}"),
+            ("notes.txt", "to do"),
+            ("ch.tex", "\\section{x}"),
+        ]);
+        let main = normalize(&dir.path().join("main.tex"));
+        for name in ["bib/refs.bib", "other.bib", "unused.bib", "notes.txt"] {
+            let file = normalize(&dir.path().join(name));
+            assert_eq!(find_root(&file, ""), main, "{name}");
+        }
+        // A part no document includes is a document of its own (it may be on its way).
+        let ch = normalize(&dir.path().join("ch.tex"));
+        assert_eq!(find_root(&ch, "\\section{x}"), ch);
+        // With no document around, the file itself.
+        let alone = project(&[("refs.bib", "")]);
+        let bib = alone.path().join("refs.bib");
+        assert_eq!(find_root(&bib, ""), bib);
     }
 
     #[test]

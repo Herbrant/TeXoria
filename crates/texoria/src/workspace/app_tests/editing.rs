@@ -117,9 +117,12 @@ fn a_project_reopens_its_tabs(cx: &mut TestAppContext) {
     // The root's tab was closed: it stays closed.
     assert_eq!(tabs.0, [methods.clone(), bib.clone()]);
     assert_eq!(tabs.1, methods);
-    // A file of it opened: that file.
+    // A file of it opened: that file, in its project (not a document of its own).
     let (_, ws) = testing::open(cx, Some(bib.clone()), startup());
-    let active = ws.read_with(cx, |ws, _| ws.buffers[ws.active].path.clone());
+    let (root, active) = ws.read_with(cx, |ws, _| {
+        (ws.root.clone(), ws.buffers[ws.active].path.clone())
+    });
+    assert_eq!(root, Some(main));
     assert_eq!(active, bib);
 }
 

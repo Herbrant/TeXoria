@@ -62,8 +62,11 @@ it, in order, from:
 1. a `% !TeX root = ../main.tex` comment in the first 20 lines of the file;
 2. the file itself, if it has a `\documentclass`;
 3. a `.tex` file with a `\documentclass` in the same directory or up to two levels above it,
-   that includes the file through `\input` or `\include`;
-4. otherwise, the file itself.
+   that includes the file through `\input` or `\include` (or, for a `.bib` file,
+   `\bibliography` or `\addbibresource`);
+4. for a file that is not a `.tex` one (a `.bib` file, a package, notes), the document of its
+   folder;
+5. otherwise, the file itself.
 
 ## Where the PDF goes
 
