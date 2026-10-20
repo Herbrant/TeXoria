@@ -89,7 +89,8 @@ Vim's keys. The status bar shows the mode (`-- NORMAL --`, `-- INSERT --`, `-- V
 Yanks also go to the system clipboard, and `p` pastes what you copied elsewhere since. ⌘
 shortcuts keep working in every mode; of the Ctrl ones, Vim takes only Ctrl-R, Ctrl-D, Ctrl-U,
 Ctrl-[ and Ctrl-C (so on Windows and Linux, build with the *Build* button or menu while in
-normal mode).
+normal mode). Characters your keyboard types with Option (`~ { } [ ]` on an Italian
+Mac) work as Vim commands.
 
 ## Outline
 

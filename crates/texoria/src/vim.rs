@@ -58,7 +58,10 @@ pub fn key_of(k: &Keystroke, mode: Mode) -> Option<Key> {
         return named;
     }
     if m.alt {
-        return None;
+        // Option types some of Vim's characters on many layouts (`~`, `[`, `{`, `@` on an
+        // Italian keyboard). The others stay the app's (⌥Z) or type nothing Vim knows.
+        return single_char(k)
+            .filter(|key| matches!(key, Key::Char(c) if c.is_ascii_punctuation()));
     }
     single_char(k)
 }
@@ -239,8 +242,26 @@ mod tests {
             ..Keystroke::parse("shift-a").unwrap()
         };
         assert_eq!(key_of(&shift_a, Mode::Normal), Some(Key::Char('A')));
-        // Alt combinations type characters on some layouts: not Vim commands.
+        // Alt combinations type characters on some layouts: Vim's if it has a command for
+        // them (Option-5 is `~` on an Italian keyboard), else the app's (⌥Z, Ω on a US one).
         assert_eq!(key("alt-x", Mode::Normal), None);
+        let typed = |keys: &str, typed: &str| Keystroke {
+            key_char: Some(typed.into()),
+            ..Keystroke::parse(keys).unwrap()
+        };
+        assert_eq!(
+            key_of(&typed("alt-5", "~"), Mode::Normal),
+            Some(Key::Char('~'))
+        );
+        assert_eq!(
+            key_of(&typed("shift-alt-è", "{"), Mode::Visual),
+            Some(Key::Char('{'))
+        );
+        assert_eq!(key_of(&typed("alt-z", "Ω"), Mode::Normal), None);
+        assert_eq!(
+            key_of(&typed("alt-ò", "@"), Mode::Insert),
+            Some(Key::Char('@'))
+        );
         let space = Keystroke {
             key_char: Some(" ".into()),
             ..Keystroke::parse("space").unwrap()
