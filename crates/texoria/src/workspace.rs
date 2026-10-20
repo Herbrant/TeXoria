@@ -2546,6 +2546,30 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Run `f` on the PDF's pane in the window that shows it (its fields
+    /// belong there), and bring that window forward.
+    fn in_pdf_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut PdfPane, &mut Window, &mut Context<PdfPane>),
+    ) {
+        if !self.preview_detached {
+            return self.pdf.update(cx, |p, cx| f(p, window, cx));
+        }
+        // Not open yet, or closing.
+        let Some(handle) = self.preview_window else {
+            return;
+        };
+        let pdf = self.pdf.clone();
+        handle
+            .update(cx, |_, window, cx| {
+                window.activate_window();
+                pdf.update(cx, |p, cx| f(p, window, cx))
+            })
+            .ok();
+    }
+
     /// Name the PDF's window after the root file.
     fn name_preview_window(&mut self, cx: &mut Context<Self>) {
         let (Some(handle), Some(view)) = (self.preview_window, self.preview_view.upgrade()) else {
@@ -5244,7 +5268,7 @@ impl Render for Workspace {
             }))
             .on_action(
                 cx.listener(|this, _: &crate::pdf_pane::FindInPdf, window, cx| {
-                    this.pdf.update(cx, |p, cx| p.open_find(window, cx))
+                    this.in_pdf_window(window, cx, PdfPane::open_find)
                 }),
             )
             .on_action(cx.listener(|this, _: &TogglePreviewWindow, window, cx| {
@@ -5255,7 +5279,7 @@ impl Render for Workspace {
             )
             .on_action(
                 cx.listener(|this, _: &crate::pdf_pane::GoToPage, window, cx| {
-                    this.pdf.update(cx, |p, cx| p.prompt_page(window, cx))
+                    this.in_pdf_window(window, cx, PdfPane::prompt_page)
                 }),
             )
             .on_action(cx.listener(|this, _: &ZoomToFit, _, cx| {

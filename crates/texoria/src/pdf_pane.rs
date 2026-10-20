@@ -73,6 +73,21 @@ struct Shown {
     image: Arc<RenderImage>,
 }
 
+/// A place in the document: a page, and how far down it (its height being 1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Place {
+    page: usize,
+    down: f32,
+}
+
+/// A place kept while the pane moves to another window, and how far the
+/// pane was last scrolled to show it.
+#[derive(Debug, Clone, Copy)]
+struct KeptPlace {
+    place: Place,
+    at: Option<Pixels>,
+}
+
 /// Text selected by dragging on a page, between two points (PDF points).
 struct Selection {
     page: usize,
@@ -149,6 +164,11 @@ pub struct PdfPane {
     selection: Option<Selection>,
     /// Shown in a window of its own rather than next to the editor.
     detached: bool,
+    /// Where the top of the viewport was before moving to another window,
+    /// scrolled to again whenever the viewport changes (the new window's
+    /// size comes in a few frames, and its width changes the zoom) until
+    /// the reader scrolls.
+    keep_place: Option<KeptPlace>,
     /// Snapshots and texts asked for by the agents' tools.
     snapshots: HashMap<u64, smol::channel::Sender<Option<Bitmap>>>,
     texts_wanted: HashMap<u64, smol::channel::Sender<Option<String>>>,
@@ -225,6 +245,7 @@ impl PdfPane {
             asked_text: HashSet::new(),
             selection: None,
             detached: false,
+            keep_place: None,
             snapshots: HashMap::new(),
             texts_wanted: HashMap::new(),
             query_seq: 0,
@@ -960,11 +981,27 @@ impl PdfPane {
         self.detached
     }
 
+    #[cfg(test)]
+    pub(crate) fn zoom(&self) -> f32 {
+        self.zoom_factor()
+    }
+
+    /// The find bar's field, if it is open.
+    #[cfg(test)]
+    pub(crate) fn find_input(&self) -> Option<Entity<InputState>> {
+        self.find.as_ref().map(|f| f.input.clone())
+    }
+
     /// Get ready to be drawn in another window. Returns the bitmaps drawn so
     /// far, for the old window to free (the new one uploads them again); the
     /// find bar and the page field close, since their fields belong to the
-    /// old window.
+    /// old window, and the reader's place is kept for the new one's layout.
     pub fn leave_window(&mut self, cx: &mut Context<Self>) -> Vec<Arc<RenderImage>> {
+        // Not laid out since the last move: the place is still the one kept.
+        if self.viewport.width > px(0.) {
+            self.keep_place = (self.geometry().place_at(-self.scroll.offset().y))
+                .map(|place| KeptPlace { place, at: None });
+        }
         self.find = None;
         self.page_input = None;
         self._page_input = None;
@@ -1115,7 +1152,8 @@ impl Render for PdfPane {
 
         // The viewport is only known after layout; re-render once it changes.
         let bounds = self.scroll.bounds().size;
-        if bounds != self.viewport && bounds.width > px(0.) {
+        let resized = bounds != self.viewport && bounds.width > px(0.);
+        if resized {
             self.viewport = bounds;
             self.last_request.clear();
             window.request_animation_frame();
@@ -1162,6 +1200,26 @@ impl Render for PdfPane {
         self.scale_factor = window.scale_factor();
         let zoom = self.zoom_factor();
         let (rects, content) = self.layout(zoom);
+
+        // In a new window, back to where the reader was, as its size comes
+        // in. Scrolling (or anything else moving the pages) ends it.
+        if let Some(kept) = self.keep_place {
+            let offset = self.scroll.offset();
+            if self.pending_scroll.is_some() || kept.at.is_some_and(|y| y != offset.y) {
+                self.keep_place = None;
+            } else if self.viewport.width > px(0.)
+                && (resized || kept.at.is_none())
+                && let Some(top) = self.geometry().top_of(kept.place)
+            {
+                let max_y = (content.height - self.viewport.height).max(px(0.));
+                let y = -top.clamp(px(0.), max_y);
+                self.keep_place = Some(KeptPlace {
+                    at: Some(y),
+                    ..kept
+                });
+                self.pending_scroll = Some(point(offset.x, y));
+            }
+        }
 
         if let Some(offset) = self.pending_scroll.take() {
             let max_x = (content.width - self.viewport.width).max(px(0.));
@@ -1431,6 +1489,25 @@ impl Geometry<'_> {
             })
             .collect();
         (rects, size(px(content_w), px(y - GAP + MARGIN)))
+    }
+
+    /// The place `top` pixels down the content.
+    fn place_at(&self, top: Pixels) -> Option<Place> {
+        let (rects, _) = self.layout(self.zoom_factor());
+        let page = rects
+            .iter()
+            .position(|r| r.bottom() + px(GAP) > top)
+            .unwrap_or(rects.len().checked_sub(1)?);
+        let r = rects[page];
+        let down = f32::from(top - r.origin.y) / f32::from(r.size.height).max(1.0);
+        Some(Place { page, down })
+    }
+
+    /// How many pixels down the content `place` is.
+    fn top_of(&self, place: Place) -> Option<Pixels> {
+        let (rects, _) = self.layout(self.zoom_factor());
+        let r = rects.get(place.page)?;
+        Some(r.origin.y + r.size.height * place.down)
     }
 
     /// The page in the middle of the viewport (0-based), scrolled `top` down.

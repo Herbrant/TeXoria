@@ -131,3 +131,31 @@ fn the_pdfs_window_closes_with_the_main_one(cx: &mut TestAppContext) {
     // Where the PDF's window was is kept for next time.
     assert!(app.read(cx, |ws, _| ws.settings.preview_window.is_some()));
 }
+
+#[gpui::test]
+fn the_pdfs_window_zooms_and_finds(cx: &mut TestAppContext) {
+    let app = Open::sample(cx, quiet());
+    app.dispatch(cx, crate::TogglePreviewWindow);
+    let preview = app.preview(cx).expect("the PDF's window");
+    let pane = app.read(cx, |ws, _| ws.pdf.clone());
+
+    // ⌘= there zooms the PDF (the workspace does).
+    let zoom = pane.read_with(cx, |p, _| p.zoom());
+    dispatch_in(cx, preview, crate::ZoomIn);
+    assert!(pane.read_with(cx, |p, _| p.zoom()) > zoom);
+
+    // Find in PDF… from the editor's window: the find bar has the focus in the PDF's.
+    app.dispatch(cx, crate::pdf_pane::FindInPdf);
+    let input = pane
+        .read_with(cx, |p, _| p.find_input())
+        .expect("the find bar");
+    let focus = cx.read(|cx| input.focus_handle(cx));
+    let focused_in = |window: AnyWindowHandle, cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, _| focus.is_focused(window))
+            .unwrap()
+    };
+    assert!(focused_in(preview.into(), cx));
+    assert!(!focused_in(app.window.into(), cx));
+    let active = cx.update(|cx| cx.active_window());
+    assert_eq!(active, Some(AnyWindowHandle::from(preview)));
+}

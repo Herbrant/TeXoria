@@ -13,7 +13,7 @@ use crate::settings::{WindowPlacement, WindowState};
 use crate::workspace::Workspace;
 use crate::{
     Build, CancelBuild, CloseTab, ExportPdf, ForwardSearch, OpenSettings, Save, ToggleLivePreview,
-    TogglePreviewWindow, ToggleTheme,
+    TogglePreviewWindow, ToggleTheme, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 /// The size the window opens at the first time.
@@ -112,6 +112,10 @@ impl Render for PreviewWindow {
             .on_action(self.forward::<OpenSettings>())
             .on_action(self.forward::<ToggleTheme>())
             .on_action(self.forward::<TogglePreviewWindow>())
+            // The workspace zooms the PDF (⌘= / ⌘- / ⌘0 in the pane, the View menu).
+            .on_action(self.forward::<ZoomIn>())
+            .on_action(self.forward::<ZoomOut>())
+            .on_action(self.forward::<ZoomToFit>())
             // ⌘W closes this window: the PDF goes back to the main one.
             .on_action({
                 let toggle = self.forward::<TogglePreviewWindow>();

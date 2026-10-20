@@ -246,8 +246,10 @@ texoria ─┬─ tex-compile ── tex-log
     (selection) and search hits are `pdf_view::Query`s answered on the worker, per document
     generation. `preview_window.rs` is the PDF's own window (`TogglePreviewWindow`): the same
     `PdfPane` entity moves there (`PdfPane::leave_window` hands back the bitmaps for the old
-    window to free from its atlas), and it passes the main window's actions on through the
-    workspace's focus handle. Its placement (display UUID, bounds, full screen) is kept in
+    window to free from its atlas, and keeps the reader's place for the new layout), and it
+    passes the main window's actions on through the workspace's focus handle. The workspace's
+    PDF actions that open a field (find, go to page) run in the window showing the pane
+    (`Workspace::in_pdf_window`). Its placement (display UUID, bounds, full screen) is kept in
     `Settings::preview_window`. Never read the `Workspace` while another window draws: GPUI
     then binds the entity to that window, and its `subscribe_in` callbacks run there.
   - `agent_panel.rs` is the Agent sidebar (alternates with the outline). Agents only start in

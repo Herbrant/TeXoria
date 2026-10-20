@@ -97,6 +97,40 @@ fn pages_are_stacked_and_centered() {
 }
 
 #[test]
+fn a_place_is_found_again_at_another_width() {
+    let pages = [page(600.0, 800.0), page(600.0, 800.0), page(600.0, 800.0)];
+    let g = |width| Geometry {
+        pages: &pages,
+        viewport: viewport(width, 500.0),
+        zoom: Zoom::FitWidth,
+        scale_factor: 2.0,
+    };
+    let (narrow, wide) = (g(656.0), g(1256.0));
+    // A third down the second page.
+    let (rects, _) = narrow.layout(narrow.zoom_factor());
+    let top = rects[1].origin.y + rects[1].size.height / 3.0;
+    let place = narrow.place_at(top).unwrap();
+    assert_eq!(place.page, 1);
+    assert!((place.down - 1.0 / 3.0).abs() < 1e-4, "{place:?}");
+    // Twice as wide, the pages are twice as tall: the same place is further down.
+    let there = wide.top_of(place).unwrap();
+    let (rects, _) = wide.layout(wide.zoom_factor());
+    assert!((f32::from(there - rects[1].origin.y) - 1600.0 / 3.0).abs() < 0.1);
+    let back = wide.place_at(there).unwrap();
+    assert_eq!(back.page, 1);
+    assert!((back.down - place.down).abs() < 1e-4, "{back:?}");
+    // The margin above the first page is above it; past the last, on the last.
+    assert!(narrow.place_at(px(0.)).unwrap().down < 0.0);
+    assert_eq!(narrow.place_at(px(100_000.)).unwrap().page, 2);
+    assert_eq!(narrow.top_of(Place { page: 7, down: 0.0 }), None);
+    let none = Geometry {
+        pages: &[],
+        ..g(656.0)
+    };
+    assert_eq!(none.place_at(px(0.)), None);
+}
+
+#[test]
 fn pages_rendered_and_kept() {
     assert_eq!(render_order(&[3, 4], 10), [3, 4, 2, 5]);
     assert_eq!(render_order(&[0], 1), [0]);
@@ -814,4 +848,51 @@ fn leaves_its_window_with_the_bitmaps_drawn_there(cx: &mut TestAppContext) {
         pane.read_with(cx, |p, _| p.viewport.width > px(0.))
     });
     pane.read_with(cx, |p, _| assert!(p.is_detached()));
+}
+
+#[gpui::test]
+fn keeps_the_reading_place_in_a_wider_window(cx: &mut TestAppContext) {
+    let Some((window, pane)) = loaded(cx) else {
+        return;
+    };
+    update(cx, window, &pane, |p, _, cx| p.go_to(1, Some(300.0), cx));
+    wait(cx, window, &pane, "the second page", |cx| {
+        pane.read_with(cx, |p, _| p.scroll.offset().y < px(0.))
+    });
+    let (place, width) = pane.read_with(cx, |p, _| {
+        let place = p.geometry().place_at(-p.scroll.offset().y).unwrap();
+        (place, p.viewport.width)
+    });
+    assert_eq!(place.page, 1);
+
+    // Moved to a window twice as wide: the pages are taller, the reader is still there.
+    update(cx, window, &pane, |p, window, cx| {
+        for image in p.leave_window(cx) {
+            let _ = window.drop_image(image);
+        }
+    });
+    let bounds = cx
+        .update_window(window, |_, window, _| window.bounds().size)
+        .unwrap();
+    cx.simulate_window_resize(window, size(bounds.width * 2.0, bounds.height));
+    wait(cx, window, &pane, "the wider layout", |cx| {
+        pane.read_with(cx, |p, _| {
+            p.viewport.width > width * 1.5 && p.pending_scroll.is_none()
+        })
+    });
+    pane.read_with(cx, |p, _| {
+        let now = p.geometry().place_at(-p.scroll.offset().y).unwrap();
+        assert_eq!(now.page, place.page);
+        assert!((now.down - place.down).abs() < 0.01, "{now:?} {place:?}");
+    });
+    // Until the reader scrolls.
+    assert!(pane.read_with(cx, |p, _| p.keep_place.is_some()));
+    pane.update(cx, |p, cx| {
+        p.scroll.set_offset(point(px(0.), px(-10.)));
+        cx.notify();
+    });
+    wait(cx, window, &pane, "the place let go", |cx| {
+        pane.read_with(cx, |p, _| p.keep_place.is_none())
+    });
+    pane.read_with(cx, |p, _| assert_eq!(p.scroll.offset().y, px(-10.)));
 }
