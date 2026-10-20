@@ -82,6 +82,7 @@ pub fn recognize(prose: &str, region: Option<&str>) -> Option<&'static str> {
 
 /// What a file says about its language and what the project's root file says
 /// (`root` is `None` for a root file).
+#[derive(Clone, Copy)]
 pub struct Clues<'a> {
     pub text: &'a str,
     pub index: Option<&'a Index>,
@@ -89,13 +90,16 @@ pub struct Clues<'a> {
     pub root_index: Option<&'a Index>,
     /// The file's prose (see [`crate::extract::prose`]).
     pub prose: &'a str,
+    /// The root's prose, for a file with too little of its own (a short chapter).
+    pub root_prose: &'a str,
     /// The system locale's region, for regional variants.
     pub region: Option<&'a str>,
     pub fallback: &'static str,
 }
 
 /// Magic comment (the file's, then the root's), then babel/polyglossia (the
-/// root's, then the file's), then the text, then the fallback.
+/// root's, then the file's), then the text (the file's, then the root's), then the
+/// fallback.
 pub fn detect(c: &Clues) -> Detection {
     let found = |code: Option<&'static str>, source| code.map(|code| Detection { code, source });
     found(magic_comment(c.text), Source::Magic)
@@ -103,6 +107,7 @@ pub fn detect(c: &Clues) -> Detection {
         .or_else(|| found(c.root_index.and_then(declared), Source::Package))
         .or_else(|| found(c.index.and_then(declared), Source::Package))
         .or_else(|| found(recognize(c.prose, c.region), Source::Text))
+        .or_else(|| found(recognize(c.root_prose, c.region), Source::Text))
         .unwrap_or(Detection {
             code: c.fallback,
             source: Source::Fallback,
@@ -175,6 +180,7 @@ mod tests {
             root_text: None,
             root_index: None,
             prose,
+            root_prose: "",
             region: None,
             fallback: "en",
         }
@@ -230,6 +236,18 @@ mod tests {
 
         let d = detect(&clues("", "troppo corto"));
         assert_eq!((d.code, d.source), ("en", Source::Fallback));
+
+        // A short chapter: the language of the document it is part of.
+        let d = detect(&Clues {
+            root_prose: ITALIAN,
+            ..clues("", "Methods")
+        });
+        assert_eq!((d.code, d.source), ("it", Source::Text));
+        let d = detect(&Clues {
+            root_prose: ITALIAN,
+            ..clues("", GERMAN)
+        });
+        assert_eq!((d.code, d.source), ("de", Source::Text));
 
         let root = Index::from_text("\\usepackage[french]{babel}");
         let d = detect(&Clues {

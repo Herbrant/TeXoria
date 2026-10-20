@@ -217,6 +217,7 @@ pub fn analyze(job: Job) -> Analysis {
         root_text: root_text.as_deref(),
         root_index: job.root_index.as_ref(),
         prose: "",
+        root_prose: "",
         region: job.region.as_deref(),
         fallback: job.fallback,
     };
@@ -227,10 +228,24 @@ pub fn analyze(job: Job) -> Analysis {
         (Source::Fallback, Some(prev)) if prev.source == Source::Text => prev,
         (Source::Fallback, _) => {
             let prose = extract::prose(&job.text, &words);
-            lang::detect(&Clues {
+            let found = lang::detect(&Clues {
                 prose: &prose,
                 ..clues
-            })
+            });
+            match root_text.as_deref() {
+                // Too little text of its own (a short chapter): the document's.
+                Some(root) if found.source == Source::Fallback => {
+                    let root_prose = tex_syntax::parse(root, None)
+                        .map(|tree| extract::prose(root, &extract::words(&tree, root)))
+                        .unwrap_or_default();
+                    lang::detect(&Clues {
+                        prose: &prose,
+                        root_prose: &root_prose,
+                        ..clues
+                    })
+                }
+                _ => found,
+            }
         }
         _ => declared,
     };

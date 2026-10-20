@@ -166,7 +166,7 @@ Each file's language is detected automatically from, in order:
    % !TeX spellcheck = en_GB
    ```
 2. `babel` or `polyglossia` options in the root file;
-3. the text itself;
+3. the text itself (for a file with too little text, like a short chapter, the root file's);
 4. the system language.
 
 The language is shown in the status bar: click it to choose another one, go back to automatic

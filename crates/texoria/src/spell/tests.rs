@@ -77,6 +77,30 @@ fn honors_the_users_choice_and_the_root_file() {
 }
 
 #[test]
+fn a_short_chapter_takes_the_documents_language() {
+    // The sample's chapter: too little text to tell its language, on a machine set to
+    // another one than the document's.
+    let chapter = "\\section{Methods}\nWe work in $\\R^n$ with the usual norm.\n";
+    let root =
+        format!("\\documentclass{{article}}\n\\begin{{document}}\n{ITALIAN}\n\\end{{document}}\n");
+    let a = analyze(Job {
+        root_text: Some(root),
+        fallback: "de",
+        ..job(chapter)
+    });
+    assert_eq!((a.language.code, a.language.source), ("it", Source::Text));
+    // Without a document to go by, the fallback.
+    let a = analyze(Job {
+        fallback: "de",
+        ..job(chapter)
+    });
+    assert_eq!(
+        (a.language.code, a.language.source),
+        ("de", Source::Fallback)
+    );
+}
+
+#[test]
 fn regions_of_locales() {
     assert_eq!(region_of("en-GB").as_deref(), Some("GB"));
     assert_eq!(region_of("pt-br").as_deref(), Some("BR"));
