@@ -211,6 +211,9 @@ pub struct Workspace {
     _checks: Task<()>,
     _count: Task<()>,
     _reindex: Task<()>,
+    /// A re-index is parsing in the background; another was asked for meanwhile.
+    reindexing: bool,
+    reindex_again: bool,
     _update_checks: Task<()>,
     _compile_events: Task<()>,
     _tool_calls: Task<()>,
@@ -444,6 +447,8 @@ impl Workspace {
             _checks: Task::ready(()),
             _count: Task::ready(()),
             _reindex: Task::ready(()),
+            reindexing: false,
+            reindex_again: false,
             _update_checks: Task::ready(()),
             _compile_events: Task::ready(()),
             _tool_calls: tool_task,
@@ -779,6 +784,7 @@ impl Workspace {
             self.root = Some(root.clone());
             *self.project.write().unwrap() = Project::open(&root);
             self._reindex = Task::ready(());
+            (self.reindexing, self.reindex_again) = (false, false);
             for b in &mut self.buffers {
                 b.indexed = None;
             }
@@ -1092,7 +1098,13 @@ impl Workspace {
     /// Re-index open buffers so outline and completions follow unsaved edits. Only the
     /// buffers whose text changed since are parsed again, in the background (a big file
     /// takes a tenth of a second), and the project is locked only to take the results.
+    /// One re-index runs at a time: those asked for meanwhile make one more once it ends
+    /// (a parse cannot be stopped, and two at once would hold two trees of the same file).
     fn reindex(&mut self, cx: &mut Context<Self>) {
+        if self.reindexing {
+            self.reindex_again = true;
+            return;
+        }
         let mut texts = Vec::new();
         let mut jobs = Vec::new();
         {
@@ -1112,7 +1124,7 @@ impl Workspace {
             return;
         }
         let cache = self.count_cache.clone();
-        // A newer re-index replaces this one: buffers it did not mark indexed are in it.
+        self.reindexing = true;
         self._reindex = cx.spawn(async move |this, cx| {
             let parsed = cx
                 .background_spawn(async move {
@@ -1152,7 +1164,11 @@ impl Workspace {
                         }
                     }
                 }
+                this.reindexing = false;
                 this.reindexed(texts, cx);
+                if std::mem::take(&mut this.reindex_again) {
+                    this.reindex(cx);
+                }
             })
             .ok();
         });

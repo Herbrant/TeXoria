@@ -214,17 +214,30 @@ fn reindexing_parses_only_the_buffers_that_changed(cx: &mut TestAppContext) {
         // An index that main.tex's text would not give: kept while main.tex is unchanged.
         let tampered = "\\section{Tampered}\n\\input{chapters/methods}\n";
         ws.project.write().unwrap().update(&main, tampered);
-        let b = ws.buffers.iter().find(|b| b.path == methods).unwrap();
-        b.editor.update(cx, |state, cx| {
-            state.set_selected_range(0..0, cx);
-            state.insert("\\section{Added}\n".to_string(), window, cx);
-        });
+        let editor = ws
+            .buffers
+            .iter()
+            .find(|b| b.path == methods)
+            .unwrap()
+            .editor
+            .clone();
+        let type_section = |title: &str, window: &mut Window, cx: &mut Context<Workspace>| {
+            editor.update(cx, |state, cx| {
+                state.set_selected_range(0..0, cx);
+                state.insert(format!("\\section{{{title}}}\n"), window, cx);
+            });
+        };
+        type_section("Added", window, cx);
         ws.reindex(cx);
+        // Asked for during a parse: one more follows it.
+        type_section("Again", window, cx);
+        ws.reindex(cx);
+        assert!(ws.reindexing && ws.reindex_again);
     });
     // Parsed in the background.
     assert!(!has(cx, "Added"));
     cx.run_until_parked();
-    assert!(has(cx, "Added") && has(cx, "Tampered"));
+    assert!(has(cx, "Added") && has(cx, "Again") && has(cx, "Tampered"));
 
     with(cx, window, &workspace, |ws, _, cx| ws.reindex_all(cx));
     cx.run_until_parked();
