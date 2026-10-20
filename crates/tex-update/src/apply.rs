@@ -250,11 +250,14 @@ fn encode_command(script: &str) -> String {
 }
 
 /// Attempts after the first to mount the disk image.
-const ATTACH_RETRIES: usize = 2;
+const ATTACH_RETRIES: usize = 3;
 
 /// Copy the app out of the disk image, check its signature, and swap it in.
 fn install_mac(dmg: &Path, bundle: &Path, staging: &Path) -> Result<()> {
     let mnt = tempfile::tempdir()?;
+    // Absolute, as `hdiutil info` names it.
+    let image = std::path::absolute(dmg)?;
+    // Not `-quiet`, which also silences the reason of a failure (stdout is not shown).
     let attach = || {
         run(Command::new("hdiutil")
             .args([
@@ -262,20 +265,25 @@ fn install_mac(dmg: &Path, bundle: &Path, staging: &Path) -> Result<()> {
                 "-nobrowse",
                 "-readonly",
                 "-noautoopen",
-                "-quiet",
                 "-mountpoint",
             ])
             .arg(mnt.path())
-            .arg(dmg))
+            .arg(&image))
     };
-    // hdiutil fails now and then while the system is busy with another image.
+    // hdiutil fails now and then while the system is busy with another image ("Resource
+    // temporarily unavailable"), and may leave the image attached but not mounted: until that
+    // is detached, attaching the image again fails the same way.
     let mut attached = attach();
     for _ in 0..ATTACH_RETRIES {
         if attached.is_ok() {
             break;
         }
+        detach_image(&image);
         std::thread::sleep(std::time::Duration::from_secs(1));
         attached = attach();
+    }
+    if attached.is_err() {
+        detach_image(&image);
     }
     attached?;
     let new = staging.join("TeXoria.app");
@@ -302,6 +310,53 @@ fn install_mac(dmg: &Path, bundle: &Path, staging: &Path) -> Result<()> {
         .arg(&new)
         .output();
     swap(bundle, &new, &staging.join("old.app"))
+}
+
+/// Detach what a failed `hdiutil attach` left of `image` (attached, not mounted).
+fn detach_image(image: &Path) {
+    let Ok(out) = Command::new("hdiutil")
+        .arg("info")
+        .stdin(Stdio::null())
+        .output()
+    else {
+        return;
+    };
+    let info = String::from_utf8_lossy(&out.stdout);
+    // Named as it was given, or resolved (`/private/tmp` for `/tmp`) when given relative.
+    let mut devices = image_devices(&info, image);
+    if let Ok(resolved) = fs::canonicalize(image)
+        && resolved != image
+    {
+        devices.extend(image_devices(&info, &resolved));
+    }
+    for device in devices {
+        // Its slices and synthesized disks go with it.
+        let _ = run(Command::new("hdiutil")
+            .args(["detach", "-quiet", "-force"])
+            .arg(device));
+    }
+}
+
+/// The whole disks (`/dev/disk7`, not `/dev/disk7s1`) that `hdiutil info` lists for `image`.
+fn image_devices(info: &str, image: &Path) -> Vec<String> {
+    let mut devices = Vec::new();
+    let mut ours = false;
+    for line in info.lines() {
+        if let Some(rest) = line.strip_prefix("image-path") {
+            let path = rest.trim_start().strip_prefix(':').map(str::trim);
+            ours = path.is_some_and(|p| Path::new(p) == image);
+        } else if line.starts_with("====") {
+            ours = false;
+        } else if ours
+            && let Some(device) = line.split_whitespace().next()
+            && device
+                .strip_prefix("/dev/disk")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        {
+            devices.push(device.to_string());
+        }
+    }
+    devices
 }
 
 /// Replace `target` with the downloaded `file` (an AppImage).
@@ -805,6 +860,31 @@ mod tests {
         let err = replace_file(&file, &dir.path().join("gone/TeXoria.AppImage")).unwrap_err();
         assert!(format!("{err:#}").contains("replacing"), "{err:#}");
         assert!(replace_file(&dir.path().join("missing"), &file).is_err());
+    }
+
+    #[test]
+    fn devices_of_an_image() {
+        let info = "framework       : 671.0.2
+driver          : 671.0.2
+================================================
+image-path      : /private/tmp/u/texoria.dmg
+image-alias     : /private/tmp/u/texoria.dmg
+image-type      : UDIF read-only [write once]
+process ID      : 62463
+/dev/disk7\tGUID_partition_scheme\t
+/dev/disk7s1\t7C3457EF-0000-11AA-AA11-00306543ECAC\t
+/dev/disk17\tEF57347C-0000-11AA-AA11-00306543ECAC\t
+/dev/disk17s1\t41504653-0000-11AA-AA11-00306543ECAC\t/private/tmp/m
+================================================
+image-path      : /private/tmp/u/other.dmg
+/dev/disk9\tGUID_partition_scheme\t
+";
+        let image = Path::new("/private/tmp/u/texoria.dmg");
+        assert_eq!(image_devices(info, image), ["/dev/disk7", "/dev/disk17"]);
+        let other = Path::new("/private/tmp/u/other.dmg");
+        assert_eq!(image_devices(info, other), ["/dev/disk9"]);
+        assert!(image_devices(info, Path::new("/private/tmp/u")).is_empty());
+        assert!(image_devices("", image).is_empty());
     }
 
     #[test]
