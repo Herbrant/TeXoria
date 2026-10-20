@@ -12,6 +12,8 @@ mod file_tree;
 mod git_panel;
 mod grammar;
 mod latex;
+#[cfg(target_os = "macos")]
+mod memory;
 mod outline;
 mod overleaf;
 mod paths;
@@ -35,6 +37,10 @@ use gpui_kit::*;
 
 use crate::settings::Settings;
 use crate::workspace::Workspace;
+
+#[cfg(target_os = "macos")]
+#[global_allocator]
+static ALLOCATOR: memory::Allocator = memory::Allocator;
 
 actions!(
     texoria,
