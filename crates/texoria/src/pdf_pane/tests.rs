@@ -137,10 +137,21 @@ fn pages_rendered_and_kept() {
     assert_eq!(render_order(&[0], 3), [0, 1]);
     assert!(render_order(&[], 3).is_empty());
 
-    let mut far = far_pages([0, 1, 5, 10, 17, 18].into_iter(), &[10, 11]);
-    far.sort();
-    assert_eq!(far, [0, 1, 18]);
-    assert!(far_pages([1, 2].into_iter(), &[]).is_empty());
+    let mb = |pages: &[usize]| pages.iter().map(|&p| (p, 1 << 20)).collect::<Vec<_>>();
+    let far = |shown: &[usize], visible: &[usize], budget: usize| {
+        let mut far = far_pages(mb(shown).into_iter(), visible, budget);
+        far.sort();
+        far
+    };
+    assert_eq!(
+        far(&[0, 1, 5, 10, 17, 18], &[10, 11], usize::MAX),
+        [0, 1, 18]
+    );
+    assert!(far(&[1, 2], &[], 0).is_empty());
+    // Over the budget, the farthest go first, but never those visible or about to be.
+    let shown = [4, 6, 8, 9, 10, 11, 12, 14];
+    assert_eq!(far(&shown, &[10, 11], 5 << 20), [4, 6, 14]);
+    assert_eq!(far(&shown, &[10, 11], 0), [4, 6, 8, 14]);
 }
 
 #[test]

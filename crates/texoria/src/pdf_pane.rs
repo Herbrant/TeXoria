@@ -32,6 +32,10 @@ const MAX_ZOOM: f32 = 6.0;
 /// Pages around the viewport kept rasterized (and their bitmaps retained).
 const RENDER_AHEAD: usize = 1;
 const KEEP_AROUND: usize = 6;
+/// At most this many bytes of bitmaps kept for the pages around (a page is 8 MB at 100% on a
+/// Retina display, and its bitmap is also in the GPU's memory). The pages visible and those
+/// rasterized ahead are kept whatever their size.
+const KEEP_BYTES: usize = 64 << 20;
 /// How long the scale must stay put (a live resize changes it on every frame)
 /// before the pages are rasterized at it.
 const SCALE_SETTLE: Duration = Duration::from_millis(150);
@@ -71,6 +75,8 @@ pub enum PdfPaneEvent {
 struct Shown {
     key: RenderKey,
     image: Arc<RenderImage>,
+    /// The bitmap's size in bytes.
+    bytes: usize,
 }
 
 /// A place in the document: a page, and how far down it (its height being 1).
@@ -352,8 +358,9 @@ impl PdfPane {
                 if !newer {
                     return;
                 }
+                let bytes = bitmap.bgra.len();
                 if let Some(image) = to_render_image(bitmap)
-                    && let Some(old) = self.shown.insert(key.page, Shown { key, image })
+                    && let Some(old) = self.shown.insert(key.page, Shown { key, image, bytes })
                 {
                     self.to_drop.push(old.image);
                 }
@@ -1056,7 +1063,8 @@ impl PdfPane {
     }
 
     fn evict_far_pages(&mut self, visible: &[usize]) {
-        for p in far_pages(self.shown.keys().copied(), visible) {
+        let shown = self.shown.iter().map(|(p, s)| (*p, s.bytes));
+        for p in far_pages(shown, visible, KEEP_BYTES) {
             if let Some(s) = self.shown.remove(&p) {
                 self.to_drop.push(s.image);
             }
@@ -1567,14 +1575,29 @@ fn render_order(visible: &[usize], pages: usize) -> Vec<usize> {
         .collect()
 }
 
-/// Of the pages `shown`, those too far from the `visible` ones to keep.
-fn far_pages(shown: impl Iterator<Item = usize>, visible: &[usize]) -> Vec<usize> {
+/// Of the pages `shown` (page, bytes of its bitmap), those to drop: too far from the
+/// `visible` ones, then the farthest while the others take more than `budget` bytes.
+fn far_pages(
+    shown: impl Iterator<Item = (usize, usize)>,
+    visible: &[usize],
+    budget: usize,
+) -> Vec<usize> {
     let (Some(&first), Some(&last)) = (visible.first(), visible.last()) else {
         return Vec::new();
     };
-    shown
-        .filter(|p| *p + KEEP_AROUND < first || *p > last + KEEP_AROUND)
-        .collect()
+    let distance = |p: usize| first.saturating_sub(p).max(p.saturating_sub(last));
+    let (mut far, mut kept): (Vec<_>, Vec<_>) =
+        shown.partition(|&(p, _)| distance(p) > KEEP_AROUND);
+    let mut total: usize = kept.iter().map(|&(_, bytes)| bytes).sum();
+    kept.sort_by_key(|&(p, _)| std::cmp::Reverse(distance(p)));
+    for &(p, bytes) in &kept {
+        if total <= budget || distance(p) <= RENDER_AHEAD {
+            break;
+        }
+        far.push((p, bytes));
+        total -= bytes;
+    }
+    far.into_iter().map(|(p, _)| p).collect()
 }
 
 /// The device pixels per point of pages shown at `zoom` on a display of
