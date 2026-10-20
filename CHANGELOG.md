@@ -3,6 +3,65 @@
 Notable changes to TeXoria, newest first. Each release's section is also its GitHub release notes
 (`scripts/release-notes.sh`), so every release must have one before it is tagged.
 
+## [0.6.0] - 2026-10-20
+
+### Added
+
+- **The PDF in a window of its own.** *View* → *PDF in Separate Window* (⇧⌘↵, or the window
+  button of the preview's toolbar) moves the preview to a second window, to put on another display
+  or make full screen, while the editor takes the whole main window. The zoom and the place in the
+  document stay; the main window's shortcuts (build, Show in PDF, save…) work from the PDF's
+  window, and the window reopens where it was last. ⇧⌘↵ again, or closing it, puts the PDF back.
+  ([7971e54](https://github.com/Herbrant/TeXoria/commit/7971e54), [7e3ff09](https://github.com/Herbrant/TeXoria/commit/7e3ff09))
+- *Show in PDF* in the editor's right-click menu. ([8e19088](https://github.com/Herbrant/TeXoria/commit/8e19088))
+- The outline groups each section's subsections under its heading, collapsed at first, so long
+  documents list only their top level; a button expands or collapses them all.
+  ([eacdb0e](https://github.com/Herbrant/TeXoria/commit/eacdb0e))
+- `.bib` files are syntax highlighted, in the editor and in diffs. ([d436158](https://github.com/Herbrant/TeXoria/commit/d436158))
+- *File* → *Open Folder…* (⇧⌘O), and a folder's document is found whatever its name: the one
+  opened last, else the most likely main file. ([6c43f21](https://github.com/Herbrant/TeXoria/commit/6c43f21))
+
+### Changed
+
+- The full-screen presentation of the PDF is replaced by its own window (see above).
+  ([7971e54](https://github.com/Herbrant/TeXoria/commit/7971e54))
+
+### Fixed
+
+- Unsaved edits are never written over a file that another program changed meanwhile (git in a
+  terminal, another editor, a sync service): TeXoria asks whether to keep your edits or load the
+  file from disk. ([ce6c634](https://github.com/Herbrant/TeXoria/commit/ce6c634))
+- Zooming the PDF in and out no longer leaves TeXoria using over a gigabyte of memory on macOS
+  (150 MB instead of 1.3 GB in our test), and a page at a high zoom takes half the memory while
+  it is drawn. ([80eadf5](https://github.com/Herbrant/TeXoria/commit/80eadf5), [cd1e752](https://github.com/Herbrant/TeXoria/commit/cd1e752))
+- Clicking in the *Find in PDF* or page number field let it take text again (the page field
+  closed). ([1005a00](https://github.com/Herbrant/TeXoria/commit/1005a00))
+- Opening a `.bib` file, or any file that is not a `.tex` one, opens it in its project instead of
+  building it as a document of its own. ([eff16f0](https://github.com/Herbrant/TeXoria/commit/eff16f0))
+- A path that does not exist, on the command line or in the recent projects, is reported instead
+  of being opened and built. ([8acfb99](https://github.com/Herbrant/TeXoria/commit/8acfb99))
+- A short chapter is spell checked in the language of the document it belongs to, not in the
+  system's. ([04d8b07](https://github.com/Herbrant/TeXoria/commit/04d8b07))
+- Vim mode: the characters typed with Option (`~ { } [ ]` on an Italian Mac) work as commands
+  instead of being inserted, and `.` repeats text typed with a dead key or an input method.
+  ([3b3d969](https://github.com/Herbrant/TeXoria/commit/3b3d969), [40f46e5](https://github.com/Herbrant/TeXoria/commit/40f46e5))
+- On Linux and Windows, *Open…* opens the chosen file instead of its folder. ([6c43f21](https://github.com/Herbrant/TeXoria/commit/6c43f21))
+- Colors in the PDF preview and in the agents' page snapshots are right (red and blue were
+  swapped), and pages in the dark theme are drawn pixel for pixel. ([c22ff29](https://github.com/Herbrant/TeXoria/commit/c22ff29), [f36702d](https://github.com/Herbrant/TeXoria/commit/f36702d))
+- Errors of the PDF and other messages of the main window no longer show in the Settings window.
+  ([975361b](https://github.com/Herbrant/TeXoria/commit/975361b))
+- Self-update on macOS retries reliably when the disk image fails to mount. ([de6bf85](https://github.com/Herbrant/TeXoria/commit/de6bf85))
+
+### Build and documentation
+
+- Faster CI: release packages are built nightly instead of on every push, the caches fit in
+  GitHub's quota, Tectonic's bundle is cached on every platform, and gpui is no longer rebuilt on
+  every run. ([bc4fbe5](https://github.com/Herbrant/TeXoria/commit/bc4fbe5), [1393c4e](https://github.com/Herbrant/TeXoria/commit/1393c4e), [20a461e](https://github.com/Herbrant/TeXoria/commit/20a461e), [a6a10f2](https://github.com/Herbrant/TeXoria/commit/a6a10f2), [3f6f50f](https://github.com/Herbrant/TeXoria/commit/3f6f50f),
+  [99a336e](https://github.com/Herbrant/TeXoria/commit/99a336e))
+- More reliable tests. ([dd8f910](https://github.com/Herbrant/TeXoria/commit/dd8f910), [0907052](https://github.com/Herbrant/TeXoria/commit/0907052))
+
+**Full changelog**: [v0.5.0...v0.6.0](https://github.com/Herbrant/TeXoria/compare/v0.5.0...v0.6.0)
+
 ## [0.5.0] - 2026-10-19
 
 ### Added
