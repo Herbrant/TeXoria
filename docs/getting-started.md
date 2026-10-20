@@ -17,6 +17,11 @@ the least deep and then the one that includes the most files.
 A project opens again with the tabs you left open, and on the one you were working in (unless
 you opened a specific file of it).
 
+The installed app also opens `.tex` files from the Finder, Explorer or your file manager: it
+is listed under *Open With*, and you can make it their default app there. On macOS a file
+opened while TeXoria runs takes the place of the open project, as with *Open a document…*.
+Windows installs make TeXoria the app of `.tex` files only when they had none.
+
 From a terminal, pass the file or folder as the only argument:
 
 ```sh

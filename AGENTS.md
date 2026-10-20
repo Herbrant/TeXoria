@@ -286,7 +286,12 @@ texoria ─┬─ tex-compile ── tex-log
     `RangeDecoration` (the editor has no cursor shapes).
   - Actions/keybindings/menus are declared in `main.rs` (`secondary-*` = ⌘ on macOS, Ctrl elsewhere).
     On macOS the app outlives its window: `reopen` (the Dock icon) opens the last project in a
-    new one. Closing the main window also closes the Settings and PDF windows.
+    new one. Closing the main window also closes the Settings and PDF windows. The Finder sends
+    the documents it opens as URLs (`on_open_urls`, `open_document`), not as arguments. The
+    `.tex` type is declared per system: `packaging/macos/Info.plist` (merged by cargo-packager;
+    `org.tug.tex` is imported for Macs without a TeX distribution), the `.desktop` file's
+    `MimeType`, and the NSIS `preinstall-section` in `Cargo.toml` (cargo-packager's own
+    `file-associations` are not used: its uninstaller leaves them).
   - The app icon's sources are `assets/logo/texoria.svg` (and `texoria-small.svg` for ≤ 48 px);
     the rasterized PNG/`.icns`/`.ico` in `crates/texoria/packaging` are committed. `build.rs`
     embeds the `.ico` as Windows resource ID 1, which is where GPUI loads the window icon from.

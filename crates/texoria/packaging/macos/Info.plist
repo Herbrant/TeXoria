@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the Info.plist that cargo-packager writes (Cargo.toml, info-plist-path).
+  The documents TeXoria opens, so that the Finder offers it for them (Open With); main.rs
+  handles the URLs the Finder then sends. org.tug.tex is the type TeX distributions and
+  editors (MacTeX, TeXShop) declare: imported here too, for Macs that have none of them.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>LaTeX document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.tug.tex</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.tug.tex</string>
+			<key>UTTypeDescription</key>
+			<string>LaTeX document</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>tex</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>text/x-tex</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>

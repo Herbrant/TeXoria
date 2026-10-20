@@ -272,10 +272,46 @@ fn main() {
     let app = gpui_kit::application().with_assets(assets::Assets);
     // On macOS the app outlives its window: the Dock icon opens it again.
     app.on_reopen(reopen);
+    // Documents opened from the Finder (macOS sends them as URLs, not as arguments). Those
+    // that launched the app arrive before `run` calls back.
+    let (opened, open_requests) = smol::channel::unbounded::<PathBuf>();
+    app.on_open_urls(move |urls| {
+        if let Some(path) = urls.iter().find_map(|url| cli::file_url_path(url)) {
+            opened.try_send(path).ok();
+        }
+    });
     app.run(move |cx| {
         init(cx);
-        open_main_window(path, cx);
+        open_main_window(open_requests.try_recv().ok().or(path), cx);
+        cx.spawn(async move |cx| {
+            while let Ok(path) = open_requests.recv().await {
+                cx.update(|cx| open_document(path, cx));
+            }
+        })
+        .detach();
     });
+}
+
+/// Open `path` in the main window, or in a new one if there is none.
+fn open_document(path: PathBuf, cx: &mut App) {
+    let Some((window, workspace)) = main_window(cx) else {
+        return open_main_window(Some(path), cx);
+    };
+    window
+        .update(cx, |_, window, cx| {
+            workspace.update(cx, |w, cx| w.open_path(path, window, cx));
+            window.activate_window();
+        })
+        .ok();
+}
+
+/// The window showing the workspace (not the PDF's own window), and the workspace.
+fn main_window(cx: &App) -> Option<(AnyWindowHandle, Entity<Workspace>)> {
+    cx.windows().into_iter().find_map(|w| {
+        let root = w.downcast::<gpui_kit::base::Root>()?;
+        let view = root.read(cx).ok()?.view().clone();
+        Some((w, view.downcast::<Workspace>().ok()?))
+    })
 }
 
 /// Open the main window on `path` (a file or a folder, or none for the start page).
@@ -299,17 +335,10 @@ fn open_main_window(path: Option<PathBuf>, cx: &mut App) {
 /// The app was opened again (its Dock icon clicked) with no window on screen: show the
 /// minimized one, or open the last project in a new one.
 fn reopen(cx: &mut App) {
-    let windows = cx.windows();
     // The main window rather than the preview's.
-    let main = windows
-        .iter()
-        .find(|w| {
-            w.downcast::<gpui_kit::base::Root>().is_some_and(|root| {
-                root.read(cx)
-                    .is_ok_and(|r| r.view().clone().downcast::<Workspace>().is_ok())
-            })
-        })
-        .or(windows.first());
+    let main = main_window(cx)
+        .map(|(w, _)| w)
+        .or(cx.windows().first().copied());
     if let Some(window) = main {
         window.update(cx, |_, w, _| w.activate_window()).ok();
         return;

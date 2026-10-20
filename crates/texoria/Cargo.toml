@@ -37,6 +37,8 @@ base64 = "0.22"
 # The system language: fallback for spell checking and regional variants.
 sys-locale = "0.3"
 tempfile.workspace = true
+# Documents opened from the Finder come as file URLs.
+url = "2"
 similar.workspace = true
 # Format Document.
 tex-fmt = { version = "0.5.7", default-features = false }
@@ -77,3 +79,36 @@ desktop-template = "packaging/linux/texoria.desktop"
 [package.metadata.packager.macos]
 # GPUI's deployment target.
 minimum-system-version = "10.15"
+# The .tex documents the app opens (cargo-packager's file-associations only list extensions,
+# which macOS ignores in favor of content types).
+info-plist-path = "packaging/macos/Info.plist"
+
+# .tex files get TeXoria in Explorer's "Open with", and open with it when no other app is set
+# for them; the uninstaller takes it back (cargo-packager's file-associations replace the
+# user's app for good, and its uninstaller leaves them). Runs before the Install section.
+[package.metadata.packager.nsis]
+preinstall-section = '''
+Section "-FileTypes"
+  WriteRegStr SHCTX "Software\Classes\TeXoria.tex" "" "LaTeX document"
+  WriteRegStr SHCTX "Software\Classes\TeXoria.tex\DefaultIcon" "" "$INSTDIR\${MAINBINARYNAME}.exe,0"
+  WriteRegStr SHCTX "Software\Classes\TeXoria.tex\shell\open\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" $\"%1$\""
+  WriteRegStr SHCTX "Software\Classes\.tex\OpenWithProgids" "TeXoria.tex" ""
+  ReadRegStr $0 HKCR ".tex" ""
+  ${If} $0 == ""
+    WriteRegStr SHCTX "Software\Classes\.tex" "" "TeXoria.tex"
+  ${EndIf}
+  !insertmacro UPDATEFILEASSOC
+SectionEnd
+
+Function un.onUninstSuccess
+  DeleteRegValue SHCTX "Software\Classes\.tex\OpenWithProgids" "TeXoria.tex"
+  DeleteRegKey /ifempty SHCTX "Software\Classes\.tex\OpenWithProgids"
+  ReadRegStr $0 SHCTX "Software\Classes\.tex" ""
+  ${If} $0 == "TeXoria.tex"
+    DeleteRegValue SHCTX "Software\Classes\.tex" ""
+  ${EndIf}
+  DeleteRegKey /ifempty SHCTX "Software\Classes\.tex"
+  DeleteRegKey SHCTX "Software\Classes\TeXoria.tex"
+  !insertmacro UPDATEFILEASSOC
+FunctionEnd
+'''

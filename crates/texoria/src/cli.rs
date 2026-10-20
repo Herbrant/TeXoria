@@ -55,6 +55,12 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Launch {
     Launch::Open(path)
 }
 
+/// The file behind a URL the system asks the app to open (the Finder sends documents as
+/// `file://` URLs, not as arguments).
+pub fn file_url_path(url: &str) -> Option<PathBuf> {
+    url::Url::parse(url).ok()?.to_file_path().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,5 +105,30 @@ mod tests {
             launch(&["-psn_0_1", "x.tex"]),
             Launch::Open(Some("x.tex".into()))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reads_file_urls() {
+        assert_eq!(
+            file_url_path("file:///Users/me/Tesi%20finale/main.tex"),
+            Some("/Users/me/Tesi finale/main.tex".into())
+        );
+        assert_eq!(
+            file_url_path("file:///tmp/%C3%A0.tex"),
+            Some("/tmp/à.tex".into())
+        );
+        assert_eq!(file_url_path("https://example.com/main.tex"), None);
+        assert_eq!(file_url_path("not a url"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reads_file_urls() {
+        assert_eq!(
+            file_url_path("file:///C:/Users/me/Tesi%20finale/main.tex"),
+            Some(r"C:\Users\me\Tesi finale\main.tex".into())
+        );
+        assert_eq!(file_url_path("https://example.com/main.tex"), None);
     }
 }
