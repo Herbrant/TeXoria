@@ -553,14 +553,16 @@ mod tests {
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
-        std::thread::sleep(Duration::from_millis(600));
+        // Waiting for the hang-up rather than sleeping past the deadline: on a loaded machine
+        // the server may start reading late, and a token sent after a fixed sleep be in time.
+        assert!(hung_up(&mut stream), "kept a silent connection");
         let _ = writeln!(stream, "{}", server.token);
         let _ = writeln!(
             stream,
             "{}",
             json!({"jsonrpc":"2.0","id":1,"method":"ping"})
         );
-        assert!(hung_up(&mut stream));
+        assert!(hung_up(&mut stream), "answered a late token");
         // Once it is shown, there is no hurry.
         let (mut w, mut r) = connect(&server);
         std::thread::sleep(Duration::from_millis(400));
