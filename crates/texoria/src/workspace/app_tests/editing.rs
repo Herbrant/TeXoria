@@ -140,6 +140,20 @@ fn opening_projects_and_folders(cx: &mut TestAppContext) {
     };
     assert!(e.starts_with("No LaTeX document "), "{e}");
     assert!(app.read(cx, |ws, _| ws.root.is_none()));
+    // A path that does not exist (mistyped, or a recent project since moved): nothing
+    // opened, built or remembered.
+    let gone = paths::canonical(empty.path()).join("gone.tex");
+    app.update(cx, |ws, window, cx| {
+        ws.settings.push_recent(gone.clone());
+        ws.open_path(gone.clone(), window, cx)
+    });
+    let CompileState::Failed(e) = app.read(cx, |ws, _| ws.state.clone()) else {
+        panic!("no error");
+    };
+    assert!(e.ends_with("does not exist"), "{e}");
+    assert!(app.read(cx, |ws, _| ws.root.is_none()
+        && !ws.settings.recent.contains(&gone)));
+    assert!(!empty.path().join(".texoria").exists());
 
     // Through the Open Folder dialog, a folder with one.
     let tmp = testing::fixture_copy("sample");

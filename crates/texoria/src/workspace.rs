@@ -657,6 +657,17 @@ impl Workspace {
 
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let path = crate::paths::canonical(&path);
+        // A mistyped path on the command line, or a recent project since moved: not a
+        // document to build (its folder would get a build folder).
+        if !path.exists() {
+            self.state = CompileState::Failed(format!("{} does not exist", path.display()).into());
+            if let Some(ix) = self.settings.recent.iter().position(|p| *p == path) {
+                self.settings.recent.remove(ix);
+                self.settings.save();
+            }
+            cx.notify();
+            return;
+        }
         let file = if path.is_dir() {
             find_main_file(&path, &self.settings.recent)
         } else {
