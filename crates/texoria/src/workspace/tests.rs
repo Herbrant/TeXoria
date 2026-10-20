@@ -182,6 +182,21 @@ fn sample(cx: &mut TestAppContext) -> (tempfile::TempDir, WindowHandle<Root>, En
     (dir, window, workspace)
 }
 
+#[gpui::test]
+fn bib_files_are_highlighted_as_bibtex(cx: &mut TestAppContext) {
+    let (dir, window, workspace) = sample(cx);
+    let bib = paths::canonical(&dir.path().join("refs.bib"));
+    with(cx, window, &workspace, |ws, window, cx| {
+        ws.activate_file(bib.clone(), window, cx);
+    });
+    workspace.read_with(cx, |ws, cx| {
+        let language = |ix: usize| ws.buffers[ix].editor.read(cx).language_name();
+        assert_eq!(ws.buffers[ws.active].path, bib);
+        assert_eq!(language(ws.active), crate::latex::BIBTEX);
+        assert_eq!(language(0), crate::latex::LANGUAGE);
+    });
+}
+
 fn query(text: &str) -> tex_project::search::Query {
     tex_project::search::Query {
         text: text.into(),

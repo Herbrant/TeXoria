@@ -1,5 +1,8 @@
 # Writing
 
+LaTeX sources and `.bib` files are syntax highlighted: in a `.bib` file, entry types, keys,
+field names and values each get their own color.
+
 ## Completion
 
 Suggestions appear as you type and depend on where the cursor is:

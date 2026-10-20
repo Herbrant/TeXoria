@@ -13,6 +13,14 @@ pub fn language() -> Language {
     codebook_tree_sitter_latex::LANGUAGE.into()
 }
 
+/// Highlight query of `.bib` files, for [`bibtex_language`].
+pub const BIBTEX_HIGHLIGHTS: &str = include_str!("../queries/bibtex.scm");
+
+/// The BibTeX grammar, used only to highlight `.bib` files.
+pub fn bibtex_language() -> Language {
+    tree_sitter_bibtex::LANGUAGE.into()
+}
+
 pub fn parse(text: &str, old: Option<&Tree>) -> Option<Tree> {
     let mut parser = Parser::new();
     parser.set_language(&language()).ok()?;
@@ -689,6 +697,50 @@ See \ref{eq:e} and \cite{knuth, lamport}.
     #[test]
     fn highlight_query_compiles() {
         tree_sitter::Query::new(&language(), HIGHLIGHTS).expect("valid highlights.scm");
+    }
+
+    #[test]
+    fn bibtex_highlights() {
+        let src = "% refs\n@string{acm = \"ACM\"}\n\
+                   @article{knuth84, author = {D. E. Kn{\\\"u}th}, journal = acm # \" Press\",\n  \
+                   year = 1984}\n";
+        let query = tree_sitter::Query::new(&bibtex_language(), BIBTEX_HIGHLIGHTS)
+            .expect("valid bibtex.scm");
+        let mut parser = Parser::new();
+        parser.set_language(&bibtex_language()).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        assert!(!tree.root_node().has_error(), "{}", tree.root_node());
+
+        let mut captures = std::collections::HashMap::<&str, Vec<&str>>::new();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches = cursor.captures(&query, tree.root_node(), src.as_bytes());
+        use tree_sitter::StreamingIterator;
+        while let Some((m, ix)) = matches.next() {
+            let c = m.captures[*ix];
+            captures
+                .entry(query.capture_names()[c.index as usize])
+                .or_default()
+                .push(&src[c.node.byte_range()]);
+        }
+        let has = |name: &str, text: &str| {
+            assert!(
+                captures.get(name).is_some_and(|v| v.contains(&text)),
+                "{text:?} not captured as {name}: {captures:?}"
+            );
+        };
+        has("comment", "% refs\n");
+        has("keyword", "@string");
+        has("keyword", "@article");
+        has("string.special", "knuth84");
+        has("property", "author");
+        has("property", "year");
+        has("number", "1984");
+        has("variable.special", "acm");
+        has("function", "\\\"");
+        has("operator", "#");
+        has("punctuation.delimiter", ",");
+        has("string", "ACM");
+        has("string", "Kn");
     }
 
     #[test]

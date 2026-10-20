@@ -7163,6 +7163,7 @@ dependencies = [
  "proptest",
  "test-support",
  "tree-sitter",
+ "tree-sitter-bibtex",
 ]
 
 [[package]]
@@ -7601,6 +7602,15 @@ dependencies = [
  "regex-syntax",
  "serde_json",
  "streaming-iterator",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-bibtex"
+version = "0.1.0"
+source = "git+https://github.com/latex-lsp/tree-sitter-bibtex?rev=8d04ed27b3bc7929f14b7df9236797dab9f3fa66#8d04ed27b3bc7929f14b7df9236797dab9f3fa66"
+dependencies = [
+ "cc",
  "tree-sitter-language",
 ]
 

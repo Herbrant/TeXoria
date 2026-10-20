@@ -25,6 +25,12 @@ diff --git a/notes.txt b/notes.txt
 @@ -1 +1 @@
 -a
 +b
+diff --git a/refs.bib b/refs.bib
+--- a/refs.bib
++++ b/refs.bib
+@@ -1 +1 @@
+-@misc{k, title = {Old}}
++@misc{k, title = {New}}
 ";
 
 const CONFLICT: &str = "\
@@ -100,6 +106,8 @@ fn latex_files_are_highlighted_as_latex() {
     let langs: Vec<_> = files.iter().map(|f| f.language().to_string()).collect();
     assert_eq!(langs[0], latex::LANGUAGE);
     assert_ne!(langs[1], latex::LANGUAGE);
+    assert_ne!(langs[1], latex::BIBTEX);
+    assert_eq!(langs[2], latex::BIBTEX);
 
     let conflict = DiffSource::Conflict {
         path: "ch/intro.tex".into(),
@@ -175,7 +183,7 @@ fn files(cx: &mut TestAppContext, view: &Entity<DiffView>) -> Vec<String> {
 #[gpui::test]
 fn shows_an_agents_changes(cx: &mut TestAppContext) {
     let (window, view, log) = view(cx, None, agent(PATCH));
-    assert_eq!(files(cx, &view), ["ch/intro.tex", "notes.txt"]);
+    assert_eq!(files(cx, &view), ["ch/intro.tex", "notes.txt", "refs.bib"]);
     view.read_with(cx, |v, _| {
         assert!(v.is_agent());
         assert_eq!(v.title(), "Agent changes");

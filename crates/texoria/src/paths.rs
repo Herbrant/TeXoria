@@ -27,6 +27,13 @@ pub fn is_latex(path: &Path) -> bool {
         .is_some_and(|e| EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
+/// Whether `path` is a BibTeX database (`.bib`, in any case).
+pub fn is_bibtex(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("bib"))
+}
+
 /// `\\?\C:\dir` as `C:\dir` and `\\?\UNC\server\share` as `\\server\share`.
 fn unverbatim(path: &str) -> Option<String> {
     let rest = path.strip_prefix(r"\\?\")?;
@@ -57,6 +64,16 @@ mod tests {
         }
         for p in ["refs.bib", "Makefile", "tex", ".tex.bak", "notes.txt"] {
             assert!(!is_latex(Path::new(p)), "{p}");
+        }
+    }
+
+    #[test]
+    fn bibtex_databases() {
+        for p in ["refs.bib", "a/REFS.BIB"] {
+            assert!(is_bibtex(Path::new(p)), "{p}");
+        }
+        for p in ["main.tex", "bib", ".bib.bak", "refs.bbl"] {
+            assert!(!is_bibtex(Path::new(p)), "{p}");
         }
     }
 

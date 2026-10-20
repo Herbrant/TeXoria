@@ -814,7 +814,7 @@ impl Workspace {
         let soft_wrap = self.settings.soft_wrap && text.lines().count() <= SOFT_WRAP_MAX_LINES;
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
-                .language(latex::LANGUAGE)
+                .language(latex::language_for(&file))
                 .line_number(true)
                 .soft_wrap(soft_wrap)
                 .tab_size(TabSize {

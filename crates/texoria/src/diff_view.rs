@@ -518,8 +518,10 @@ fn files_for(source: &DiffSource, text: &str) -> Result<Vec<DiffFile>, String> {
     Ok(files
         .into_iter()
         .map(|f| {
-            if crate::paths::is_latex(Path::new(f.path().as_ref())) {
-                f.with_language(latex::LANGUAGE)
+            let path = Path::new(f.path().as_ref());
+            if crate::paths::is_latex(path) || crate::paths::is_bibtex(path) {
+                let language = latex::language_for(path);
+                f.with_language(language)
             } else {
                 f
             }

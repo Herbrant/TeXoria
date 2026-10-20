@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
@@ -22,9 +22,12 @@ use tex_complete::nav::{self, Symbol, Target};
 use tex_project::Project;
 
 pub const LANGUAGE: &str = "latex";
+/// `.bib` files: highlighting only.
+pub const BIBTEX: &str = "bibtex";
 
 pub fn register() {
-    LanguageRegistry::singleton().register(
+    let registry = LanguageRegistry::singleton();
+    registry.register(
         LANGUAGE,
         &LanguageConfig::new(
             LANGUAGE,
@@ -35,6 +38,26 @@ pub fn register() {
             "",
         ),
     );
+    registry.register(
+        BIBTEX,
+        &LanguageConfig::new(
+            BIBTEX,
+            tex_syntax::bibtex_language(),
+            vec![],
+            tex_syntax::BIBTEX_HIGHLIGHTS,
+            "",
+            "",
+        ),
+    );
+}
+
+/// The language a file is highlighted as: BibTeX for `.bib`, LaTeX for anything else.
+pub fn language_for(path: &Path) -> &'static str {
+    if crate::paths::is_bibtex(path) {
+        BIBTEX
+    } else {
+        LANGUAGE
+    }
 }
 
 /// A completion that leaves the cursor somewhere other than its end
