@@ -167,31 +167,20 @@ impl Counts {
 /// counts for its `\title`).
 pub fn count(tree: &Tree, text: &str) -> Counts {
     let mut counts = Counts::default();
+    // Each text node's words go where its nearest heading title or caption puts them,
+    // found on the way down (looking each word's ancestors up is quadratic in tree-sitter,
+    // whose nodes find their parent from the root).
+    let mut words = Vec::new();
+    walk_prose(tree, text, Place::Text, place_of, |node, place, more| {
+        text_words(node, text, |_| true, &mut words, more);
+        *match place {
+            Place::Text => &mut counts.text,
+            Place::Header => &mut counts.headers,
+            Place::Caption => &mut counts.captions,
+        } += words.len();
+        words.clear();
+    });
     let root = tree.root_node();
-    for r in collect(tree, text, |_| true) {
-        let mut node = root.descendant_for_byte_range(r.start, r.end);
-        let mut place = None;
-        while let Some(n) = node {
-            match n.kind() {
-                "part" | "chapter" | "section" | "subsection" | "subsubsection" | "paragraph"
-                | "subparagraph" | "title_declaration" => {
-                    // Words after a heading's title belong to its body.
-                    let title = n.child_by_field_name("text");
-                    if title.is_none_or(|t| t.byte_range().contains(&r.start)) {
-                        place = Some(&mut counts.headers);
-                        break;
-                    }
-                }
-                "caption" => {
-                    place = Some(&mut counts.captions);
-                    break;
-                }
-                _ => {}
-            }
-            node = n.parent();
-        }
-        *place.unwrap_or(&mut counts.text) += 1;
-    }
     let body = document_start(root, text);
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
@@ -211,6 +200,32 @@ pub fn count(tree: &Tree, text: &str) -> Counts {
     counts
 }
 
+/// Where counted words belong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Place {
+    Text,
+    Header,
+    Caption,
+}
+
+/// The place of `child`'s words, `parent`'s being `place`: a heading's title is a
+/// header (what follows it, its body, is not), a caption a caption.
+fn place_of(parent: Node, child: Node, place: Place) -> Place {
+    match parent.kind() {
+        "part" | "chapter" | "section" | "subsection" | "subsubsection" | "paragraph"
+        | "subparagraph" | "title_declaration" => {
+            let title = parent.child_by_field_name("text");
+            if title.is_none_or(|t| t.id() == child.id()) {
+                Place::Header
+            } else {
+                place
+            }
+        }
+        "caption" => Place::Caption,
+        _ => place,
+    }
+}
+
 /// Where the body starts: `\begin{document}`, else the beginning.
 fn document_start(root: Node, text: &str) -> usize {
     let mut cursor = root.walk();
@@ -224,8 +239,8 @@ fn document_start(root: Node, text: &str) -> usize {
 /// Byte ranges of the words of the prose that `keep` accepts.
 fn collect(tree: &Tree, text: &str, keep: fn(&str) -> bool) -> Vec<Range<usize>> {
     let mut out = Vec::new();
-    walk_prose(tree, text, |node, stack| {
-        text_words(node, text, keep, &mut out, stack)
+    walk_text(tree, text, |node, more| {
+        text_words(node, text, keep, &mut out, more)
     });
     out.sort_by_key(|r| r.start);
     out
@@ -235,7 +250,7 @@ fn collect(tree: &Tree, text: &str, keep: fn(&str) -> bool) -> Vec<Range<usize>>
 /// them included) not interrupted by a command, math or anything else.
 pub fn prose_runs(tree: &Tree, text: &str) -> Vec<Range<usize>> {
     let mut out = Vec::new();
-    walk_prose(tree, text, |node, stack| {
+    walk_text(tree, text, |node, more| {
         let mut run: Option<Range<usize>> = None;
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -246,7 +261,7 @@ pub fn prose_runs(tree: &Tree, text: &str) -> Vec<Range<usize>> {
             }
             out.extend(run.take());
             if is_prose(child, text) {
-                stack.push(child);
+                more.push(child);
             }
         }
         out.extend(run);
@@ -255,18 +270,38 @@ pub fn prose_runs(tree: &Tree, text: &str) -> Vec<Range<usize>> {
     out
 }
 
-/// Visit the `text` nodes of the prose; `on_text` pushes on the stack the
-/// children it wants visited too.
-fn walk_prose<'t>(
+/// `walk_prose` without contexts.
+fn walk_text<'t>(
     tree: &'t Tree,
     text: &str,
     mut on_text: impl FnMut(Node<'t>, &mut Vec<Node<'t>>),
 ) {
+    walk_prose(
+        tree,
+        text,
+        (),
+        |_, _, _| (),
+        |node, _, more| on_text(node, more),
+    );
+}
+
+/// Visit the `text` nodes of the prose; `on_text` pushes on `more` the
+/// children it wants visited too. Each node carries a context, `root`'s for
+/// the root, `inner(parent, child, parent's)` for the others.
+fn walk_prose<'t, C: Copy>(
+    tree: &'t Tree,
+    text: &str,
+    root: C,
+    inner: impl Fn(Node<'t>, Node<'t>, C) -> C,
+    mut on_text: impl FnMut(Node<'t>, C, &mut Vec<Node<'t>>),
+) {
     // Iterative: the tree is as deep as the document's nesting.
-    let mut stack = vec![tree.root_node()];
-    while let Some(node) = stack.pop() {
+    let mut stack = vec![(tree.root_node(), root)];
+    let mut more = Vec::new();
+    while let Some((node, ctx)) = stack.pop() {
         if node.kind() == "text" {
-            on_text(node, &mut stack);
+            on_text(node, ctx, &mut more);
+            stack.extend(more.drain(..).map(|c| (c, inner(node, c, ctx))));
             continue;
         }
         let env = node.kind() == "generic_environment";
@@ -285,11 +320,13 @@ fn walk_prose<'t>(
             }
             args = false;
             if top && kind == "text" {
+                let in_text = inner(node, child, ctx);
                 let mut c = child.walk();
                 stack.extend(
                     child
                         .children(&mut c)
-                        .filter(|n| n.kind() == "title_declaration"),
+                        .filter(|n| n.kind() == "title_declaration")
+                        .map(|n| (n, inner(child, n, in_text))),
                 );
                 continue;
             }
@@ -297,7 +334,7 @@ fn walk_prose<'t>(
                 continue;
             }
             if is_prose(child, text) {
-                stack.push(child);
+                stack.push((child, inner(node, child, ctx)));
             }
         }
     }
@@ -483,6 +520,43 @@ mod tests {
             prop_assert_eq!(prose(&doc, &words).split(' ').filter(|w| !w.is_empty()).count(),
                 words.len());
         }
+
+        #[test]
+        fn count_places_words_like_their_ancestors_do(doc in latex()) {
+            let tree = tex_syntax::parse(&doc, None).unwrap();
+            prop_assert_eq!(count(&tree, &doc), count_by_ancestors(&tree, &doc));
+        }
+    }
+
+    /// `count` as it was: each word placed by walking up its ancestors (slow).
+    fn count_by_ancestors(tree: &Tree, text: &str) -> Counts {
+        let mut counts = count(tree, text);
+        (counts.text, counts.headers, counts.captions) = (0, 0, 0);
+        let root = tree.root_node();
+        for r in collect(tree, text, |_| true) {
+            let mut node = root.descendant_for_byte_range(r.start, r.end);
+            let mut place = None;
+            while let Some(n) = node {
+                match n.kind() {
+                    "part" | "chapter" | "section" | "subsection" | "subsubsection"
+                    | "paragraph" | "subparagraph" | "title_declaration" => {
+                        let title = n.child_by_field_name("text");
+                        if title.is_none_or(|t| t.byte_range().contains(&r.start)) {
+                            place = Some(&mut counts.headers);
+                            break;
+                        }
+                    }
+                    "caption" => {
+                        place = Some(&mut counts.captions);
+                        break;
+                    }
+                    _ => {}
+                }
+                node = n.parent();
+            }
+            *place.unwrap_or(&mut counts.text) += 1;
+        }
+        counts
     }
 
     #[test]
