@@ -24,6 +24,10 @@ impl Workspace {
     pub(crate) fn agent_is_busy(&self) -> bool {
         self.agent_busy
     }
+
+    pub(crate) fn pdf_pane(&self) -> &Entity<PdfPane> {
+        &self.pdf
+    }
 }
 
 /// A workspace in its window, on a temporary copy of a project.

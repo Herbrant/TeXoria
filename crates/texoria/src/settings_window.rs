@@ -1,8 +1,10 @@
-//! The Settings window. `Workspace` owns the settings: this view reads them
-//! from it and writes them back through `Workspace::update_settings`, which
+//! The Settings window. `Workspace` owns the settings: this view shows a copy
+//! of them and writes them back through `Workspace::update_settings`, which
 //! saves them and applies the change to what is running.
 
+use std::cell::{Ref, RefCell};
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::setting::{
@@ -20,6 +22,7 @@ use tex_agent::CustomAgent;
 
 use crate::assets::Glyph;
 use crate::settings::{Settings, ThemeChoice};
+use crate::updater::Updater;
 use crate::workspace::Workspace;
 
 /// The main window's workspace, which the settings belong to.
@@ -27,18 +30,34 @@ use crate::workspace::Workspace;
 struct Target {
     workspace: WeakEntity<Workspace>,
     window: AnyWindowHandle,
+    shown: Rc<RefCell<Shown>>,
+}
+
+/// What this window shows of the workspace, copied whenever it changes. This
+/// window must never read the workspace (nor its agent panel or updater) while
+/// it draws: GPUI would then take it for this window's, and run the
+/// workspace's window-bound callbacks (`subscribe_in`, `spawn_in`…) here.
+#[derive(Default)]
+struct Shown {
+    settings: Settings,
+    /// The engines' labels, and the one in use.
+    engines: Vec<SharedString>,
+    engine: Option<SharedString>,
+    /// The agents found (id, name), `None` while they are looked for.
+    agents: Option<Vec<(SharedString, SharedString)>>,
+    agent: Option<SharedString>,
+    /// How this copy of TeXoria is updated.
+    updates: String,
+    updater: Option<WeakEntity<Updater>>,
 }
 
 impl Target {
-    fn read<T: Default>(&self, cx: &App, f: impl FnOnce(&Workspace) -> T) -> T {
-        self.workspace
-            .upgrade()
-            .map(|w| f(w.read(cx)))
-            .unwrap_or_default()
+    fn shown(&self) -> Ref<'_, Shown> {
+        self.shown.borrow()
     }
 
-    fn get<T: Default>(&self, cx: &App, f: impl FnOnce(&Settings) -> T) -> T {
-        self.read(cx, |w| f(&w.settings))
+    fn get<T>(&self, f: impl FnOnce(&Settings) -> T) -> T {
+        f(&self.shown().settings)
     }
 
     fn set(&self, cx: &mut App, change: impl FnOnce(&mut Settings)) {
@@ -47,6 +66,39 @@ impl Target {
         let _ = self.window.update(cx, |_, window, cx| {
             workspace.update(cx, |w, cx| w.update_settings(change, window, cx))
         });
+        self.refresh(cx);
+    }
+
+    /// Copy what is shown from the workspace again.
+    fn refresh(&self, cx: &App) {
+        let Some(w) = self.workspace.upgrade() else {
+            return;
+        };
+        let w = w.read(cx);
+        let kind = w.updater().read(cx).kind().clone();
+        let updates = if kind.self_updating() {
+            "When a new version is out, “Update to …” appears in the status bar: TeXoria \
+             downloads it, checks its signature and restarts into it."
+                .to_string()
+        } else if let Some(how) = kind.instructions() {
+            format!("This copy does not update itself. {how}")
+        } else {
+            "This copy was built from source.".to_string()
+        };
+        let agents = w.agent_panel().read(cx);
+        *self.shown.borrow_mut() = Shown {
+            settings: w.settings.clone(),
+            engines: w.engines.iter().map(|e| e.label().into()).collect(),
+            engine: w.engines.get(w.engine_ix).map(|e| e.label().into()),
+            agents: agents.agents().map(|list| {
+                list.iter()
+                    .map(|a| (a.id.clone().into(), a.name.clone().into()))
+                    .collect()
+            }),
+            agent: agents.current().map(|a| a.id.clone().into()),
+            updates,
+            updater: Some(w.updater().downgrade()),
+        };
     }
 }
 
@@ -72,11 +124,20 @@ impl SettingsWindow {
         let target = Target {
             workspace,
             window: main,
+            shown: Default::default(),
         };
+        target.refresh(cx);
         let mut subscriptions = Vec::new();
         if let Some(w) = target.workspace.upgrade() {
-            // Settings also change from the main window (⇧⌘P, the theme button).
-            subscriptions.push(cx.observe(&w, |_, _, cx| cx.notify()));
+            // Settings also change from the main window (⇧⌘P, the theme button),
+            // agents are found and the updater learns how this copy updates.
+            let (agents, updater) = (
+                w.read(cx).agent_panel().clone(),
+                w.read(cx).updater().clone(),
+            );
+            subscriptions.push(cx.observe(&w, Self::refresh));
+            subscriptions.push(cx.observe(&agents, Self::refresh));
+            subscriptions.push(cx.observe(&updater, Self::refresh));
         }
         let mut this = SettingsWindow {
             target,
@@ -86,13 +147,18 @@ impl SettingsWindow {
             agents: Vec::new(),
             _subscriptions: subscriptions,
         };
-        for url in this.target.get(cx, |s| s.overleaf_servers.clone()) {
+        for url in this.target.get(|s| s.overleaf_servers.clone()) {
             this.push_server(url, window, cx);
         }
-        for agent in this.target.get(cx, |s| s.custom_agents.clone()) {
+        for agent in this.target.get(|s| s.custom_agents.clone()) {
             this.push_agent(agent, window, cx);
         }
         this
+    }
+
+    fn refresh<E>(&mut self, _: Entity<E>, cx: &mut Context<Self>) {
+        self.target.refresh(cx);
+        cx.notify();
     }
 
     fn push_server(
@@ -225,10 +291,10 @@ impl SettingsWindow {
             .collect()
     }
 
-    fn editor_page(&self, cx: &App) -> SettingPage {
+    fn editor_page(&self) -> SettingPage {
         let t = self.target.clone();
-        let words = t.get(cx, |s| s.spell_words.clone());
-        let rules = t.get(cx, |s| s.grammar_rules_off.clone());
+        let words = t.get(|s| s.spell_words.clone());
+        let rules = t.get(|s| s.grammar_rules_off.clone());
         let themes = ThemeChoice::ALL
             .iter()
             .map(|c| (c.key().into(), c.label().into()))
@@ -241,7 +307,7 @@ impl SettingsWindow {
                         themes,
                         {
                             let t = t.clone();
-                            move |cx| t.get(cx, |s| s.theme).key().into()
+                            move |_| t.get(|s| s.theme).key().into()
                         },
                         {
                             let t = t.clone();
@@ -267,7 +333,7 @@ impl SettingsWindow {
                                 max: Settings::MAX_FONT_SIZE as f64,
                                 step: 1.,
                             },
-                            move |cx| t1.get(cx, |s| s.font_size() as f64),
+                            move |_| t1.get(|s| s.font_size() as f64),
                             move |v, cx| t2.set(cx, |s| s.editor_font_size = v as f32),
                         )
                         .default_value(Settings::DEFAULT_FONT_SIZE as f64)
@@ -364,7 +430,7 @@ impl SettingsWindow {
                     SettingItem::new("LanguageTool server", {
                         let (t1, t2) = (t.clone(), t.clone());
                         SettingField::input(
-                            move |cx| t1.get(cx, |s| s.languagetool_url.clone()).into(),
+                            move |_| t1.get(|s| s.languagetool_url.clone()).into(),
                             move |v: SharedString, cx| {
                                 t2.set(cx, |s| s.languagetool_url = v.trim().to_string())
                             },
@@ -400,15 +466,15 @@ impl SettingsWindow {
         ]))
     }
 
-    fn build_page(&self, cx: &App) -> SettingPage {
+    fn build_page(&self) -> SettingPage {
         let t = self.target.clone();
         let defaults = Settings::default();
-        let engines: Vec<(SharedString, SharedString)> = t.read(cx, |w| {
-            w.engines
-                .iter()
-                .map(|e| (e.label().into(), e.label().into()))
-                .collect()
-        });
+        let engines: Vec<(SharedString, SharedString)> = t
+            .shown()
+            .engines
+            .iter()
+            .map(|e| (e.clone(), e.clone()))
+            .collect();
         let engine = if engines.is_empty() {
             SettingItem::new(
                 "Engine",
@@ -427,15 +493,7 @@ impl SettingsWindow {
                     engines,
                     {
                         let t = t.clone();
-                        move |cx| {
-                            t.read(cx, |w| {
-                                w.engines
-                                    .get(w.engine_ix)
-                                    .map(|e| e.label())
-                                    .unwrap_or_default()
-                            })
-                            .into()
-                        }
+                        move |_| t.shown().engine.clone().unwrap_or_default()
                     },
                     {
                         let t = t.clone();
@@ -447,7 +505,7 @@ impl SettingsWindow {
             )
             .description("latexmk with pdfLaTeX, XeLaTeX or LuaLaTeX, or Tectonic.")
         };
-        let live = t.get(cx, |s| s.live_preview);
+        let live = t.get(|s| s.live_preview);
         SettingPage::new("Build").groups(
             self.groups([
                 Group::new().title("Engine").item(engine).item(
@@ -597,14 +655,7 @@ impl SettingsWindow {
 
     fn agents_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let t = self.target.clone();
-        let found: Option<Vec<(SharedString, SharedString)>> =
-            t.workspace.upgrade().and_then(|w| {
-                w.read(cx).agent_panel().read(cx).agents().map(|a| {
-                    a.iter()
-                        .map(|a| (a.id.clone().into(), a.name.clone().into()))
-                        .collect()
-                })
-            });
+        let found = t.shown().agents.clone();
         let agent = match found {
             None => SettingItem::new(
                 "Agent",
@@ -636,15 +687,7 @@ impl SettingsWindow {
                         list,
                         {
                             let t = t.clone();
-                            move |cx| {
-                                t.read(cx, |w| {
-                                    w.agent_panel()
-                                        .read(cx)
-                                        .current()
-                                        .map(|a| SharedString::from(a.id.clone()))
-                                })
-                                .unwrap_or_else(|| first.clone())
-                            }
+                            move |_| t.shown().agent.clone().unwrap_or_else(|| first.clone())
                         },
                         {
                             let t = t.clone();
@@ -722,12 +765,12 @@ impl SettingsWindow {
             .child(h_flex().child(add))
     }
 
-    fn trust_page(&self, cx: &App) -> SettingPage {
+    fn trust_page(&self) -> SettingPage {
         let t = self.target.clone();
-        let git = t.get(cx, |s| s.trusted_projects.clone());
-        let rc = t.get(cx, |s| s.rc_allowed.clone().unwrap_or_default());
-        let shell = t.get(cx, |s| s.shell_escape_allowed.clone());
-        let agents = t.get(cx, |s| s.agent_projects.clone());
+        let git = t.get(|s| s.trusted_projects.clone());
+        let rc = t.get(|s| s.rc_allowed.clone().unwrap_or_default());
+        let shell = t.get(|s| s.shell_escape_allowed.clone());
+        let agents = t.get(|s| s.agent_projects.clone());
         SettingPage::new("Trusted Projects")
             .resettable(false)
             .description(
@@ -778,22 +821,11 @@ impl SettingsWindow {
             ]))
     }
 
-    fn updates_page(&self, cx: &App) -> SettingPage {
+    fn updates_page(&self) -> SettingPage {
         let t = self.target.clone();
-        let how = t.read(cx, |w| {
-            let kind = w.updater().read(cx).kind().clone();
-            if kind.self_updating() {
-                "When a new version is out, “Update to …” appears in the status bar: TeXoria \
-                 downloads it, checks its signature and restarts into it."
-                    .to_string()
-            } else if let Some(how) = kind.instructions() {
-                format!("This copy does not update itself. {how}")
-            } else {
-                "This copy was built from source.".to_string()
-            }
-        });
+        let how = t.shown().updates.clone();
         // Windows and Linux have no menu bar: this is their Check for Updates….
-        let updater = t.read(cx, |w| Some(w.updater().downgrade()));
+        let updater = t.shown().updater.clone();
         let check = SettingItem::new(
             "Check now",
             SettingField::render(move |_, _, _| {
@@ -856,10 +888,7 @@ fn bool_field(
     set: fn(&mut Settings, bool),
 ) -> SettingField<bool> {
     let (t1, t2) = (t.clone(), t.clone());
-    SettingField::switch(
-        move |cx| t1.get(cx, get),
-        move |v, cx| t2.set(cx, |s| set(s, v)),
-    )
+    SettingField::switch(move |_| t1.get(get), move |v, cx| t2.set(cx, |s| set(s, v)))
 }
 
 /// A number input bound to one `u64` of the settings.
@@ -872,7 +901,7 @@ fn number_field(
     let (t1, t2) = (t.clone(), t.clone());
     SettingField::number_input(
         options,
-        move |cx| t1.get(cx, get) as f64,
+        move |_| t1.get(get) as f64,
         move |v, cx| t2.set(cx, |s| set(s, v.round() as u64)),
     )
 }
@@ -931,12 +960,12 @@ impl Render for SettingsWindow {
         #[cfg(test)]
         self.built.borrow_mut().clear();
         let pages = [
-            self.editor_page(cx),
-            self.build_page(cx),
+            self.editor_page(),
+            self.build_page(),
             self.git_page(cx),
             self.agents_page(cx),
-            self.trust_page(cx),
-            self.updates_page(cx),
+            self.trust_page(),
+            self.updates_page(),
         ];
         let theme = cx.theme();
         v_flex()

@@ -293,7 +293,8 @@ texoria ─┬─ tex-compile ── tex-log
     on gpui-kit's `setting` component) and writes every change through
     `Workspace::update_settings`, which saves and applies only what changed (engine, timeouts,
     soft wrap of open tabs, Git options, trust, theme). Its setters update the main window, so
-    they must never run from inside it.
+    they must never run from inside it. It shows a copy of what it reads (`Shown`), refreshed by
+    observers: it must not read the workspace while it draws (see `preview_window.rs`).
     Themes ("Paper" light, "Ink" dark) are in `assets/themes.json`; icons/fonts are embedded via
     `assets.rs`.
   - Files (sources and settings) are written through `atomic::write` (temp file + rename), and

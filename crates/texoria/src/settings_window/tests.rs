@@ -317,6 +317,28 @@ fn opening_it_again_brings_it_back(cx: &mut TestAppContext) {
     assert_eq!(cx.windows().len(), 2);
     // It reads the workspace's settings.
     let target = open.view.read_with(cx, |v, _| v.target.clone());
-    let delay = cx.read(|cx| target.get(cx, |s| s.live_delay_ms));
+    let delay = target.get(|s| s.live_delay_ms);
     assert_eq!(delay, open.saved().live_delay_ms);
+}
+
+/// Drawing this window must not make the workspace its own for GPUI: the workspace's events
+/// would then run here (an error about the PDF, say, would show in the Settings window).
+#[gpui::test]
+fn the_workspace_stays_in_the_main_window(cx: &mut TestAppContext) {
+    let open = open(cx, |_| {});
+    testing::draw(cx, open.main);
+    cx.update_window(open.window, |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    let pdf = open.workspace.read_with(cx, |ws, _| ws.pdf_pane().clone());
+    // There is no PDF to export yet: the main window says so.
+    pdf.update(cx, |_, cx| cx.emit(crate::pdf_pane::PdfPaneEvent::Export));
+    cx.run_until_parked();
+    assert_eq!(testing::notifications(cx, open.main), 1);
+    let here = cx
+        .update_window(open.window, |_, window, cx| {
+            use gpui_kit::component::WindowExt as _;
+            window.notifications(cx).len()
+        })
+        .unwrap();
+    assert_eq!(here, 0);
 }
