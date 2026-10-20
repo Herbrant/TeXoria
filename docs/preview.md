@@ -18,7 +18,8 @@ renderer.
 
 ## SyncTeX
 
-- **Source → PDF**: ⌘J scrolls the preview to the cursor's position.
+- **Source → PDF**: ⌘J, or *Show in PDF* in the editor's right-click menu, scrolls the preview
+  to the cursor's position.
 - **PDF → source**: ⌘-click (Ctrl-click) or double-click in the preview to jump to the matching
   line of the source.
 

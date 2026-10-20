@@ -5035,6 +5035,9 @@ impl Render for Workspace {
                                     )
                                     .separator();
                             }
+                            menu = menu
+                                .menu("Show in PDF", Box::new(ForwardSearch))
+                                .separator();
                             spelling(menu, window, cx)
                         }
                     })

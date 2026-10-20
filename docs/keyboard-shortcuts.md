@@ -10,7 +10,7 @@
 | Build | ⌘R | Ctrl+R |
 | Stop the build (outside the editor) | ⌘. | Ctrl+. |
 | Toggle live preview | ⌘⇧P | Ctrl+Shift+P |
-| Show the cursor's position in the PDF | ⌘J | Ctrl+J |
+| Show the cursor's position in the PDF (also in the editor's right-click menu) | ⌘J | Ctrl+J |
 | Jump from the PDF to the source | ⌘-click or double-click | Ctrl-click or double-click |
 | Bigger / smaller editor text | ⌘= / ⌘- | Ctrl+= / Ctrl+- |
 | Default editor text size | ⌘0 | Ctrl+0 |
