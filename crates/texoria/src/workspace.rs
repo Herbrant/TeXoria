@@ -105,6 +105,8 @@ struct Buffer {
     /// which version to keep: it is not saved until then.
     conflict: bool,
     last_len: usize,
+    /// The hash of the text the project last indexed from this buffer (`None`: not yet).
+    indexed: Option<u64>,
     soft_wrap: bool,
     spell: BufferSpell,
     grammar: BufferGrammar,
@@ -774,6 +776,9 @@ impl Workspace {
         if self.root.as_deref() != Some(&root) {
             self.root = Some(root.clone());
             *self.project.write().unwrap() = Project::open(&root);
+            for b in &mut self.buffers {
+                b.indexed = None;
+            }
             self.outline_fold = Fold::default();
             self.refresh_outline(cx);
             self.issues.clear();
@@ -911,6 +916,7 @@ impl Workspace {
             dirty: false,
             conflict: false,
             last_len,
+            indexed: None,
             soft_wrap,
             spell,
             grammar,
@@ -1080,20 +1086,34 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Re-index open buffers so outline and completions follow unsaved edits.
+    /// Re-index open buffers so outline and completions follow unsaved edits. Only the
+    /// buffers whose text changed since are parsed again.
     fn reindex(&mut self, cx: &mut Context<Self>) {
         let mut texts = Vec::new();
         {
             let mut project = self.project.write().unwrap();
-            for b in &self.buffers {
+            for b in &mut self.buffers {
                 let text = b.editor.read(cx).text().to_string();
-                project.update(&b.path, &text);
+                let hash = text_hash(&text);
+                if b.indexed != Some(hash) {
+                    project.update(&b.path, &text);
+                    b.indexed = Some(hash);
+                }
                 texts.push((b.editor.clone(), text));
             }
         }
         self.refresh_outline(cx);
         self.count_words(&texts, cx);
         self.run_checks(texts, cx);
+    }
+
+    /// Re-index every open buffer, also those that did not change: an unchanged buffer's
+    /// `\input` may now name a file that was created since.
+    fn reindex_all(&mut self, cx: &mut Context<Self>) {
+        for b in &mut self.buffers {
+            b.indexed = None;
+        }
+        self.reindex(cx);
     }
 
     /// Count the words of every file of the project in the background,
@@ -1111,7 +1131,6 @@ impl Workspace {
         self._count = cx.spawn(async move |this, cx| {
             let counts = cx
                 .background_spawn(async move {
-                    use std::hash::{Hash, Hasher};
                     let mut cache = cache.lock().unwrap();
                     let mut out = Vec::new();
                     for file in files {
@@ -1122,9 +1141,7 @@ impl Workspace {
                         else {
                             continue;
                         };
-                        let mut h = std::collections::hash_map::DefaultHasher::new();
-                        text.hash(&mut h);
-                        let hash = h.finish();
+                        let hash = text_hash(&text);
                         let counts = match cache.get(&file) {
                             Some((cached, counts)) if *cached == hash => *counts,
                             _ => {
@@ -1481,7 +1498,7 @@ impl Workspace {
         if changed {
             self.active = self.active.min(self.buffers.len().saturating_sub(1));
             self.remember_session();
-            self.reindex(cx);
+            self.reindex_all(cx);
             self.apply_diagnostics(cx);
             self.build(cx);
         }
@@ -1617,7 +1634,7 @@ impl Workspace {
         }
         self.files.update(cx, |f, cx| f.refresh(cx));
         self.git.update(cx, |g, cx| g.refresh(cx));
-        self.reindex(cx);
+        self.reindex_all(cx);
         self.remember_session();
     }
 
@@ -2520,7 +2537,7 @@ impl Workspace {
         };
         window.push_notification(Notification::success(message).title("Citation added"), cx);
         self.files.update(cx, |f, cx| f.refresh(cx));
-        self.reindex(cx);
+        self.reindex_all(cx);
     }
 
     /// Cite `key` at the cursor of the active file: inside a `\cite{…}`, as
@@ -3429,35 +3446,44 @@ impl Workspace {
         let editor = b.editor.clone();
         let previous = b.spell.language;
         let root = self.root.clone().filter(|r| *r != path);
-        let root_text = root
-            .as_ref()
-            .and_then(|r| self.buffers.iter().find(|b| &b.path == r))
-            .map(|b| b.editor.read(cx).text().to_string());
-        let (index, root_index) = {
-            let project = self.project.read().unwrap();
-            let index = project.index(&path).cloned();
-            (index, root.as_ref().and_then(|r| project.index(r).cloned()))
-        };
         let region = self.spell.region.clone();
         let fallback = self.spell.fallback;
         let words = self.spell.words.clone();
         let color = cx.theme().danger;
         let task = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
-            let Ok(text) = this.update(cx, |_, cx| editor.read(cx).text().to_string()) else {
+            // Read once the typing pauses, not on every keystroke: the texts and
+            // indexes are as big as the files.
+            let Ok(job) = this.update(cx, |this, cx| {
+                // Only detecting the language looks at the root and the indexes.
+                let (root_text, index, root_index) = match chosen {
+                    Some(_) => (None, None, None),
+                    None => {
+                        let root_text = root
+                            .as_ref()
+                            .and_then(|r| this.buffers.iter().find(|b| &b.path == r))
+                            .map(|b| b.editor.read(cx).text().to_string());
+                        let project = this.project.read().unwrap();
+                        let index = project.index(&path).cloned();
+                        let root_index = root.as_ref().and_then(|r| project.index(r).cloned());
+                        (root_text, index, root_index)
+                    }
+                };
+                spell::Job {
+                    text: editor.read(cx).text().to_string(),
+                    chosen,
+                    previous,
+                    index,
+                    root,
+                    root_text,
+                    root_index,
+                    region,
+                    fallback,
+                }
+            }) else {
                 return;
             };
-            let job = spell::Job {
-                text: text.clone(),
-                chosen,
-                previous,
-                index,
-                root,
-                root_text,
-                root_index,
-                region,
-                fallback,
-            };
+            let text = job.text.clone();
             let analysis = cx
                 .background_spawn(async move { spell::analyze(job) })
                 .await;
@@ -5622,6 +5648,14 @@ fn png_of(bitmap: pdf_view::Bitmap) -> Result<String, image::ImageError> {
     let mut png = std::io::Cursor::new(Vec::new());
     image.write_to(&mut png, image::ImageFormat::Png)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(png.into_inner()))
+}
+
+/// A hash of `text`, to know whether it changed without keeping a copy.
+fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
 }
 
 /// `12,345`.
