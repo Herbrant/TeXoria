@@ -1190,6 +1190,21 @@ impl Workspace {
         self.reindex(cx);
     }
 
+    /// Read the project's bibliographies from disk again and re-index. Those open are
+    /// read from disk too: parsed again, their unsaved text comes back.
+    fn reload_bibs(&mut self, cx: &mut Context<Self>) {
+        {
+            let mut project = self.project.write().unwrap();
+            project.reload_bibs();
+            for b in &mut self.buffers {
+                if project.is_bib(&b.path) {
+                    b.indexed = None;
+                }
+            }
+        }
+        self.reindex(cx);
+    }
+
     /// Count the words of every file of the project in the background,
     /// reading open files from `texts`.
     fn count_words(&mut self, texts: &[(Entity<EditorState>, Arc<str>)], cx: &mut Context<Self>) {
@@ -2968,8 +2983,7 @@ impl Workspace {
                     self.pdf.update(cx, |p, cx| p.load(pdf, out.synctex, cx));
                 }
                 // .bib files may have been edited outside the app.
-                self.project.write().unwrap().reload_bibs();
-                self.reindex(cx);
+                self.reload_bibs(cx);
             }
         }
         cx.notify();

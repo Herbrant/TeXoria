@@ -245,6 +245,32 @@ fn reindexing_parses_only_the_buffers_that_changed(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn an_open_bibliography_keeps_its_unsaved_entries_after_a_build(cx: &mut TestAppContext) {
+    let (dir, window, workspace) = sample(cx);
+    let bib = paths::canonical(&dir.path().join("refs.bib"));
+    let has_key = |cx: &mut TestAppContext| {
+        workspace.read_with(cx, |ws, _| {
+            (ws.project.read().unwrap().bib_entries()).any(|e| e.key == "unsaved")
+        })
+    };
+    with(cx, window, &workspace, |ws, window, cx| {
+        ws.activate_file(bib.clone(), window, cx);
+        let b = ws.buffers.iter().find(|b| b.path == bib).unwrap();
+        b.editor.update(cx, |state, cx| {
+            state.set_selected_range(0..0, cx);
+            state.insert("@misc{unsaved, title={Unsaved}}\n".to_string(), window, cx);
+        });
+        ws.reindex(cx);
+    });
+    cx.run_until_parked();
+    assert!(has_key(cx));
+    // What a build's end does: the file on disk does not have the entry.
+    with(cx, window, &workspace, |ws, _, cx| ws.reload_bibs(cx));
+    cx.run_until_parked();
+    assert!(has_key(cx));
+}
+
+#[gpui::test]
 fn the_status_bar_counts_the_listed_problems(cx: &mut TestAppContext) {
     let (dir, window, workspace) = sample(cx);
     let diagnostic = |severity, message: &str| Diagnostic {
