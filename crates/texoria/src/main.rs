@@ -25,6 +25,7 @@ mod settings_window;
 mod spell;
 mod text;
 mod theme;
+mod underlines;
 mod updater;
 mod vim;
 mod workspace;

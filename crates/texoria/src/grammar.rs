@@ -3,7 +3,6 @@
 //! TeXoria), the checks in the background, the underlines, the corrections
 //! and the hover. `Workspace` decides when a buffer is checked.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
@@ -13,17 +12,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Result;
-use gpui_kit::component::input::{
-    CodeActionProvider, EditorState, TextDecoration, TextDecorationCollection,
-};
+use gpui_kit::component::input::{CodeActionProvider, EditorState};
 use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::*;
-use lsp_types::{CodeAction, CodeActionKind};
+use lsp_types::CodeAction;
 use serde_json::json;
 use tex_spell::grammar::{self, Problem, Server};
 
 use crate::latex::HoverNote;
 use crate::spell::ReplaceMisspelling;
+use crate::underlines::{self, Notes};
 
 /// Pause after the last keystroke before a buffer is checked again: a check
 /// costs the server more than a spelling check.
@@ -192,39 +190,23 @@ fn relative(problems: Vec<Problem>, chunk: std::ops::Range<usize>) -> Vec<Proble
         .collect()
 }
 
-/// An underlined finding: where it was, the text there, and the finding.
-struct Note {
-    start: usize,
-    text: String,
-    problem: Problem,
-}
-
-type Notes = Rc<RefCell<Vec<Note>>>;
-
 /// A buffer's grammar checking.
 pub struct BufferGrammar {
-    underlines: TextDecorationCollection,
-    notes: Notes,
+    notes: Notes<Problem>,
     pub task: Task<()>,
 }
 
 impl BufferGrammar {
     /// Set up grammar checking in `editor`: its underlines and corrections.
     pub fn new(editor: &Entity<EditorState>, cx: &mut App) -> Self {
-        let notes: Notes = Rc::default();
-        let underlines = editor.update(cx, |state, cx| {
-            let underlines = state.create_decorations_collection(vec![], cx);
-            state
-                .lsp_mut()
-                .code_action_providers
-                .push(Rc::new(GrammarActions {
-                    underlines: underlines.clone(),
-                    notes: notes.clone(),
-                }));
-            underlines
+        let notes = Notes::new(editor, cx);
+        let actions = Rc::new(GrammarActions {
+            notes: notes.clone(),
+        });
+        editor.update(cx, |state, _| {
+            state.lsp_mut().code_action_providers.push(actions);
         });
         Self {
-            underlines,
             notes,
             task: Task::ready(()),
         }
@@ -237,52 +219,19 @@ impl BufferGrammar {
         color: Hsla,
         cx: &mut App,
     ) {
-        let text = editor.read(cx).text().clone();
-        let style = HighlightStyle {
-            underline: Some(UnderlineStyle {
-                thickness: px(1.),
-                color: Some(color),
-                wavy: true,
-            }),
-            ..Default::default()
-        };
-        let mut notes = Vec::new();
-        let mut decorations = Vec::new();
-        for p in problems {
-            let r = p.range.clone();
-            if r.is_empty()
-                || r.end > text.len()
-                || !text.is_char_boundary(r.start)
-                || !text.is_char_boundary(r.end)
-            {
-                continue;
-            }
-            decorations.push(TextDecoration::new(r.clone(), style));
-            notes.push(Note {
-                start: r.start,
-                text: text.slice(r).to_string(),
-                problem: p,
-            });
-        }
-        *self.notes.borrow_mut() = notes;
-        self.underlines.set(decorations, cx);
+        let items = problems.into_iter().map(|p| (p.range.clone(), color, p));
+        self.notes.set(editor, items, cx);
     }
 
     pub fn clear(&mut self, cx: &mut App) {
         self.task = Task::ready(());
-        self.notes.borrow_mut().clear();
-        self.underlines.clear(cx);
+        self.notes.clear(cx);
     }
 
     pub fn hover_note(&self, editor: &Entity<EditorState>) -> HoverNote {
-        let (underlines, notes, editor) = (
-            self.underlines.clone(),
-            self.notes.clone(),
-            editor.downgrade(),
-        );
+        let (notes, editor) = (self.notes.clone(), editor.downgrade());
         Rc::new(move |offset, cx| {
-            let editor = editor.upgrade()?;
-            let (_, problem) = problem_at(&editor, &underlines, &notes, offset, cx)?;
+            let (_, problem) = notes.at(&editor.upgrade()?, offset, cx)?;
             Some(format!("✎ {}", problem.message))
         })
     }
@@ -293,11 +242,10 @@ impl BufferGrammar {
         &self,
         editor: Entity<EditorState>,
     ) -> impl Fn(NativeMenu, &mut App) -> NativeMenu + 'static {
-        let (underlines, notes) = (self.underlines.clone(), self.notes.clone());
+        let notes = self.notes.clone();
         move |mut menu, cx| {
             let cursor = editor.read(cx).cursor();
-            let Some((range, problem)) = problem_at(&editor, &underlines, &notes, cursor, cx)
-            else {
+            let Some((range, problem)) = notes.at(&editor, cursor, cx) else {
                 return menu;
             };
             for text in &problem.replacements {
@@ -305,7 +253,7 @@ impl BufferGrammar {
                     range: range.clone(),
                     text: text.clone(),
                 };
-                menu = menu.menu(display(text), Box::new(action));
+                menu = menu.menu(underlines::display(text), Box::new(action));
             }
             menu.menu(
                 format!("Ignore “{}”", problem.rule),
@@ -318,40 +266,9 @@ impl BufferGrammar {
     }
 }
 
-/// A replacement as a menu item (a space alone would show nothing).
-fn display(text: &str) -> String {
-    if text.trim().is_empty() {
-        "(remove)".to_string()
-    } else {
-        text.to_string()
-    }
-}
-
-/// The finding underlined at `offset`, and where it is now.
-fn problem_at(
-    editor: &Entity<EditorState>,
-    underlines: &TextDecorationCollection,
-    notes: &Notes,
-    offset: usize,
-    cx: &App,
-) -> Option<(Range<usize>, Problem)> {
-    let range = underlines
-        .get_ranges(cx)
-        .into_iter()
-        .find(|r| r.start <= offset && offset <= r.end)?;
-    let text = editor.read(cx).text().slice(range.clone()).to_string();
-    let notes = notes.borrow();
-    let note = notes
-        .iter()
-        .filter(|n| n.text == text)
-        .min_by_key(|n| n.start.abs_diff(range.start))?;
-    Some((range, note.problem.clone()))
-}
-
 /// Corrections as code actions (⌘. / Ctrl+.).
 struct GrammarActions {
-    underlines: TextDecorationCollection,
-    notes: Notes,
+    notes: Notes<Problem>,
 }
 
 impl CodeActionProvider for GrammarActions {
@@ -366,20 +283,13 @@ impl CodeActionProvider for GrammarActions {
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
-        let Some((range, problem)) =
-            problem_at(&state, &self.underlines, &self.notes, range.start, cx)
-        else {
+        let Some((range, problem)) = self.notes.at(&state, range.start, cx) else {
             return Task::ready(Ok(Vec::new()));
         };
         let mut actions: Vec<CodeAction> = problem
             .replacements
             .iter()
-            .map(|text| CodeAction {
-                title: format!("Change to “{}”", display(text)),
-                kind: Some(CodeActionKind::QUICKFIX),
-                data: Some(json!({ "start": range.start, "end": range.end, "text": text })),
-                ..Default::default()
-            })
+            .map(|text| underlines::replacement(&range, text))
             .collect();
         actions.push(CodeAction {
             title: format!("Ignore “{}” ({})", problem.rule, problem.message),
@@ -397,21 +307,15 @@ impl CodeActionProvider for GrammarActions {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        // The editor is being updated: the workspace applies it afterwards.
-        let data = action.data.unwrap_or_default();
-        let field = |k: &str| data.get(k).and_then(|v| v.as_str()).map(str::to_string);
-        let offset = |k: &str| data.get(k).and_then(|v| v.as_u64()).map(|v| v as usize);
-        if let Some(rule) = field("ignore") {
-            window.dispatch_action(Box::new(IgnoreGrammarRule { rule }), cx);
-        } else if let (Some(start), Some(end), Some(text)) =
-            (offset("start"), offset("end"), field("text"))
-        {
-            let action = ReplaceMisspelling {
-                range: start..end,
-                text,
-            };
-            window.dispatch_action(Box::new(action), cx);
-        }
+        underlines::perform(
+            action,
+            |data| {
+                let rule = data.get("ignore")?.as_str()?.to_string();
+                Some(Box::new(IgnoreGrammarRule { rule }))
+            },
+            window,
+            cx,
+        );
         Task::ready(Ok(()))
     }
 }

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use gpui_kit::{TestAppContext, VisualTestContext, WindowHandle, base::Root};
+use lsp_types::CodeActionKind;
 use tex_spell::Source;
 
 use super::*;

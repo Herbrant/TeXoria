@@ -2,37 +2,25 @@
 //! follow edits (editor diagnostics are cleared on every edit) and their
 //! message on hover.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
-use gpui_kit::component::input::{EditorState, TextDecoration, TextDecorationCollection};
+use gpui_kit::component::input::EditorState;
 use gpui_kit::*;
 use tex_log::{Diagnostic, Severity};
 use tex_project::check::{Issue, Level};
 
 use crate::latex::HoverNote;
+use crate::underlines::Notes;
 
-/// An underlined issue: where it was, the text there, and what is wrong.
-struct Note {
-    start: usize,
-    text: String,
-    message: String,
-}
-
-/// A buffer's underlined issues.
+/// A buffer's underlined issues, with their message.
 pub struct BufferChecks {
-    underlines: TextDecorationCollection,
-    notes: Rc<RefCell<Vec<Note>>>,
+    notes: Notes<String>,
 }
 
 impl BufferChecks {
     pub fn new(editor: &Entity<EditorState>, cx: &mut App) -> Self {
-        let underlines = editor.update(cx, |state, cx| {
-            state.create_decorations_collection(vec![], cx)
-        });
         Self {
-            underlines,
-            notes: Rc::default(),
+            notes: Notes::new(editor, cx),
         }
     }
 
@@ -44,67 +32,30 @@ impl BufferChecks {
         colors: (Hsla, Hsla),
         cx: &mut App,
     ) {
-        let text = editor.read(cx).text().clone();
-        let mut notes = Vec::new();
-        let mut decorations = Vec::new();
-        for issue in issues {
-            let range = issue.range.start.min(text.len())..issue.range.end.min(text.len());
-            if range.is_empty()
-                || !text.is_char_boundary(range.start)
-                || !text.is_char_boundary(range.end)
-            {
-                continue;
-            }
+        let len = editor.read(cx).text().len();
+        let items = issues.iter().map(|issue| {
+            let range = issue.range.start.min(len)..issue.range.end.min(len);
             let color = match issue.level {
                 Level::Error => colors.0,
                 Level::Warning => colors.1,
             };
-            notes.push(Note {
-                start: range.start,
-                text: text.slice(range.clone()).to_string(),
-                message: issue.message.clone(),
-            });
-            decorations.push(TextDecoration::new(range, underline(color)));
-        }
-        *self.notes.borrow_mut() = notes;
-        self.underlines.set(decorations, cx);
+            (range, color, issue.message.clone())
+        });
+        self.notes.set(editor, items, cx);
     }
 
     pub fn clear(&self, cx: &mut App) {
-        self.notes.borrow_mut().clear();
-        self.underlines.clear(cx);
+        self.notes.clear(cx);
     }
 
     /// The message of the issue under an offset, for the hover.
     pub fn hover_note(&self, editor: &Entity<EditorState>) -> HoverNote {
-        let underlines = self.underlines.clone();
         let notes = self.notes.clone();
         let editor = editor.downgrade();
         Rc::new(move |offset, cx| {
-            let range = underlines
-                .get_ranges(cx)
-                .into_iter()
-                .find(|r| r.start <= offset && offset <= r.end)?;
-            let editor = editor.upgrade()?;
-            let text = editor.read(cx).text().slice(range.clone()).to_string();
-            let notes = notes.borrow();
-            let note = notes
-                .iter()
-                .filter(|n| n.text == text)
-                .min_by_key(|n| n.start.abs_diff(range.start))?;
-            Some(format!("⚠ {}", note.message))
+            let (_, message) = notes.at(&editor.upgrade()?, offset, cx)?;
+            Some(format!("⚠ {message}"))
         })
-    }
-}
-
-fn underline(color: Hsla) -> HighlightStyle {
-    HighlightStyle {
-        underline: Some(UnderlineStyle {
-            thickness: px(1.),
-            color: Some(color),
-            wavy: true,
-        }),
-        ..Default::default()
     }
 }
 

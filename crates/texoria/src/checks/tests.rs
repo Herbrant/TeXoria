@@ -97,7 +97,7 @@ fn underlines_only_ranges_of_the_text(cx: &mut TestAppContext) {
         checks.set(&editor, &refs, colors(), cx);
         checks
     });
-    let ranges = cx.read(|cx| checks.underlines.get_ranges(cx));
+    let ranges = cx.read(|cx| checks.notes.ranges(cx));
     assert_eq!(
         ranges,
         [
@@ -106,11 +106,10 @@ fn underlines_only_ranges_of_the_text(cx: &mut TestAppContext) {
             TEXT.len() - 2..TEXT.len()
         ]
     );
-    let notes = checks.notes.borrow();
-    let messages: Vec<&str> = notes.iter().map(|n| n.message.as_str()).collect();
+    let notes = checks.notes.noted();
+    let messages: Vec<&str> = notes.iter().map(|(_, m)| m.as_str()).collect();
     assert_eq!(messages, ["No label nope (1)", "No label nope (2)", "tail"]);
-    assert_eq!(notes[2].text, "}.");
-    drop(notes);
+    assert_eq!(notes[2].0, "}.");
 
     let hover = checks.hover_note(&editor);
     let note = |cx: &mut VisualTestContext, offset| cx.read(|cx| hover(offset, cx));
@@ -138,8 +137,8 @@ fn underlines_only_ranges_of_the_text(cx: &mut TestAppContext) {
     assert_eq!(note(cx, first + 6), None);
 
     cx.update(|_, cx| checks.clear(cx));
-    assert!(cx.read(|cx| checks.underlines.get_ranges(cx)).is_empty());
-    assert!(checks.notes.borrow().is_empty());
+    assert!(cx.read(|cx| checks.notes.ranges(cx)).is_empty());
+    assert!(checks.notes.noted().is_empty());
     assert_eq!(note(cx, second + 6), None);
 
     // Once the editor is gone, there is nothing to say.
@@ -147,13 +146,6 @@ fn underlines_only_ranges_of_the_text(cx: &mut TestAppContext) {
     drop(editor);
     cx.run_until_parked();
     assert_eq!(note(cx, first + 1), None);
-}
-
-#[test]
-fn underline_style() {
-    let style = underline(gpui_kit::red()).underline.unwrap();
-    assert!(style.wavy);
-    assert_eq!(style.color, Some(gpui_kit::red()));
 }
 
 #[gpui::test]
@@ -172,8 +164,8 @@ fn the_workspace_underlines_what_the_checks_find(cx: &mut TestAppContext) {
             let (editor, _, checks) = ws.buffer_parts(&main).unwrap();
             let text = editor.read(cx).text().to_string();
             checks
-                .underlines
-                .get_ranges(cx)
+                .notes
+                .ranges(cx)
                 .into_iter()
                 .map(|r| text[r].to_string())
                 .collect::<Vec<_>>()

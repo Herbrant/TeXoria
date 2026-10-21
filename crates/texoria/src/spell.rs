@@ -17,11 +17,13 @@ use gpui_kit::component::input::{
 };
 use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::*;
-use lsp_types::{CodeAction, CodeActionKind};
+use lsp_types::CodeAction;
 use serde_json::json;
 use tex_spell::lang::{self, Clues};
 use tex_spell::{Detection, Source, Speller, Store, catalog, extract};
 use tex_syntax::Index;
+
+use crate::underlines;
 
 /// Pause after the last keystroke before a buffer is checked again.
 pub const DELAY: Duration = Duration::from_millis(300);
@@ -253,14 +255,7 @@ pub fn analyze(job: Job) -> Analysis {
 }
 
 pub fn underlines(ranges: Vec<Range<usize>>, color: Hsla) -> Vec<TextDecoration> {
-    let style = HighlightStyle {
-        underline: Some(UnderlineStyle {
-            thickness: px(1.),
-            color: Some(color),
-            wavy: true,
-        }),
-        ..Default::default()
-    };
+    let style = underlines::wavy(color);
     ranges
         .into_iter()
         .map(|range| TextDecoration { range, style })
@@ -274,10 +269,7 @@ fn misspelling_at(
     offset: usize,
     cx: &App,
 ) -> Option<(Range<usize>, String)> {
-    let range = underlines
-        .get_ranges(cx)
-        .into_iter()
-        .find(|r| r.start <= offset && offset <= r.end)?;
+    let range = underlines::range_at(underlines, offset, cx)?;
     let word = editor.read(cx).text().slice(range.clone()).to_string();
     Some((range, word))
 }
@@ -308,12 +300,7 @@ impl CodeActionProvider for SpellActions {
             let mut actions: Vec<CodeAction> = speller
                 .suggest(&word, SUGGESTIONS)
                 .into_iter()
-                .map(|text| CodeAction {
-                    title: format!("Change to “{text}”"),
-                    kind: Some(CodeActionKind::QUICKFIX),
-                    data: Some(json!({ "start": range.start, "end": range.end, "text": text })),
-                    ..Default::default()
-                })
+                .map(|text| underlines::replacement(&range, &text))
                 .collect();
             actions.push(CodeAction {
                 title: format!("Add “{word}” to Dictionary"),
@@ -332,21 +319,15 @@ impl CodeActionProvider for SpellActions {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        // The editor is being updated: the workspace applies it afterwards.
-        let data = action.data.unwrap_or_default();
-        let field = |k: &str| data.get(k).and_then(|v| v.as_str()).map(str::to_string);
-        let offset = |k: &str| data.get(k).and_then(|v| v.as_u64()).map(|v| v as usize);
-        if let Some(word) = field("add") {
-            window.dispatch_action(Box::new(AddToDictionary { word }), cx);
-        } else if let (Some(start), Some(end), Some(text)) =
-            (offset("start"), offset("end"), field("text"))
-        {
-            let action = ReplaceMisspelling {
-                range: start..end,
-                text,
-            };
-            window.dispatch_action(Box::new(action), cx);
-        }
+        underlines::perform(
+            action,
+            |data| {
+                let word = data.get("add")?.as_str()?.to_string();
+                Some(Box::new(AddToDictionary { word }))
+            },
+            window,
+            cx,
+        );
         Task::ready(Ok(()))
     }
 }
