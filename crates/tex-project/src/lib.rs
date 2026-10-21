@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 pub use bib::BibEntry;
 use tex_syntax::{Include, IncludeKind, Index, Label, OutlineItem, UserCommand};
+use tex_sys::paths::lexical as normalize;
 
 /// Upper bound on files pulled in through includes, as a guard against
 /// pathological projects.
@@ -371,21 +372,6 @@ fn resolve_with_ext(root_dir: &Path, path: &str, ext: &str) -> PathBuf {
     };
     let joined = if p.is_absolute() { p } else { root_dir.join(p) };
     normalize(&joined)
-}
-
-fn normalize(p: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = PathBuf::new();
-    for c in p.components() {
-        match c {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// Determine the root file for `file`:
@@ -873,16 +859,6 @@ mod tests {
         use proptest::prelude::*;
 
         proptest! {
-            #[test]
-            fn normalize_is_idempotent(path in "(/|)([a-z]{1,3}|\\.|\\.\\.)(/([a-z]{1,3}|\\.|\\.\\.)){0,6}") {
-                let once = normalize(Path::new(&path));
-                prop_assert_eq!(normalize(&once), once.clone());
-                prop_assert!(once.components().all(|c| !matches!(
-                    c,
-                    std::path::Component::CurDir | std::path::Component::ParentDir
-                )));
-            }
-
             #[test]
             fn the_extension_is_added_once(name in "[a-z]{1,4}(\\.[a-z]{1,3})?") {
                 let p = resolve_tex(Path::new("/p"), &name);

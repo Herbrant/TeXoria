@@ -278,13 +278,13 @@ fn git_files(dir: &Path) -> Vec<PathBuf> {
             .as_deref()
             .and_then(|s| s.trim_end().strip_prefix("gitdir:"))
         {
-            Some(path) => lexical(&top.join(path.trim())),
+            Some(path) => tex_sys::paths::lexical(&top.join(path.trim())),
             None => return out,
         }
     };
     // A linked worktree has the configuration and hooks of the main one.
     let common = std::fs::read_to_string(gitdir.join("commondir"))
-        .map(|c| lexical(&gitdir.join(c.trim())))
+        .map(|c| tex_sys::paths::lexical(&gitdir.join(c.trim())))
         .unwrap_or_else(|_| gitdir.clone());
     let mut configs = vec![common.join("config")];
     if common != gitdir {
@@ -329,26 +329,8 @@ fn hooks_path(config: &Path, top: &Path) -> Option<PathBuf> {
     let path = found.filter(|p| !p.is_empty())?;
     Some(match path.strip_prefix("~/") {
         Some(rest) => tex_sys::paths::home(&tex_sys::paths::process_env)?.join(rest),
-        None => lexical(&top.join(path)),
+        None => tex_sys::paths::lexical(&top.join(path)),
     })
-}
-
-/// `path` without its `.` and `..` (read as going up a name, without links).
-fn lexical(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::CurDir => {}
-            Component::ParentDir
-                if matches!(out.components().next_back(), Some(Component::Normal(_))) =>
-            {
-                out.pop();
-            }
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 fn bytes(s: &Snapshot) -> Option<Vec<u8>> {

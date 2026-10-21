@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use flate2::read::GzDecoder;
 
@@ -374,34 +374,13 @@ fn number(s: &str) -> Option<f32> {
 
 /// Resolve `path` against `base` and drop `.` / `..` components lexically.
 fn normalize(base: &Path, path: &str) -> PathBuf {
-    let p = Path::new(path);
-    let joined = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        base.join(p)
-    };
-    let mut out = PathBuf::new();
-    for c in joined.components() {
-        match c {
-            Component::CurDir => {}
-            Component::ParentDir => match out.components().next_back() {
-                Some(Component::Normal(_)) => {
-                    out.pop();
-                }
-                // `/..` is `/`.
-                Some(Component::RootDir | Component::Prefix(_)) => {}
-                // Above a relative base: keep climbing.
-                _ => out.push(".."),
-            },
-            other => out.push(other),
-        }
-    }
-    out
+    tex_sys::paths::lexical(&base.join(path))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Component;
 
     const SAMPLE: &str = "\
 SyncTeX Version:1

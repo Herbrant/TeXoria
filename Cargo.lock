@@ -6878,6 +6878,7 @@ dependencies = [
  "proptest",
  "tempfile",
  "test-support",
+ "tex-sys",
  "thiserror 2.0.21",
 ]
 
@@ -7134,6 +7135,7 @@ dependencies = [
  "test-support",
  "tex-spell",
  "tex-syntax",
+ "tex-sys",
 ]
 
 [[package]]
@@ -7172,6 +7174,7 @@ name = "tex-sys"
 version = "0.6.0"
 dependencies = [
  "libc",
+ "proptest",
  "sha2 0.10.9",
  "tempfile",
  "which",

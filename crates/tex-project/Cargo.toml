@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 tex-syntax.workspace = true
+tex-sys.workspace = true
 regex.workspace = true
 
 [dev-dependencies]

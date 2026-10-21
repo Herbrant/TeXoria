@@ -52,6 +52,27 @@ fn unverbatim(path: &str) -> Option<String> {
         .then(|| rest.to_string())
 }
 
+/// `path` without its `.` and `..`, read as names (links are not followed): `a/../b` is `b`,
+/// `/..` is `/`, and a relative path keeps the `..` that climb above it.
+pub fn lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => out.push(".."),
+            },
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// The user's home folder: `HOME`, else `USERPROFILE` (Windows); an empty value is no folder.
 pub fn home(env: Env) -> Option<PathBuf> {
     ["HOME", "USERPROFILE"]
@@ -157,6 +178,38 @@ mod tests {
         for plain in [plain, plain_drive] {
             assert_eq!(plain(Path::new(r"\\?\C:\x")), Path::new(r"\\?\C:\x"));
             assert_eq!(plain(Path::new("/a/b")), Path::new("/a/b"));
+        }
+    }
+
+    #[test]
+    fn lexical_paths() {
+        for (path, lexical_path) in [
+            ("/p/./a/./b/../c.tex", "/p/a/c.tex"),
+            ("/../../x.tex", "/x.tex"),
+            ("../x.tex", "../x.tex"),
+            ("../a/../../x.tex", "../../x.tex"),
+            ("a/b/../c.tex", "a/c.tex"),
+            ("a/../..", ".."),
+            ("./", ""),
+        ] {
+            assert_eq!(lexical(Path::new(path)), Path::new(lexical_path), "{path}");
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn lexical_paths_are_stable(
+            path in "(/|)([a-z]{1,3}|\\.|\\.\\.)(/([a-z]{1,3}|\\.|\\.\\.)){0,6}"
+        ) {
+            use std::path::Component;
+            let once = lexical(Path::new(&path));
+            proptest::prop_assert_eq!(lexical(&once), once.clone());
+            // No `.`, and `..` only first, climbing above a relative path.
+            let names: Vec<_> = once.components().collect();
+            proptest::prop_assert!(!names.contains(&Component::CurDir));
+            let ups = names.iter().take_while(|c| **c == Component::ParentDir).count();
+            proptest::prop_assert!(!names[ups..].contains(&Component::ParentDir));
+            proptest::prop_assert!(ups == 0 || !once.is_absolute());
         }
     }
 
