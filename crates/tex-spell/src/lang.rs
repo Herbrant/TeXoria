@@ -33,15 +33,7 @@ const MAX_PROSE: usize = 20_000;
 /// The language of a `% !TeX spellcheck = de_DE` magic comment (TeXShop,
 /// TeXstudio, TeXworks) in the first lines.
 pub fn magic_comment(text: &str) -> Option<&'static str> {
-    text.lines().take(20).find_map(|line| {
-        let l = line.trim_start();
-        let l = l.strip_prefix('%')?.trim_start_matches(['%', ' ', '\t']);
-        let rest = l
-            .get(..15)
-            .filter(|p| p.eq_ignore_ascii_case("!tex spellcheck"))?;
-        let value = l[rest.len()..].trim().strip_prefix('=')?;
-        catalog::resolve(value)
-    })
+    tex_syntax::magic_comments(text, "spellcheck").find_map(catalog::resolve)
 }
 
 /// The main language declared with babel or polyglossia (babel's is its

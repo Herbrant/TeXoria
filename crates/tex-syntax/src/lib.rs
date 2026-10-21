@@ -27,6 +27,31 @@ pub fn parse(text: &str, old: Option<&Tree>) -> Option<Tree> {
     parser.parse(text, old)
 }
 
+/// The value of the first `% !TeX key = value` magic comment (TeXShop, TeXworks, TeXstudio,
+/// LaTeX Workshop) in the first lines of `text`, trimmed. Like those editors, it ignores the
+/// case of `!TeX` and of `key`.
+pub fn magic_comment<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    magic_comments(text, key).next()
+}
+
+/// The values of all the `% !TeX key = value` magic comments of [`magic_comment`], in order.
+pub fn magic_comments<'a>(text: &'a str, key: &str) -> impl Iterator<Item = &'a str> {
+    text.lines().take(20).filter_map(move |line| {
+        let l = line.trim_start().strip_prefix('%')?;
+        let l = l.trim_start_matches(['%', ' ', '\t']);
+        let l = l
+            .get(..4)
+            .filter(|m| m.eq_ignore_ascii_case("!tex"))
+            .map(|_| &l[4..])?;
+        let l = l.strip_prefix(' ')?;
+        let rest = l
+            .get(..key.len())
+            .filter(|k| k.eq_ignore_ascii_case(key))
+            .map(|_| &l[key.len()..])?;
+        rest.trim().strip_prefix('=').map(str::trim)
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OutlineKind {
     Part,
@@ -671,6 +696,38 @@ fn find_caption<'t>(env: Node<'t>, text: &str) -> Option<Node<'t>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn magic_comments_in_the_first_lines() {
+        for line in [
+            "% !TeX root = main.tex",
+            "%!tex ROOT=main.tex",
+            "%% !TEX root =  main.tex  ",
+            "\t% !TeX root = main.tex",
+        ] {
+            assert_eq!(magic_comment(line, "root"), Some("main.tex"), "{line}");
+        }
+        let text = "\\documentclass{article}\n% !TeX spellcheck = de_DE\n% !TeX root = a.tex";
+        assert_eq!(magic_comment(text, "spellcheck"), Some("de_DE"));
+        assert_eq!(magic_comment(text, "root"), Some("a.tex"));
+        let two = "% !TeX spellcheck = xx\n% !TeX spellcheck = it";
+        assert_eq!(
+            magic_comments(two, "spellcheck").collect::<Vec<_>>(),
+            ["xx", "it"]
+        );
+        // Only in a comment, in the first 20 lines, with the key itself and an `=`.
+        for text in [
+            "!TeX root = main.tex",
+            "x % !TeX root = main.tex",
+            "% !TeX rootdir = main.tex",
+            "% !TeX root main.tex",
+            "% !TeXroot = main.tex",
+            "% é!TeX root = main.tex",
+            &format!("{}% !TeX root = main.tex", "\n".repeat(20)),
+        ] {
+            assert_eq!(magic_comment(text, "root"), None, "{text}");
+        }
+    }
 
     const DOC: &str = r#"\documentclass{article}
 \usepackage{amsmath,hyperref}

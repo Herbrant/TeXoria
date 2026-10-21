@@ -441,19 +441,7 @@ pub fn find_root(file: &Path, text: &str) -> PathBuf {
 /// The file named by a `% !TEX root = path` magic comment in the first lines of `file`.
 fn magic_root(file: &Path, text: &str) -> Option<PathBuf> {
     let dir = file.parent().unwrap_or(Path::new("."));
-    for line in text.lines().take(20) {
-        let l = line.trim_start_matches(['%', ' ', '\t']);
-        // TeXShop, TeXworks and LaTeX Workshop ignore its case.
-        const MAGIC: &str = "!TEX root";
-        let rest = l
-            .get(..MAGIC.len())
-            .filter(|m| m.eq_ignore_ascii_case(MAGIC))
-            .map(|_| &l[MAGIC.len()..]);
-        if let Some(path) = rest.and_then(|r| r.trim().strip_prefix('=')) {
-            return Some(normalize(&dir.join(path.trim())));
-        }
-    }
-    None
+    tex_syntax::magic_comment(text, "root").map(|path| normalize(&dir.join(path)))
 }
 
 #[cfg(test)]
@@ -740,6 +728,8 @@ mod tests {
         // Past the 20th line: not a magic comment any more.
         let late = format!("{}% !TEX root = ../main.tex", "\n".repeat(20));
         assert_eq!(find_root(file, &late), file);
+        // Nor outside a comment.
+        assert_eq!(find_root(file, "!TEX root = ../main.tex"), file);
         // The file itself, as a root.
         assert_eq!(find_root(file, "\\documentclass{article}"), file);
     }
