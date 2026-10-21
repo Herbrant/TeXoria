@@ -57,7 +57,7 @@ pub struct GitSandbox {
     pub git: tex_git::Git,
     /// The temporary folder, canonical.
     pub dir: PathBuf,
-    env: Vec<(&'static str, PathBuf)>,
+    raw: test_support::git::Isolated,
     _tmp: tempfile::TempDir,
 }
 
@@ -69,13 +69,14 @@ impl GitSandbox {
             return None;
         };
         let tmp = tempfile::tempdir().unwrap();
-        let env = test_support::git::isolated_env(tmp.path());
-        let git = (env.iter()).fold(tex_git::Git::at(found.program()), |g, (k, v)| g.env(k, v));
+        let raw = test_support::git::Isolated::new(found.program(), tmp.path());
+        let git =
+            (raw.env().iter()).fold(tex_git::Git::at(found.program()), |g, (k, v)| g.env(k, v));
         let dir = crate::paths::canonical(tmp.path());
         Some(GitSandbox {
             git,
             dir,
-            env,
+            raw,
             _tmp: tmp,
         })
     }
@@ -83,13 +84,7 @@ impl GitSandbox {
     /// git run in `dir` for the states a test sets up; it must succeed. Its output.
     #[track_caller]
     pub fn run(&self, dir: &Path, args: &[&str]) -> String {
-        let mut cmd = std::process::Command::new(self.git.program());
-        cmd.current_dir(dir).args(args).env("LC_ALL", "C");
-        cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
-        let out = cmd.output().unwrap();
-        let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
-        assert!(out.status.success(), "git {args:?}: {}", text(&out.stderr));
-        text(&out.stdout)
+        self.raw.ok(dir, args)
     }
 }
 

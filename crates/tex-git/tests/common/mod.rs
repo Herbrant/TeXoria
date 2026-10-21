@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use tex_git::{CommitOptions, Git, Repo};
 
@@ -12,7 +12,7 @@ use tex_git::{CommitOptions, Git, Repo};
 pub struct Sandbox {
     pub tmp: tempfile::TempDir,
     pub git: Git,
-    env: Vec<(&'static str, PathBuf)>,
+    raw: test_support::git::Isolated,
 }
 
 impl Sandbox {
@@ -23,11 +23,9 @@ impl Sandbox {
             return None;
         };
         let tmp = tempfile::tempdir().unwrap();
-        let env = test_support::git::isolated_env(tmp.path());
-        let git = env
-            .iter()
-            .fold(Git::at(found.program()), |git, (k, v)| git.env(k, v));
-        Some(Sandbox { tmp, git, env })
+        let raw = test_support::git::Isolated::new(found.program(), tmp.path());
+        let git = (raw.env().iter()).fold(Git::at(found.program()), |git, (k, v)| git.env(k, v));
+        Some(Sandbox { tmp, git, raw })
     }
 
     pub fn path(&self, rel: &str) -> PathBuf {
@@ -59,24 +57,13 @@ impl Sandbox {
 
     /// git run directly in `dir`, for states the crate does not create itself.
     pub fn raw(&self, dir: &Path, args: &[&str]) -> Output {
-        let mut cmd = Command::new(self.git.program());
-        cmd.current_dir(dir).args(args).env("LC_ALL", "C");
-        for (k, v) in &self.env {
-            cmd.env(k, v);
-        }
-        cmd.output().unwrap()
+        self.raw.raw(dir, args)
     }
 
     /// [`Sandbox::raw`], which must succeed: its standard output.
     #[track_caller]
     pub fn ok(&self, dir: &Path, args: &[&str]) -> String {
-        let out = self.raw(dir, args);
-        assert!(
-            out.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
+        self.raw.ok(dir, args)
     }
 }
 

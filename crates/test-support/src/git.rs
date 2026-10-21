@@ -17,3 +17,44 @@ pub fn isolated_env(home: &Path) -> Vec<(&'static str, PathBuf)> {
         ("HOME", home.to_path_buf()),
     ]
 }
+
+/// A git program run directly, with [`isolated_env`], for the states a test sets up.
+pub struct Isolated {
+    program: PathBuf,
+    env: Vec<(&'static str, PathBuf)>,
+}
+
+impl Isolated {
+    /// `program`, with its configuration in `home`.
+    pub fn new(program: impl Into<PathBuf>, home: &Path) -> Self {
+        Self {
+            program: program.into(),
+            env: isolated_env(home),
+        }
+    }
+
+    /// The environment it runs with.
+    pub fn env(&self) -> &[(&'static str, PathBuf)] {
+        &self.env
+    }
+
+    /// git `args` in `dir`, with English messages.
+    pub fn raw(&self, dir: &Path, args: &[&str]) -> std::process::Output {
+        std::process::Command::new(&self.program)
+            .current_dir(dir)
+            .args(args)
+            .env("LC_ALL", "C")
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .output()
+            .unwrap()
+    }
+
+    /// [`Isolated::raw`], which must succeed: its standard output, trimmed.
+    #[track_caller]
+    pub fn ok(&self, dir: &Path, args: &[&str]) -> String {
+        let out = self.raw(dir, args);
+        let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
+        assert!(out.status.success(), "git {args:?}: {}", text(&out.stderr));
+        text(&out.stdout)
+    }
+}
