@@ -32,6 +32,7 @@ use tex_project::files;
 use crate::assets::Glyph;
 use crate::atomic;
 use crate::tasks::Background as _;
+use crate::ui;
 
 /// How long a starting agent may take to answer (`npx` may download it).
 const START_TIMEOUT: Duration = Duration::from_secs(180);
@@ -1191,10 +1192,7 @@ impl AgentPanel {
             .child(div().flex_1().min_w_0().child(picker))
             .children(mode_picker)
             .child(
-                Button::new("agent-new-chat")
-                    .ghost()
-                    .icon(Glyph::NewChat)
-                    .tooltip("New chat")
+                ui::icon_button("agent-new-chat", Glyph::NewChat, "New chat")
                     .disabled(self.running || self.entries.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.new_chat(cx))),
             )
@@ -1506,12 +1504,7 @@ impl AgentPanel {
                         |d, s| {
                             let icon = Icon::new(s).small().text_color(color);
                             d.child(if running {
-                                icon.with_animation(
-                                    ("tool-spin", ix),
-                                    Animation::new(Duration::from_millis(900)).repeat(),
-                                    |icon, t| icon.transform(Transformation::rotate(percentage(t))),
-                                )
-                                .into_any_element()
+                                ui::spinning(icon, ("tool-spin", ix)).into_any_element()
                             } else {
                                 icon.into_any_element()
                             })
@@ -1803,10 +1796,9 @@ impl Render for AgentPanel {
                                 .gap_1p5()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child(Icon::new(Glyph::Spinner).small().with_animation(
+                                .child(ui::spinning(
+                                    Icon::new(Glyph::Spinner).small(),
                                     "agent-spin",
-                                    Animation::new(Duration::from_millis(900)).repeat(),
-                                    |icon, t| icon.transform(Transformation::rotate(percentage(t))),
                                 ))
                                 .child(label),
                         )
@@ -1815,11 +1807,7 @@ impl Render for AgentPanel {
             }
         };
         let chat = self.allowed && self.dir.is_some() && self.current().is_some();
-        v_flex()
-            .size_full()
-            .bg(theme.sidebar)
-            .border_r_1()
-            .border_color(theme.sidebar_border)
+        ui::sidebar(cx)
             .child(self.render_header(cx))
             .child(div().flex_1().min_h_0().flex().flex_col().child(body))
             .children(self.render_review(cx))

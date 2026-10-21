@@ -22,6 +22,7 @@ use tex_agent::CustomAgent;
 
 use crate::assets::Glyph;
 use crate::settings::{Settings, ThemeChoice};
+use crate::ui;
 use crate::updater::Updater;
 use crate::workspace::Workspace;
 
@@ -628,13 +629,11 @@ impl SettingsWindow {
                 .gap_2()
                 .child(div().flex_1().child(Input::new(input)))
                 .child(
-                    Button::new(("remove-server", ix))
-                        .ghost()
-                        .icon(Glyph::Close)
-                        .tooltip("Remove")
-                        .on_click(move |_, _, cx| {
+                    ui::icon_button(("remove-server", ix), Glyph::Close, "Remove").on_click(
+                        move |_, _, cx| {
                             let _ = view.update(cx, |this, cx| this.remove_server(ix, cx));
-                        }),
+                        },
+                    ),
                 )
         });
         let add = {
@@ -740,13 +739,11 @@ impl SettingsWindow {
                     .child(div().flex_1().child(Input::new(command)))
                     .child(div().w(px(120.)).child(Input::new(args)))
                     .child(
-                        Button::new(("remove-agent", ix))
-                            .ghost()
-                            .icon(Glyph::Close)
-                            .tooltip("Remove")
-                            .on_click(move |_, _, cx| {
+                        ui::icon_button(("remove-agent", ix), Glyph::Close, "Remove").on_click(
+                            move |_, _, cx| {
                                 let _ = view.update(cx, |this, cx| this.remove_agent(ix, cx));
-                            }),
+                            },
+                        ),
                     )
             });
         let add = {

@@ -27,6 +27,7 @@ mod spell;
 mod tasks;
 mod text;
 mod theme;
+mod ui;
 mod underlines;
 mod updater;
 mod vim;

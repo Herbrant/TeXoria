@@ -25,6 +25,7 @@ use synctex::{Rect, SyncTex};
 
 use crate::assets::Glyph;
 use crate::tasks::Background as _;
+use crate::ui;
 
 const MARGIN: f32 = 28.0;
 const GAP: f32 = 18.0;
@@ -1092,25 +1093,23 @@ impl PdfPane {
             .text_color(cx.theme().muted_foreground)
             .child(page)
             .child(
-                Button::new("pdf-window")
-                    .ghost()
-                    .icon(if self.detached {
+                ui::icon_button(
+                    "pdf-window",
+                    if self.detached {
                         Glyph::PanelRight
                     } else {
                         Glyph::Window
-                    })
-                    .tooltip(if self.detached {
+                    },
+                    if self.detached {
                         "Back to the main window (⇧⌘↵)"
                     } else {
                         "Open in a separate window (⇧⌘↵)"
-                    })
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PdfPaneEvent::ToggleWindow))),
+                    },
+                )
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(PdfPaneEvent::ToggleWindow))),
             )
             .child(
-                Button::new("pdf-export")
-                    .ghost()
-                    .icon(Glyph::Export)
-                    .tooltip("Export PDF… (⇧⌘S)")
+                ui::icon_button("pdf-export", Glyph::Export, "Export PDF… (⇧⌘S)")
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(PdfPaneEvent::Export))),
             )
             .child(

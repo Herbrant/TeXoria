@@ -55,6 +55,7 @@ use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspe
 use crate::tasks::Background as _;
 use crate::text::{plural, thousands};
 use crate::theme::{self, ThemeExt};
+use crate::ui;
 use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
     AddCitation, Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit,
@@ -4165,27 +4166,33 @@ impl Workspace {
                 .child(
                     buttons()
                         .child(
-                            Button::new("toggle-outline")
-                                .ghost()
-                                .icon(Glyph::PanelLeft)
-                                .tooltip("Outline and files (⌘1, ⇧⌘E)")
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            ui::icon_button(
+                                "toggle-outline",
+                                Glyph::PanelLeft,
+                                "Outline and files (⌘1, ⇧⌘E)",
+                            )
+                            .on_click(
+                                cx.listener(|this, _, _, cx| {
                                     this.toggle_sidebar(this.navigator, cx)
-                                })),
+                                }),
+                            ),
                         )
                         .when(has_project, |d| {
                             d.child(
-                                Button::new("toggle-search")
-                                    .ghost()
-                                    .icon(Glyph::Search)
-                                    .tooltip("Find in project (⇧⌘F)")
-                                    .on_click(cx.listener(|this, _, window, cx| {
+                                ui::icon_button(
+                                    "toggle-search",
+                                    Glyph::Search,
+                                    "Find in project (⇧⌘F)",
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| {
                                         if this.show_sidebar && this.sidebar == Sidebar::Search {
                                             this.toggle_sidebar(Sidebar::Search, cx);
                                         } else {
                                             this.find_in_project(window, cx);
                                         }
-                                    })),
+                                    },
+                                )),
                             )
                         })
                         .when(has_project, |d| {
@@ -4202,10 +4209,7 @@ impl Workspace {
                         })
                         .when(has_project, |d| {
                             d.child(
-                                Button::new("toggle-agent")
-                                    .ghost()
-                                    .icon(Glyph::Sparkles)
-                                    .tooltip("Agent (⇧⌘K)")
+                                ui::icon_button("toggle-agent", Glyph::Sparkles, "Agent (⇧⌘K)")
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         if this.show_sidebar && this.sidebar == Sidebar::Agent {
                                             this.toggle_sidebar(Sidebar::Agent, cx);
@@ -4248,28 +4252,23 @@ impl Workspace {
                                 .on_click(cx.listener(|this, _, _, cx| this.build(cx))),
                         )
                         .child(
-                            Button::new("theme")
-                                .ghost()
-                                .icon(if cx.theme_is_dark() {
+                            ui::icon_button(
+                                "theme",
+                                if cx.theme_is_dark() {
                                     Glyph::Sun
                                 } else {
                                     Glyph::Moon
-                                })
-                                .tooltip("Toggle light/dark")
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| {
-                                        this.toggle_theme(window, cx)
-                                    }),
-                                ),
+                                },
+                                "Toggle light/dark",
+                            )
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.toggle_theme(window, cx)),
+                            ),
                         )
                         .child(
-                            Button::new("settings")
-                                .ghost()
-                                .icon(Glyph::Settings)
-                                .tooltip("Settings (⌘,)")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_settings(window, cx)
-                                })),
+                            ui::icon_button("settings", Glyph::Settings, "Settings (⌘,)").on_click(
+                                cx.listener(|this, _, window, cx| this.open_settings(window, cx)),
+                            ),
                         ),
                 )
                 .child(div().w(px(6.))),
@@ -4328,12 +4327,7 @@ impl Workspace {
             .cursor_pointer()
             .hover(|s| s.bg(theme.accent))
             .child(if spinning {
-                icon.with_animation(
-                    "spin",
-                    Animation::new(Duration::from_millis(900)).repeat(),
-                    |icon, t| icon.transform(Transformation::rotate(percentage(t))),
-                )
-                .into_any_element()
+                ui::spinning(icon, "spin").into_any_element()
             } else {
                 icon.into_any_element()
             })
@@ -4370,11 +4364,7 @@ impl Workspace {
                 .on_click(cx.listener(move |this, _, _, cx| this.show_sidebar(kind, cx)))
         };
         let file_button = |id: &'static str, icon: Glyph, tooltip: &'static str| {
-            Button::new(id)
-                .ghost()
-                .icon(icon)
-                .tooltip(tooltip)
-                .disabled(self.root.is_none())
+            ui::icon_button(id, icon, tooltip).disabled(self.root.is_none())
         };
         let rows = outline::layout(&self.outline, &self.outline_fold);
         let open = outline::any_open(&rows);
@@ -4388,19 +4378,20 @@ impl Workspace {
             .child(div().flex_1())
             .when(!files, |d| {
                 d.child(
-                    Button::new("outline-fold-all")
-                        .ghost()
-                        .icon(if open {
+                    ui::icon_button(
+                        "outline-fold-all",
+                        if open {
                             Glyph::CollapseAll
                         } else {
                             Glyph::ExpandAll
-                        })
-                        .tooltip(if open { "Collapse All" } else { "Expand All" })
-                        .disabled(!rows.iter().any(|r| r.group.is_some()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.outline_fold.set_all(!open);
-                            cx.notify();
-                        })),
+                        },
+                        if open { "Collapse All" } else { "Expand All" },
+                    )
+                    .disabled(!rows.iter().any(|r| r.group.is_some()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.outline_fold.set_all(!open);
+                        cx.notify();
+                    })),
                 )
             })
             .when(files, |d| {
@@ -4437,14 +4428,7 @@ impl Workspace {
             self.render_outline(rows, cx).into_any_element()
         };
 
-        let theme = cx.theme();
-        v_flex()
-            .size_full()
-            .bg(theme.sidebar)
-            .border_r_1()
-            .border_color(theme.sidebar_border)
-            .child(header)
-            .child(body)
+        ui::sidebar(cx).child(header).child(body)
     }
 
     fn render_outline(&self, rows: Vec<outline::Row>, cx: &mut Context<Self>) -> AnyElement {
@@ -4711,86 +4695,56 @@ impl Workspace {
     }
 
     fn render_trust_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        h_flex()
-            .gap_3()
-            .px_3()
-            .py_1p5()
-            .text_sm()
-            .bg(theme.warning.opacity(0.12))
-            .border_b_1()
-            .border_color(theme.border)
-            .child(Icon::new(Glyph::Warning).xsmall().text_color(theme.warning))
-            .child(div().flex_1().text_color(theme.foreground).child(
-                "This project's latexmkrc can run arbitrary commands and is ignored \
-                         until you allow it.",
-            ))
-            .child(
-                Button::new("allow-rc")
-                    .warning()
-                    .label("Allow latexmkrc")
-                    .on_click(cx.listener(|this, _, _, cx| this.allow_rc(cx))),
-            )
+        ui::banner(
+            Glyph::Warning,
+            cx.theme().warning,
+            0.12,
+            "This project's latexmkrc can run arbitrary commands and is ignored until you \
+             allow it.",
+            Button::new("allow-rc")
+                .warning()
+                .label("Allow latexmkrc")
+                .on_click(cx.listener(|this, _, _, cx| this.allow_rc(cx))),
+            cx,
+        )
     }
 
     fn render_shell_escape_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        h_flex()
-            .gap_3()
-            .px_3()
-            .py_1p5()
-            .text_sm()
-            .bg(theme.warning.opacity(0.12))
-            .border_b_1()
-            .border_color(theme.border)
-            .child(Icon::new(Glyph::Warning).xsmall().text_color(theme.warning))
-            .child(div().flex_1().text_color(theme.foreground).child(
-                "This document runs programs while it builds (shell escape, for minted, svg, \
-                 pythontex…). Allow it only if you trust where the project comes from.",
-            ))
-            .child(
-                Button::new("allow-shell-escape")
-                    .warning()
-                    .label("Allow Shell Escape")
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.allow_shell_escape(window, cx)),
-                    ),
-            )
+        ui::banner(
+            Glyph::Warning,
+            cx.theme().warning,
+            0.12,
+            "This document runs programs while it builds (shell escape, for minted, svg, \
+             pythontex…). Allow it only if you trust where the project comes from.",
+            Button::new("allow-shell-escape")
+                .warning()
+                .label("Allow Shell Escape")
+                .on_click(cx.listener(|this, _, window, cx| this.allow_shell_escape(window, cx))),
+            cx,
+        )
     }
 
     /// Editing is paused while the agent works.
     fn render_agent_banner(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
         let name = self
             .agent
             .read(cx)
             .agent_name()
             .unwrap_or_else(|| "The agent".into());
-        h_flex()
-            .gap_3()
-            .px_3()
-            .py_1p5()
-            .text_sm()
-            .bg(theme.primary.opacity(0.10))
-            .border_b_1()
-            .border_color(theme.border)
-            .child(
-                Icon::new(Glyph::Sparkles)
-                    .xsmall()
-                    .text_color(theme.primary),
-            )
-            .child(div().flex_1().text_color(theme.foreground).child(format!(
-                "{name} is working: editing is paused until it is done."
-            )))
-            .child(
-                Button::new("agent-banner-stop")
-                    .outline()
-                    .icon(Glyph::Stop)
-                    .label("Stop")
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.agent.update(cx, |a, cx| a.cancel(cx))),
-                    ),
-            )
+        ui::banner(
+            Glyph::Sparkles,
+            cx.theme().primary,
+            0.10,
+            format!("{name} is working: editing is paused until it is done."),
+            Button::new("agent-banner-stop")
+                .outline()
+                .icon(Glyph::Stop)
+                .label("Stop")
+                .on_click(
+                    cx.listener(|this, _, _, cx| this.agent.update(cx, |a, cx| a.cancel(cx))),
+                ),
+            cx,
+        )
     }
 
     fn render_diagnostics(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -5272,10 +5226,9 @@ impl Workspace {
                         .gap_2()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child(Icon::new(Glyph::Spinner).xsmall().with_animation(
+                        .child(ui::spinning(
+                            Icon::new(Glyph::Spinner).xsmall(),
                             "clone-spin",
-                            Animation::new(Duration::from_millis(900)).repeat(),
-                            |icon, t| icon.transform(Transformation::rotate(percentage(t))),
                         ))
                         .child(
                             div()

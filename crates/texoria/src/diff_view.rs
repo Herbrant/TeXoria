@@ -19,6 +19,7 @@ use tex_git::{Commit, Error, Repo};
 use crate::assets::Glyph;
 use crate::latex;
 use crate::tasks::Background as _;
+use crate::ui;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffSource {
@@ -340,51 +341,39 @@ impl DiffView {
             })
             .when_some(file, |d, file| {
                 d.child(
-                    Button::new("diff-open")
-                        .ghost()
-                        .icon(Glyph::File)
-                        .tooltip("Open the file")
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.emit(DiffViewEvent::Open(file.clone()))
-                        })),
+                    ui::icon_button("diff-open", Glyph::File, "Open the file").on_click(
+                        cx.listener(move |_, _, _, cx| cx.emit(DiffViewEvent::Open(file.clone()))),
+                    ),
                 )
             })
             .child(
-                Button::new("diff-prev")
-                    .ghost()
-                    .icon(Glyph::PrevChange)
-                    .tooltip("Previous change")
-                    .on_click(cx.listener(|this, _, _, cx| {
+                ui::icon_button("diff-prev", Glyph::PrevChange, "Previous change").on_click(
+                    cx.listener(|this, _, _, cx| {
                         this.state.update(cx, |s, cx| s.previous_change(cx))
-                    })),
+                    }),
+                ),
             )
             .child(
-                Button::new("diff-next")
-                    .ghost()
-                    .icon(Glyph::NextChange)
-                    .tooltip("Next change")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.state.update(cx, |s, cx| s.next_change(cx))
-                    })),
+                ui::icon_button("diff-next", Glyph::NextChange, "Next change").on_click(
+                    cx.listener(|this, _, _, cx| this.state.update(cx, |s, cx| s.next_change(cx))),
+                ),
             )
             .when(!is_conflict, |d| {
                 d.child(
-                    Button::new("diff-mode")
-                        .ghost()
-                        .icon(if split { Glyph::Unified } else { Glyph::Split })
-                        .tooltip(if split {
+                    ui::icon_button(
+                        "diff-mode",
+                        if split { Glyph::Unified } else { Glyph::Split },
+                        if split {
                             "Unified view"
                         } else {
                             "Side by side"
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| this.set_split(!split, cx))),
+                        },
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_split(!split, cx))),
                 )
             })
             .child(
-                Button::new("diff-close")
-                    .ghost()
-                    .icon(Glyph::Close)
-                    .tooltip("Close (⌘W)")
+                ui::icon_button("diff-close", Glyph::Close, "Close (⌘W)")
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DiffViewEvent::Close))),
             )
     }
@@ -431,16 +420,17 @@ impl Render for DiffView {
                     .gap_1()
                     .when(exists, |d| {
                         d.child(
-                            Button::new(SharedString::from(format!("open-{}", path.display())))
-                                .ghost()
-                                .icon(Glyph::File)
-                                .tooltip("Open the file")
-                                .on_click(move |_, _, cx| {
-                                    let open = open.clone();
-                                    weak_open
-                                        .update(cx, |_, cx| cx.emit(DiffViewEvent::Open(open)))
-                                        .ok();
-                                }),
+                            ui::icon_button(
+                                SharedString::from(format!("open-{}", path.display())),
+                                Glyph::File,
+                                "Open the file",
+                            )
+                            .on_click(move |_, _, cx| {
+                                let open = open.clone();
+                                weak_open
+                                    .update(cx, |_, cx| cx.emit(DiffViewEvent::Open(open)))
+                                    .ok();
+                            }),
                         )
                     })
                     .child(

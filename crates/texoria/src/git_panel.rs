@@ -34,6 +34,7 @@ use crate::file_tree::GitMark;
 use crate::overleaf;
 use crate::tasks::Background as _;
 use crate::text::plural;
+use crate::ui;
 
 /// The message of the commit a Sync makes when the message box is empty.
 const SYNC_MESSAGE: &str = "Update from TeXoria";
@@ -1178,10 +1179,7 @@ impl GitPanel {
             })
             .when(!network_busy, |d| {
                 d.child(
-                    Button::new("git-fetch")
-                        .ghost()
-                        .icon(Glyph::Fetch)
-                        .tooltip("Fetch")
+                    ui::icon_button("git-fetch", Glyph::Fetch, "Fetch")
                         .disabled(busy || self.remotes.is_empty())
                         .on_click(cx.listener(|this, _, _, cx| this.fetch(cx))),
                 )
@@ -1399,10 +1397,7 @@ impl GitPanel {
             Section::Staged => {
                 let paths = paths.clone();
                 header = header.child(
-                    Button::new("git-unstage-all")
-                        .ghost()
-                        .icon(Glyph::Minus)
-                        .tooltip("Unstage all")
+                    ui::icon_button("git-unstage-all", Glyph::Minus, "Unstage all")
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.request(GitOp::Unstage(paths.clone()), cx)
@@ -1414,20 +1409,14 @@ impl GitPanel {
                 let discard = all.clone();
                 header = header
                     .child(
-                        Button::new("git-discard-all")
-                            .ghost()
-                            .icon(Glyph::Discard)
-                            .tooltip("Discard all changes")
+                        ui::icon_button("git-discard-all", Glyph::Discard, "Discard all changes")
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.confirm_discard(discard.clone(), window, cx)
                             })),
                     )
                     .child(
-                        Button::new("git-stage-all")
-                            .ghost()
-                            .icon(Glyph::Plus)
-                            .tooltip("Stage all")
+                        ui::icon_button("git-stage-all", Glyph::Plus, "Stage all")
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.request(GitOp::Stage(stage_paths.clone()), cx)
@@ -1511,10 +1500,7 @@ impl GitPanel {
         match section {
             Section::Staged => {
                 actions = actions.child(
-                    Button::new(("git-unstage", i))
-                        .ghost()
-                        .icon(Glyph::Minus)
-                        .tooltip("Unstage")
+                    ui::icon_button(("git-unstage", i), Glyph::Minus, "Unstage")
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.request(GitOp::Unstage(vec![path.clone()]), cx)
@@ -1526,24 +1512,24 @@ impl GitPanel {
                 let discard = entry.clone();
                 actions = actions
                     .child(
-                        Button::new(("git-discard", i))
-                            .ghost()
-                            .icon(Glyph::Discard)
-                            .tooltip(if entry.is_untracked() {
+                        ui::icon_button(
+                            ("git-discard", i),
+                            Glyph::Discard,
+                            if entry.is_untracked() {
                                 "Delete"
                             } else {
                                 "Discard changes"
-                            })
-                            .disabled(busy)
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                            },
+                        )
+                        .disabled(busy)
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
                                 this.confirm_discard(vec![discard.clone()], window, cx)
-                            })),
+                            },
+                        )),
                     )
                     .child(
-                        Button::new(("git-stage", i))
-                            .ghost()
-                            .icon(Glyph::Plus)
-                            .tooltip("Stage")
+                        ui::icon_button(("git-stage", i), Glyph::Plus, "Stage")
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.request(GitOp::Stage(vec![stage.clone()]), cx)
@@ -1552,10 +1538,7 @@ impl GitPanel {
             }
             Section::Conflicts => {
                 actions = actions.child(
-                    Button::new(("git-resolved", i))
-                        .ghost()
-                        .icon(Glyph::Check)
-                        .tooltip("Mark as resolved")
+                    ui::icon_button(("git-resolved", i), Glyph::Check, "Mark as resolved")
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.request(GitOp::Stage(vec![path.clone()]), cx)
@@ -1825,11 +1808,7 @@ impl Render for GitPanel {
         let theme = cx.theme();
         let ready = self.repo().is_some();
         let busy = self.busy;
-        v_flex()
-            .size_full()
-            .bg(theme.sidebar)
-            .border_r_1()
-            .border_color(theme.sidebar_border)
+        ui::sidebar(cx)
             .child(
                 h_flex()
                     .px_4()
@@ -1845,10 +1824,7 @@ impl Render for GitPanel {
                     })
                     .when(ready, |d| {
                         d.child(
-                            Button::new("git-refresh")
-                                .ghost()
-                                .icon(Glyph::Refresh)
-                                .tooltip("Refresh")
+                            ui::icon_button("git-refresh", Glyph::Refresh, "Refresh")
                                 .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                         )
                     }),
