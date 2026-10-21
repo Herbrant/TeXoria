@@ -94,11 +94,7 @@ impl Store {
         let files = self.cached(code);
         let dir = files.aff.parent().expect("cache file has a parent");
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(TIMEOUT))
-            .user_agent(tex_sys::download::USER_AGENT)
-            .build()
-            .into();
+        let agent = crate::agent(TIMEOUT);
         // Both files are verified before either is in place, so the cache never
         // holds half a dictionary.
         let mut temps = Vec::new();

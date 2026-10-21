@@ -219,11 +219,7 @@ struct Rule {
 
 impl Server {
     pub fn new(url: &str) -> Self {
-        let agent = ureq::Agent::config_builder()
-            .timeout_global(Some(TIMEOUT))
-            .user_agent(tex_sys::download::USER_AGENT)
-            .build()
-            .into();
+        let agent = crate::agent(TIMEOUT);
         Self {
             url: url.trim_end_matches('/').to_string(),
             agent,

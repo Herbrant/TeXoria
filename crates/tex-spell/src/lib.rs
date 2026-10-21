@@ -17,3 +17,12 @@ mod testing;
 pub use checker::Speller;
 pub use lang::{Detection, Source};
 pub use store::Store;
+
+/// An HTTP client that gives up after `timeout`.
+fn agent(timeout: std::time::Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .user_agent(tex_sys::download::USER_AGENT)
+        .build()
+        .into()
+}

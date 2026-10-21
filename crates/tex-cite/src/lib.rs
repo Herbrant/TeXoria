@@ -431,37 +431,27 @@ fn collapse(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A search in a URL query: a space is `+`, everything unusual is escaped.
 fn encode_query(s: &str) -> String {
+    encode(s, b"", true)
+}
+
+/// A DOI in a URL path: its `/` stay, everything unusual is escaped.
+fn encode_path(s: &str) -> String {
+    encode(s, b"/();:", false)
+}
+
+/// `s` percent-encoded, but for letters, digits, `-._~` and the bytes of `keep`; a space is
+/// `+` if `plus`.
+fn encode(s: &str, keep: &[u8], plus: bool) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
                 out.push(b as char)
             }
-            b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// A DOI in a URL path: its `/` stay, everything unusual is escaped.
-fn encode_path(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'.'
-            | b'_'
-            | b'~'
-            | b'/'
-            | b'('
-            | b')'
-            | b';'
-            | b':' => out.push(b as char),
+            b if keep.contains(&b) => out.push(b as char),
+            b' ' if plus => out.push('+'),
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
