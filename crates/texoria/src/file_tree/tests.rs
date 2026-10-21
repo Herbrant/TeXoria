@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 
 use gpui_kit::base::actions::Confirm;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::{ScrollStrategy, TestAppContext, WindowOptions};
 
 use super::*;

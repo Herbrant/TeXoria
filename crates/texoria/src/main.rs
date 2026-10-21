@@ -6,6 +6,7 @@ mod assets;
 mod atomic;
 mod checks;
 mod cli;
+mod dialogs;
 mod diff_view;
 mod edit;
 mod file_tree;

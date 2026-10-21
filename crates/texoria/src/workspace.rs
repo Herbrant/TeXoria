@@ -7,9 +7,7 @@ use std::sync::{Arc, RwLock, mpsc};
 use std::time::Duration;
 
 use gpui_kit::component::highlighter::{Diagnostic as EditorDiagnostic, DiagnosticSeverity};
-use gpui_kit::component::input::{
-    Editor, EditorState, Input, InputEvent, InputState, Position, RopeExt, TabSize,
-};
+use gpui_kit::component::input::{Editor, EditorState, InputEvent, Position, RopeExt, TabSize};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::component::notification::Notification;
@@ -37,6 +35,7 @@ use crate::agent_tools::{AppTools, ToolCall};
 use crate::assets::Glyph;
 use crate::atomic;
 use crate::checks::{self, BufferChecks};
+use crate::dialogs;
 use crate::diff_view::{DiffSource, DiffView, DiffViewEvent};
 use crate::edit;
 use crate::file_tree::{FileOp, FileTree, FileTreeEvent};
@@ -1866,7 +1865,7 @@ impl Workspace {
             }
         );
         let weak = cx.entity().downgrade();
-        git_panel::open_form(
+        dialogs::open_form(
             window,
             cx,
             "Replace All",
@@ -2115,37 +2114,16 @@ impl Workspace {
         if self.cloning.is_some() {
             return;
         }
-        let url = cx
-            .new(|cx| InputState::new(window, cx).placeholder("https://github.com/you/paper.git"));
         let weak = cx.entity().downgrade();
-        let focus = url.focus_handle(cx);
-        let body = url.clone();
-        git_panel::open_form(
+        dialogs::prompt_text(
             window,
             cx,
             "Clone Repository",
             "Choose Folder…",
-            Some(focus),
-            move |_, cx| {
-                v_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(
-                                "The URL of a Git repository (GitHub, GitLab, Overleaf…). \
-                                 Next, pick the folder to put it in.",
-                            ),
-                    )
-                    .child(Input::new(&body))
-                    .into_any_element()
-            },
-            move |window, cx| {
-                let url = url.read(cx).value().trim().to_string();
-                if url.is_empty() {
-                    return false;
-                }
+            "https://github.com/you/paper.git",
+            "The URL of a Git repository (GitHub, GitLab, Overleaf…). Next, pick the folder to \
+             put it in.",
+            move |url, window, cx| {
                 weak.update(cx, |this, cx| {
                     // Overleaf needs a token, which a plain clone cannot ask for.
                     match this.overleaf_project(&url).filter(|_| url.contains("://")) {
@@ -2288,40 +2266,17 @@ impl Workspace {
         if self.cloning.is_some() {
             return;
         }
-        let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("https://www.overleaf.com/project/…")
-        });
         let weak = cx.entity().downgrade();
-        let focus = input.focus_handle(cx);
-        let body = input.clone();
-        git_panel::open_form(
+        dialogs::prompt_text(
             window,
             cx,
             "Open from Overleaf",
             "Continue",
-            Some(focus),
-            move |_, cx| {
-                v_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(
-                                "The project's address as shown in your browser, or its \
-                                 Git URL. TeXoria keeps a copy you can edit offline, and \
-                                 syncs it through Overleaf's Git integration (a premium \
-                                 feature).",
-                            ),
-                    )
-                    .child(Input::new(&body))
-                    .into_any_element()
-            },
-            move |window, cx| {
-                let text = input.read(cx).value().trim().to_string();
-                if text.is_empty() {
-                    return false;
-                }
+            "https://www.overleaf.com/project/…",
+            "The project's address as shown in your browser, or its Git URL. TeXoria keeps a \
+             copy you can edit offline, and syncs it through Overleaf's Git integration (a \
+             premium feature).",
+            move |text, window, cx| {
                 let Ok(project) = weak.update(cx, |this, _| this.overleaf_project(&text)) else {
                     return true;
                 };
@@ -2455,39 +2410,17 @@ impl Workspace {
         if self.root.is_none() {
             return;
         }
-        let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("10.1145/… · arXiv:2301.01234 · title, authors")
-        });
         let weak = cx.entity().downgrade();
-        let focus = input.focus_handle(cx);
-        let body = input.clone();
-        git_panel::open_form(
+        dialogs::prompt_text(
             window,
             cx,
             "Add Citation",
             "Find",
-            Some(focus),
-            move |_, cx| {
-                v_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(
-                                "A DOI, an arXiv identifier, or words of the title and authors. \
-                                 The entry is added to the project's bibliography and cited \
-                                 where the cursor is. This asks doi.org, arXiv or Crossref.",
-                            ),
-                    )
-                    .child(Input::new(&body))
-                    .into_any_element()
-            },
-            move |window, cx| {
-                let text = input.read(cx).value().trim().to_string();
-                if text.is_empty() {
-                    return false;
-                }
+            "10.1145/… · arXiv:2301.01234 · title, authors",
+            "A DOI, an arXiv identifier, or words of the title and authors. The entry is added \
+             to the project's bibliography and cited where the cursor is. This asks doi.org, \
+             arXiv or Crossref.",
+            move |text, window, cx| {
                 weak.update(cx, |this, cx| this.look_up_citation(text, window, cx))
                     .ok();
                 true
@@ -3236,35 +3169,15 @@ impl Workspace {
             window.push_notification(Notification::info("Select the passage to edit first."), cx);
             return;
         }
-        let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Translate into English, add an example…")
-        });
         let weak = cx.entity().downgrade();
-        let focus = input.focus_handle(cx);
-        let body = input.clone();
-        git_panel::open_form(
+        dialogs::prompt_text(
             window,
             cx,
             "Edit with the Agent",
             "Edit",
-            Some(focus),
-            move |_, cx| {
-                v_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("What should the agent do with the selected passage?"),
-                    )
-                    .child(Input::new(&body))
-                    .into_any_element()
-            },
-            move |window, cx| {
-                let text = input.read(cx).value().trim().to_string();
-                if text.is_empty() {
-                    return false;
-                }
+            "Translate into English, add an example…",
+            "What should the agent do with the selected passage?",
+            move |text, window, cx| {
                 weak.update(cx, |this, cx| {
                     this.rewrite_selection(Rewrite::Custom(text), window, cx)
                 })

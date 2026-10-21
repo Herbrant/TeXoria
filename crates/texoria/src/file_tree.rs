@@ -9,19 +9,17 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::tree::{TreeEvent, TreeItem, TreeState, tree};
-use gpui_kit::component::{
-    ActiveTheme, Icon, Sizable, WindowExt as _, button::ButtonVariant, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme, Icon, Sizable, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use tex_project::files::{self, FileNode};
 
 use crate::assets::Glyph;
-use crate::git_panel::open_form;
+use crate::dialogs::{self, caption_input, open_form};
 
 /// A file's state in Git, in increasing order of importance (a directory
 /// shows its most important one).
@@ -257,7 +255,7 @@ impl FileTree {
             if folder { "New Folder" } else { "New File" },
             "Create",
             Some(focus),
-            move |_, cx| name_form(location.clone(), &body_name, body_error.get(), cx),
+            move |_, cx| caption_input(location.clone(), &body_name, body_error.get(), cx),
             move |window, cx| {
                 let result =
                     files::new_entry_path(&dir, &name.read(cx).value()).and_then(|path| match path
@@ -310,7 +308,7 @@ impl FileTree {
             "Rename",
             "Rename",
             Some(focus),
-            move |_, cx| name_form(location.clone(), &body_name, body_error.get(), cx),
+            move |_, cx| caption_input(location.clone(), &body_name, body_error.get(), cx),
             move |window, cx| {
                 let result = files::rename_target(&from, &name.read(cx).value()).and_then(|to| {
                     match to.symlink_metadata() {
@@ -356,20 +354,10 @@ impl FileTree {
             "This cannot be undone.".into()
         };
         let weak = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let (weak, path) = (weak.clone(), path.clone());
-            alert
-                .title(title.clone())
-                .description(description.clone())
-                .confirm()
-                .ok_text("Delete")
-                .ok_variant(ButtonVariant::Danger)
-                .on_ok(move |_, _, cx| {
-                    let op = FileOp::Delete(path.clone());
-                    weak.update(cx, |_, cx| cx.emit(FileTreeEvent::Request(op)))
-                        .ok();
-                    true
-                })
+        dialogs::confirm_danger(window, cx, title, description, "Delete", move |cx| {
+            let op = FileOp::Delete(path.clone());
+            weak.update(cx, |_, cx| cx.emit(FileTreeEvent::Request(op)))
+                .ok();
         });
     }
 
@@ -384,28 +372,6 @@ impl FileTree {
 fn item_id(path: &Path) -> SharedString {
     let path: PathBuf = path.components().collect();
     path.to_string_lossy().into_owned().into()
-}
-
-fn name_form(
-    caption: SharedString,
-    input: &Entity<InputState>,
-    error: Option<&'static str>,
-    cx: &App,
-) -> AnyElement {
-    let theme = cx.theme();
-    v_flex()
-        .gap_2()
-        .child(
-            div()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child(caption),
-        )
-        .child(Input::new(input))
-        .when_some(error, |d, e| {
-            d.child(div().text_sm().text_color(theme.danger).child(e))
-        })
-        .into_any_element()
 }
 
 fn menu_item(

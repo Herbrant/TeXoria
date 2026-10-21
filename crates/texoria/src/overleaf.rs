@@ -134,7 +134,7 @@ pub fn prompt_token(
     let focus = input.focus_handle(cx);
     let body_input = input.clone();
     let server = server.to_string();
-    crate::git_panel::open_form(
+    crate::dialogs::open_form(
         window,
         cx,
         "Overleaf Token",

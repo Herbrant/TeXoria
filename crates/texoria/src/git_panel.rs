@@ -12,13 +12,12 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{
     ActiveTheme, Disableable as _, Icon, Sizable, WindowExt as _,
-    button::{Button, ButtonVariant, ButtonVariants},
+    button::{Button, ButtonVariants},
     h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -29,6 +28,7 @@ use tex_git::{
 };
 
 use crate::assets::Glyph;
+use crate::dialogs;
 use crate::diff_view::DiffSource;
 use crate::file_tree::GitMark;
 use crate::overleaf;
@@ -570,7 +570,7 @@ impl GitPanel {
     ) {
         let weak = cx.entity().downgrade();
         let body_review = review.clone();
-        open_form(
+        dialogs::open_form(
             window,
             cx,
             "Sync with Overleaf?",
@@ -892,33 +892,15 @@ impl GitPanel {
             );
             return;
         }
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("draft-2"));
         let weak = cx.entity().downgrade();
-        let focus = name.focus_handle(cx);
-        let body = name.clone();
-        open_form(
+        dialogs::prompt_text(
             window,
             cx,
             "New Branch",
             "Create",
-            Some(focus),
-            move |_, cx| {
-                v_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("The branch starts from the current commit and is checked out."),
-                    )
-                    .child(Input::new(&body))
-                    .into_any_element()
-            },
-            move |_, cx| {
-                let name = name.read(cx).value().trim().to_string();
-                if name.is_empty() {
-                    return false;
-                }
+            "draft-2",
+            "The branch starts from the current commit and is checked out.",
+            move |name, _, cx| {
                 weak.update(cx, |this, cx| this.request(GitOp::CreateBranch(name), cx))
                     .ok();
                 true
@@ -939,7 +921,7 @@ impl GitPanel {
         let weak = cx.entity().downgrade();
         let focus = url.focus_handle(cx);
         let (body_name, body_url) = (name.clone(), url.clone());
-        open_form(
+        dialogs::open_form(
             window,
             cx,
             "Add Remote",
@@ -983,7 +965,7 @@ impl GitPanel {
         let weak = cx.entity().downgrade();
         let focus = name.focus_handle(cx);
         let (body_name, body_email, body_global) = (name.clone(), email.clone(), global.clone());
-        open_form(
+        dialogs::open_form(
             window,
             cx,
             "Who Is Committing?",
@@ -1061,22 +1043,12 @@ impl GitPanel {
             "Untracked files are deleted. This cannot be undone.".into()
         };
         let weak = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let (weak, tracked, untracked) = (weak.clone(), tracked.clone(), untracked.clone());
-            alert
-                .title(title.clone())
-                .description(description.clone())
-                .confirm()
-                .ok_text("Discard")
-                .ok_variant(ButtonVariant::Danger)
-                .on_ok(move |_, _, cx| {
-                    let op = GitOp::Discard {
-                        tracked: tracked.clone(),
-                        untracked: untracked.clone(),
-                    };
-                    weak.update(cx, |this, cx| this.request(op, cx)).ok();
-                    true
-                })
+        dialogs::confirm_danger(window, cx, title, description, "Discard", move |cx| {
+            let op = GitOp::Discard {
+                tracked: tracked.clone(),
+                untracked: untracked.clone(),
+            };
+            weak.update(cx, |this, cx| this.request(op, cx)).ok();
         });
     }
 
@@ -2077,39 +2049,6 @@ pub fn repo_top(dir: &Path) -> Option<PathBuf> {
 
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
-}
-
-/// A dialog with a body and Cancel / `ok` buttons; `on_ok` returns whether
-/// to close it.
-pub fn open_form(
-    window: &mut Window,
-    cx: &mut App,
-    title: &'static str,
-    ok: &'static str,
-    focus: Option<FocusHandle>,
-    body: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
-    on_ok: impl Fn(&mut Window, &mut App) -> bool + 'static,
-) {
-    let on_ok = Rc::new(on_ok);
-    let first = Cell::new(true);
-    window.open_dialog(cx, move |dialog, window, cx| {
-        if first.replace(false)
-            && let Some(f) = &focus
-        {
-            f.focus(window, cx);
-        }
-        let on_ok = on_ok.clone();
-        dialog
-            .title(title)
-            .w(px(440.))
-            .child(body(window, cx))
-            .footer(
-                DialogFooter::new()
-                    .child(DialogClose::new().trigger(|b| b.outline().label("Cancel")))
-                    .child(DialogAction::new().child(Button::new("ok").primary().label(ok))),
-            )
-            .on_ok(move |_, window, cx| on_ok(window, cx))
-    });
 }
 
 /// An error toast; git's full output is one click away.
