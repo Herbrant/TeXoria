@@ -34,26 +34,18 @@ pub enum Lookup {
 /// Tell a DOI (or its URL), an arXiv identifier (or its URL) and anything else.
 pub fn classify(input: &str) -> Lookup {
     let s = input.trim();
-    let lower = s.to_ascii_lowercase();
-    for prefix in [
-        "https://doi.org/",
-        "http://doi.org/",
-        "https://dx.doi.org/",
-        "doi.org/",
-        "doi:",
-    ] {
-        if lower.starts_with(prefix) {
-            let doi = s[prefix.len()..].trim();
-            // Only the prefix so far: nothing to look up yet.
-            if doi.is_empty() {
-                return Lookup::Search(s.to_string());
-            }
-            return Lookup::Doi(doi.to_string());
+    if let Some(doi) = tex_project::check::strip_doi_prefix(s) {
+        let doi = doi.trim();
+        // Only the prefix so far: nothing to look up yet.
+        if doi.is_empty() {
+            return Lookup::Search(s.to_string());
         }
+        return Lookup::Doi(doi.to_string());
     }
     if tex_project::check::valid_doi(s) {
         return Lookup::Doi(s.to_string());
     }
+    let lower = s.to_ascii_lowercase();
     let arxiv = [
         "https://arxiv.org/abs/",
         "http://arxiv.org/abs/",
@@ -815,6 +807,7 @@ mod tests {
         assert_eq!(classify("DOI: 10.1/X "), doi("10.1/X"));
         assert_eq!(classify("http://doi.org/10.1/x"), doi("10.1/x"));
         assert_eq!(classify("https://dx.doi.org/10.1/x"), doi("10.1/x"));
+        assert_eq!(classify("http://dx.doi.org/10.1/x"), doi("10.1/x"));
         assert_eq!(
             classify("https://arxiv.org/pdf/2301.01234v2.pdf"),
             Lookup::Arxiv("2301.01234v2".into())

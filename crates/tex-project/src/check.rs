@@ -267,21 +267,30 @@ pub fn check_bib(file: &std::path::Path, entries: &[BibEntry]) -> Vec<Issue> {
     issues
 }
 
-/// `10.<registrant>/<suffix>`, possibly written as a doi.org URL or with `doi:`.
-/// The registrant is dot-separated numbers (`10.1000.10`).
-pub fn valid_doi(value: &str) -> bool {
-    let v = value.trim();
-    let lower = v.to_ascii_lowercase();
-    let v = [
+/// What follows the doi.org URL or the `doi:` written before a DOI, if there is one (in any
+/// case).
+pub fn strip_doi_prefix(value: &str) -> Option<&str> {
+    const PREFIXES: [&str; 6] = [
         "https://doi.org/",
         "http://doi.org/",
         "https://dx.doi.org/",
         "http://dx.doi.org/",
+        "doi.org/",
         "doi:",
-    ]
-    .iter()
-    .find(|p| lower.starts_with(*p))
-    .map_or(v, |p| v[p.len()..].trim_start());
+    ];
+    PREFIXES.iter().find_map(|p| {
+        value
+            .get(..p.len())
+            .filter(|v| v.eq_ignore_ascii_case(p))
+            .map(|_| &value[p.len()..])
+    })
+}
+
+/// `10.<registrant>/<suffix>`, possibly written as a doi.org URL or with `doi:`.
+/// The registrant is dot-separated numbers (`10.1000.10`).
+pub fn valid_doi(value: &str) -> bool {
+    let v = value.trim();
+    let v = strip_doi_prefix(v).map_or(v, str::trim_start);
     let Some((prefix, suffix)) = v.split_once('/') else {
         return false;
     };
@@ -379,6 +388,10 @@ mod tests {
     #[test]
     fn tells_dois() {
         assert!(valid_doi("10.1145/3368089.3409696"));
+        assert!(valid_doi("doi.org/10.1145/3368089.3409696"));
+        assert!(valid_doi("HTTP://DX.DOI.ORG/10.1145/x"));
+        assert_eq!(strip_doi_prefix("DOI: 10.1/x"), Some(" 10.1/x"));
+        assert_eq!(strip_doi_prefix("10.1/x"), None);
         assert!(valid_doi("https://doi.org/10.1000/xyz"));
         assert!(!valid_doi("10.1145"));
         assert!(!valid_doi("11.1/x"));
