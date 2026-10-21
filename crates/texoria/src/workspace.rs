@@ -52,6 +52,7 @@ use crate::search_panel::{SearchPanel, SearchPanelEvent};
 use crate::settings::{Session, Settings, SpellLanguage, ThemeChoice};
 use crate::settings_window::SettingsWindow;
 use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspelling, Spell};
+use crate::tasks::Background as _;
 use crate::text::{plural, thousands};
 use crate::theme::{self, ThemeExt};
 use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
@@ -379,16 +380,7 @@ impl Workspace {
             a.set_mcp(configs);
             a.configure(preferred, custom, cx);
         });
-        let tool_task = cx.spawn(async move |this, cx| {
-            while let Ok(call) = tool_calls.recv().await {
-                if this
-                    .update(cx, |this, cx| this.on_tool_call(call, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
+        let tool_task = cx.forward(tool_calls, |this, call, cx| this.on_tool_call(call, cx));
 
         let spell = Spell::new(&settings.spell_words);
         let mut this = Workspace {
@@ -666,16 +658,7 @@ impl Workspace {
         });
         compiler.set_timeout(self.settings.compile_timeout());
         self.compiler = Some(compiler);
-        self._compile_events = cx.spawn(async move |this, cx| {
-            while let Ok(event) = rx.recv().await {
-                if this
-                    .update(cx, |this, cx| this.on_compile_event(event, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
+        self._compile_events = cx.forward(rx, |this, event, cx| this.on_compile_event(event, cx));
     }
 
     // ── Opening files ────────────────────────────────────────────────────
@@ -1006,17 +989,15 @@ impl Workspace {
         if !tex_compile::is_package_name(&name) {
             return;
         }
-        cx.spawn_in(window, async move |this, cx| {
-            let package = name.clone();
-            let local = cx
-                .background_spawn(async move { tex_compile::texdoc(&package) })
-                .await;
-            this.update_in(cx, |this, window, cx| match local {
+        let package = name.clone();
+        cx.background_then_in(
+            window,
+            move || tex_compile::texdoc(&package),
+            move |this, local, window, cx| match local {
                 Some(doc) => this.open_external(&doc, window, cx),
                 None => cx.open_url(&format!("https://texdoc.org/pkg/{name}")),
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
@@ -1125,33 +1106,31 @@ impl Workspace {
         }
         let cache = self.count_cache.clone();
         self.reindexing = true;
-        self._reindex = cx.spawn(async move |this, cx| {
-            let parsed = cx
-                .background_spawn(async move {
-                    let parse = |path: &PathBuf, bib, text: &str, hash| {
-                        if bib {
-                            return Parsed::Bib(tex_project::bib::parse(text));
-                        }
-                        let tree = tex_syntax::parse(text, None);
-                        // The word count's too, from the same tree.
-                        let counts = (tree.as_ref())
-                            .map(|t| tex_spell::extract::count(t, text))
-                            .unwrap_or_default();
-                        cache.lock().unwrap().insert(path.clone(), (hash, counts));
-                        Parsed::Tex(Box::new(
-                            tree.map(|t| tex_syntax::Index::build(&t, text))
-                                .unwrap_or_default(),
-                        ))
-                    };
-                    (jobs.into_iter())
-                        .map(|(path, bib, text, hash)| {
-                            let parsed = parse(&path, bib, &text, hash);
-                            (path, hash, parsed)
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .await;
-            this.update(cx, |this, cx| {
+        self._reindex = cx.background_then(
+            move || {
+                let parse = |path: &PathBuf, bib, text: &str, hash| {
+                    if bib {
+                        return Parsed::Bib(tex_project::bib::parse(text));
+                    }
+                    let tree = tex_syntax::parse(text, None);
+                    // The word count's too, from the same tree.
+                    let counts = (tree.as_ref())
+                        .map(|t| tex_spell::extract::count(t, text))
+                        .unwrap_or_default();
+                    cache.lock().unwrap().insert(path.clone(), (hash, counts));
+                    Parsed::Tex(Box::new(
+                        tree.map(|t| tex_syntax::Index::build(&t, text))
+                            .unwrap_or_default(),
+                    ))
+                };
+                (jobs.into_iter())
+                    .map(|(path, bib, text, hash)| {
+                        let parsed = parse(&path, bib, &text, hash);
+                        (path, hash, parsed)
+                    })
+                    .collect::<Vec<_>>()
+            },
+            move |this, parsed, cx| {
                 {
                     let mut project = this.project.write().unwrap();
                     for (path, hash, parsed) in parsed {
@@ -1169,9 +1148,8 @@ impl Workspace {
                 if std::mem::take(&mut this.reindex_again) {
                     this.reindex(cx);
                 }
-            })
-            .ok();
-        });
+            },
+        );
     }
 
     /// What follows a re-index from `texts`, the buffers' text.
@@ -1225,45 +1203,42 @@ impl Workspace {
             })
             .collect();
         let cache = self.count_cache.clone();
-        self._count = cx.spawn(async move |this, cx| {
-            let counts = cx
-                .background_spawn(async move {
-                    let mut cache = cache.lock().unwrap();
-                    let mut out = Vec::new();
-                    for file in files {
-                        let read;
-                        let text = match open.get(&file) {
-                            Some(text) => text.as_str(),
-                            None => match tex_project::read_regular(&file) {
-                                Some(text) => {
-                                    read = text;
-                                    read.as_str()
-                                }
-                                None => continue,
-                            },
-                        };
-                        let hash = text_hash(text);
-                        let counts = match cache.get(&file) {
-                            Some((cached, counts)) if *cached == hash => *counts,
-                            _ => {
-                                let counts = tex_syntax::parse(text, None)
-                                    .map(|t| tex_spell::extract::count(&t, text))
-                                    .unwrap_or_default();
-                                cache.insert(file.clone(), (hash, counts));
-                                counts
+        self._count = cx.background_then(
+            move || {
+                let mut cache = cache.lock().unwrap();
+                let mut out = Vec::new();
+                for file in files {
+                    let read;
+                    let text = match open.get(&file) {
+                        Some(text) => text.as_str(),
+                        None => match tex_project::read_regular(&file) {
+                            Some(text) => {
+                                read = text;
+                                read.as_str()
                             }
-                        };
-                        out.push((file, counts));
-                    }
-                    out
-                })
-                .await;
-            this.update(cx, |this, cx| {
+                            None => continue,
+                        },
+                    };
+                    let hash = text_hash(text);
+                    let counts = match cache.get(&file) {
+                        Some((cached, counts)) if *cached == hash => *counts,
+                        _ => {
+                            let counts = tex_syntax::parse(text, None)
+                                .map(|t| tex_spell::extract::count(&t, text))
+                                .unwrap_or_default();
+                            cache.insert(file.clone(), (hash, counts));
+                            counts
+                        }
+                    };
+                    out.push((file, counts));
+                }
+                out
+            },
+            move |this, counts, cx| {
                 this.word_counts = counts;
                 cx.notify();
-            })
-            .ok();
-        });
+            },
+        );
     }
 
     /// The words of the whole project.
@@ -1347,14 +1322,12 @@ impl Workspace {
             return;
         }
         let project = self.project.clone();
-        self._checks = cx.spawn(async move |this, cx| {
-            let issues = cx
-                .background_spawn(async move {
-                    let project = project.read().unwrap();
-                    tex_project::check::run(&project)
-                })
-                .await;
-            this.update(cx, |this, cx| {
+        self._checks = cx.background_then(
+            move || {
+                let project = project.read().unwrap();
+                tex_project::check::run(&project)
+            },
+            move |this, issues, cx| {
                 this.issues = issues;
                 for ix in 0..this.buffers.len() {
                     let b = &this.buffers[ix];
@@ -1370,9 +1343,8 @@ impl Workspace {
                     }
                 }
                 cx.notify();
-            })
-            .ok();
-        });
+            },
+        );
     }
 
     /// Underline the issues of buffer `ix`.
@@ -2054,11 +2026,10 @@ impl Workspace {
         }
         let file = repo.abs_path(&path);
         let short: String = sha.chars().take(7).collect();
-        cx.spawn_in(window, async move |this, cx| {
-            let contents = cx
-                .background_spawn(async move { repo.file_at(&sha, &path) })
-                .await;
-            this.update_in(cx, |this, window, cx| match contents {
+        cx.background_then_in(
+            window,
+            move || repo.file_at(&sha, &path),
+            move |this, contents, window, cx| match contents {
                 Ok(bytes) => match this.replace_file(&file, &bytes, window, cx) {
                     Ok(()) => {
                         let name = crate::paths::file_name(&file);
@@ -2075,9 +2046,8 @@ impl Workspace {
                     ),
                 },
                 Err(e) => git_panel::notify_error(window, cx, "Restore failed", &e),
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
@@ -2181,24 +2151,23 @@ impl Workspace {
         self.cloning = Some((url.clone().into(), cancel.clone()));
         let timeout = self.settings.git_timeout();
         let job = (url.clone(), dest.clone(), credential.clone());
-        cx.spawn_in(window, async move |this, cx| {
-            let result = cx
-                .background_spawn(async move {
-                    let overleaf = credential.is_some();
-                    let git = Git::find()
-                        .ok_or_else(|| tex_git::Error::Invalid("Git is not installed".into()))?
-                        .network_timeout(timeout)
-                        .credential(credential);
-                    let repo = git.clone_repo(&url, &dest, &cancel)?;
-                    // Overleaf compiles on its side: local build files must not
-                    // reach the collaborators.
-                    if overleaf && let Err(e) = repo.exclude_local_files() {
-                        log::warn!("{e}");
-                    }
-                    Ok(repo.root().to_path_buf())
-                })
-                .await;
-            this.update_in(cx, |this, window, cx| {
+        cx.background_then_in(
+            window,
+            move || {
+                let overleaf = credential.is_some();
+                let git = Git::find()
+                    .ok_or_else(|| tex_git::Error::Invalid("Git is not installed".into()))?
+                    .network_timeout(timeout)
+                    .credential(credential);
+                let repo = git.clone_repo(&url, &dest, &cancel)?;
+                // Overleaf compiles on its side: local build files must not
+                // reach the collaborators.
+                if overleaf && let Err(e) = repo.exclude_local_files() {
+                    log::warn!("{e}");
+                }
+                Ok(repo.root().to_path_buf())
+            },
+            move |this, result, window, cx| {
                 this.cloning = None;
                 let (url, dest, credential) = job;
                 match result {
@@ -2249,9 +2218,8 @@ impl Workspace {
                     Err(e) => git_panel::notify_error(window, cx, "Clone failed", &e),
                 }
                 cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
         cx.notify();
     }
@@ -2431,27 +2399,25 @@ impl Workspace {
     fn look_up_citation(&mut self, input: String, window: &mut Window, cx: &mut Context<Self>) {
         let lookup = tex_cite::classify(&input);
         window.push_notification(Notification::info("Looking it up…"), cx);
-        cx.spawn_in(window, async move |this, cx| {
-            let found = cx
-                .background_spawn(async move {
-                    let client = tex_cite::Client::new();
-                    match lookup {
-                        tex_cite::Lookup::Doi(doi) => client.doi(&doi).map(Ok),
-                        tex_cite::Lookup::Arxiv(id) => client.arxiv(&id).map(Ok),
-                        tex_cite::Lookup::Search(q) => client.search(&q).map(Err),
-                    }
-                })
-                .await;
-            this.update_in(cx, |this, window, cx| match found {
+        cx.background_then_in(
+            window,
+            move || {
+                let client = tex_cite::Client::new();
+                match lookup {
+                    tex_cite::Lookup::Doi(doi) => client.doi(&doi).map(Ok),
+                    tex_cite::Lookup::Arxiv(id) => client.arxiv(&id).map(Ok),
+                    tex_cite::Lookup::Search(q) => client.search(&q).map(Err),
+                }
+            },
+            move |this, found, window, cx| match found {
                 Ok(Ok(bibtex)) => this.add_citation(&bibtex, window, cx),
                 Ok(Err(candidates)) => this.choose_citation(candidates, window, cx),
                 Err(e) => window.push_notification(
                     Notification::error(format!("{e:#}")).title("Citation not found"),
                     cx,
                 ),
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
@@ -3568,9 +3534,9 @@ impl Workspace {
         }
         self.spell.dictionaries.insert(code, Dictionary::Loading);
         let store = self.spell.store.clone();
-        cx.spawn(async move |this, cx| {
-            let loaded = cx.background_spawn(async move { store.load(code) }).await;
-            this.update(cx, |this, cx| {
+        cx.background_then(
+            move || store.load(code),
+            move |this, loaded, cx| {
                 let entry = match loaded {
                     Ok(s) => Dictionary::Ready(Arc::new(s)),
                     Err(e) => {
@@ -3589,9 +3555,8 @@ impl Workspace {
                     }
                 }
                 cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
         None
     }
@@ -3632,12 +3597,11 @@ impl Workspace {
         let path = b.path.clone();
         let dir = self.project_dir();
         let text = editor.read(cx).text().to_string();
-        cx.spawn_in(window, async move |this, cx| {
-            let input = text.clone();
-            let formatted = cx
-                .background_spawn(async move { edit::format_latex(&input, &path, dir.as_deref()) })
-                .await;
-            this.update_in(cx, |_, window, cx| match formatted {
+        let input = text.clone();
+        cx.background_then_in(
+            window,
+            move || edit::format_latex(&input, &path, dir.as_deref()),
+            move |_, formatted, window, cx| match formatted {
                 // Edited meanwhile: formatting it would undo those edits.
                 Ok(new) if *editor.read(cx).text() == text => {
                     apply_format(&editor, new, window, cx)
@@ -3645,9 +3609,8 @@ impl Workspace {
                 Ok(_) => {}
                 Err(e) => window
                     .push_notification(Notification::error(e).title("Cannot format the file"), cx),
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 

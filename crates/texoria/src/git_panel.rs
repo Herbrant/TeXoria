@@ -32,6 +32,7 @@ use crate::dialogs;
 use crate::diff_view::DiffSource;
 use crate::file_tree::GitMark;
 use crate::overleaf;
+use crate::tasks::Background as _;
 use crate::text::plural;
 
 /// The message of the commit a Sync makes when the message box is empty.
@@ -400,18 +401,16 @@ impl GitPanel {
         self.state = RepoState::Searching;
         let cached = self.git.clone();
         let timeout = self.timeout;
-        cx.spawn(async move |this, cx| {
-            let (git, found) = cx
-                .background_spawn(async move {
-                    let git = cached
-                        .unwrap_or_else(Git::find)
-                        .map(|g| g.network_timeout(timeout));
-                    // Only the trusted working tree, never a repository above it.
-                    let found = git.as_ref().map(|g| g.discover_at(&top));
-                    (git, found)
-                })
-                .await;
-            this.update(cx, |this, cx| {
+        cx.background_then(
+            move || {
+                let git = cached
+                    .unwrap_or_else(Git::find)
+                    .map(|g| g.network_timeout(timeout));
+                // Only the trusted working tree, never a repository above it.
+                let found = git.as_ref().map(|g| g.discover_at(&top));
+                (git, found)
+            },
+            move |this, (git, found), cx| {
                 if this.generation != generation {
                     return;
                 }
@@ -424,9 +423,8 @@ impl GitPanel {
                 };
                 this.refresh(cx);
                 cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
@@ -440,23 +438,21 @@ impl GitPanel {
         let head = self.status.oid.clone();
         let history_loaded = self.history_loaded;
         let servers = self.overleaf_servers.clone();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move {
-                    let status = repo.status()?;
-                    let branches = repo.branches().unwrap_or_default();
-                    let remotes = repo.remotes().unwrap_or_default();
-                    let history = (!history_loaded || status.oid != head)
-                        .then(|| repo.log(0, HISTORY_PAGE, None).unwrap_or_default());
-                    let merge_message = repo.merge_message();
-                    let overleaf = main_remote(&status, &remotes)
-                        .and_then(|r| repo.remote_url(r).ok().flatten())
-                        .and_then(|url| tex_git::overleaf::remote(&url, &servers))
-                        .map(|p| p.server);
-                    Ok::<_, Error>((status, branches, remotes, history, merge_message, overleaf))
-                })
-                .await;
-            this.update(cx, |this, cx| {
+        cx.background_then(
+            move || {
+                let status = repo.status()?;
+                let branches = repo.branches().unwrap_or_default();
+                let remotes = repo.remotes().unwrap_or_default();
+                let history = (!history_loaded || status.oid != head)
+                    .then(|| repo.log(0, HISTORY_PAGE, None).unwrap_or_default());
+                let merge_message = repo.merge_message();
+                let overleaf = main_remote(&status, &remotes)
+                    .and_then(|r| repo.remote_url(r).ok().flatten())
+                    .and_then(|url| tex_git::overleaf::remote(&url, &servers))
+                    .map(|p| p.server);
+                Ok::<_, Error>((status, branches, remotes, history, merge_message, overleaf))
+            },
+            move |this, result, cx| {
                 if this.generation != generation || this.refresh_generation != refresh {
                     return;
                 }
@@ -483,9 +479,8 @@ impl GitPanel {
                     Err(e) => this.error = Some(e.to_string().into()),
                 }
                 cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
@@ -628,11 +623,9 @@ impl GitPanel {
             return;
         };
         let (generation, skip) = (self.generation, self.history.len());
-        cx.spawn(async move |this, cx| {
-            let more = cx
-                .background_spawn(async move { repo.log(skip, HISTORY_PAGE, None) })
-                .await;
-            this.update(cx, |this, cx| {
+        cx.background_then(
+            move || repo.log(skip, HISTORY_PAGE, None),
+            move |this, more, cx| {
                 if this.generation != generation || this.history.len() != skip {
                     return;
                 }
@@ -644,9 +637,8 @@ impl GitPanel {
                     Err(e) => this.error = Some(e.to_string().into()),
                 }
                 cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
@@ -839,18 +831,15 @@ impl GitPanel {
         let Some(repo) = self.repo().cloned() else {
             return;
         };
-        cx.spawn(async move |this, cx| {
-            let msg = cx
-                .background_spawn(async move { repo.head_message() })
-                .await;
-            this.update(cx, |this, cx| {
+        cx.background_then(
+            move || repo.head_message(),
+            move |this, msg, cx| {
                 if let Ok(msg) = msg {
                     this.next_message = Some(msg);
                     cx.notify();
                 }
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 

@@ -24,6 +24,7 @@ use gpui_kit::*;
 use tex_project::search::{self, Query, Results};
 
 use crate::assets::Glyph;
+use crate::tasks::Background as _;
 
 /// Pause after a keystroke before searching.
 const DELAY: Duration = Duration::from_millis(200);
@@ -173,17 +174,14 @@ impl SearchPanel {
         self.searching = true;
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancel = cancel.clone();
-        self._search = cx.spawn(async move |this, cx| {
-            let results = cx
-                .background_spawn(async move { search::search(&dir, &regex, &open, &cancel) })
-                .await;
-            this.update(cx, |this, cx| {
+        self._search = cx.background_then(
+            move || search::search(&dir, &regex, &open, &cancel),
+            move |this, results, cx| {
                 this.searching = false;
                 this.set_results(results);
                 cx.notify();
-            })
-            .ok();
-        });
+            },
+        );
         cx.notify();
     }
 

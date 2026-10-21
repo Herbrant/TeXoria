@@ -31,6 +31,7 @@ use tex_project::files;
 
 use crate::assets::Glyph;
 use crate::atomic;
+use crate::tasks::Background as _;
 
 /// How long a starting agent may take to answer (`npx` may download it).
 const START_TIMEOUT: Duration = Duration::from_secs(180);
@@ -290,9 +291,9 @@ impl AgentPanel {
         let before = self.current().map(|a| a.id.clone());
         self.agents = None;
         let detector = self.detector;
-        self._detect = cx.spawn(async move |this, cx| {
-            let found = cx.background_spawn(async move { detector(&custom) }).await;
-            this.update(cx, |this, cx| {
+        self._detect = cx.background_then(
+            move || detector(&custom),
+            move |this, found, cx| {
                 this.agents = Some(found);
                 if this.current().map(|a| a.id.clone()) != before {
                     // A message sent before any agent was found is for this one.
@@ -302,9 +303,8 @@ impl AgentPanel {
                 }
                 this.flush_queued(cx);
                 cx.notify();
-            })
-            .ok();
-        });
+            },
+        );
         cx.notify();
     }
 
@@ -725,11 +725,9 @@ impl AgentPanel {
             return;
         };
         let generation = self.generation;
-        cx.spawn(async move |this, cx| {
-            let (changes, git) = cx
-                .background_spawn(async move { (cp.changes(), cp.git_changes()) })
-                .await;
-            this.update(cx, |this, cx| {
+        cx.background_then(
+            move || (cp.changes(), cp.git_changes()),
+            move |this, (changes, git), cx| {
                 if this.generation != generation {
                     return;
                 }
@@ -750,9 +748,8 @@ impl AgentPanel {
                 this.changes = changes;
                 cx.emit(AgentPanelEvent::Review { patch, open });
                 cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 

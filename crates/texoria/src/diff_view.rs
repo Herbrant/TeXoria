@@ -18,6 +18,7 @@ use tex_git::{Commit, Error, Repo};
 
 use crate::assets::Glyph;
 use crate::latex;
+use crate::tasks::Background as _;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffSource {
@@ -168,11 +169,9 @@ impl DiffView {
         let generation = self.generation;
         let repo = self.repo.clone();
         let source = self.source.clone();
-        cx.spawn(async move |this, cx| {
-            let text = cx
-                .background_spawn(async move { load_text(repo.as_ref(), &source) })
-                .await;
-            this.update(cx, |this, cx| {
+        cx.background_then(
+            move || load_text(repo.as_ref(), &source),
+            move |this, text, cx| {
                 if this.generation != generation {
                     return;
                 }
@@ -195,9 +194,8 @@ impl DiffView {
                     }
                 }
                 cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 

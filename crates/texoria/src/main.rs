@@ -24,6 +24,7 @@ mod search_panel;
 mod settings;
 mod settings_window;
 mod spell;
+mod tasks;
 mod text;
 mod theme;
 mod underlines;

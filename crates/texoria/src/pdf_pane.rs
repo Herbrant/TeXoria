@@ -24,6 +24,7 @@ use pdf_view::{
 use synctex::{Rect, SyncTex};
 
 use crate::assets::Glyph;
+use crate::tasks::Background as _;
 
 const MARGIN: f32 = 28.0;
 const GAP: f32 = 18.0;
@@ -208,16 +209,7 @@ impl PdfPane {
             }
         };
         #[cfg(not(test))]
-        let events = cx.spawn(async move |this, cx| {
-            while let Ok(event) = rx.recv().await {
-                if this
-                    .update(cx, |this, cx| this.on_render_event(event, cx))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
+        let events = cx.forward(rx, |this, event, cx| this.on_render_event(event, cx));
         #[cfg(test)]
         let events = Task::ready(());
         PdfPane {
@@ -268,15 +260,13 @@ impl PdfPane {
     pub fn load(&mut self, pdf: PathBuf, synctex: Option<PathBuf>, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
-        cx.spawn(async move |this, cx| {
-            let loaded = cx
-                .background_spawn(async move {
-                    let bytes = std::fs::read(&pdf);
-                    let st = synctex.and_then(|p| SyncTex::open(&p).ok()).map(Arc::new);
-                    (bytes, st)
-                })
-                .await;
-            this.update(cx, |this, cx| {
+        cx.background_then(
+            move || {
+                let bytes = std::fs::read(&pdf);
+                let st = synctex.and_then(|p| SyncTex::open(&p).ok()).map(Arc::new);
+                (bytes, st)
+            },
+            move |this, loaded, cx| {
                 // A newer load superseded this one while it was reading.
                 if this.generation != generation {
                     return;
@@ -291,9 +281,8 @@ impl PdfPane {
                     (Err(e), _) => log::warn!("reading PDF: {e}"),
                 }
                 cx.notify();
-            })
-            .ok();
-        })
+            },
+        )
         .detach();
     }
 
