@@ -1110,7 +1110,7 @@ impl Workspace {
         {
             let project = self.project.read().unwrap();
             for b in &self.buffers {
-                let text: Arc<str> = Arc::from(b.editor.read(cx).text().to_string());
+                let text = Arc::new(b.editor.read(cx).text().to_string());
                 let hash = text_hash(&text);
                 if b.indexed != Some(hash) {
                     let bib = project.is_bib(&b.path);
@@ -1175,7 +1175,11 @@ impl Workspace {
     }
 
     /// What follows a re-index from `texts`, the buffers' text.
-    fn reindexed(&mut self, texts: Vec<(Entity<EditorState>, Arc<str>)>, cx: &mut Context<Self>) {
+    fn reindexed(
+        &mut self,
+        texts: Vec<(Entity<EditorState>, Arc<String>)>,
+        cx: &mut Context<Self>,
+    ) {
         self.refresh_outline(cx);
         self.count_words(&texts, cx);
         self.run_checks(texts, cx);
@@ -1207,9 +1211,13 @@ impl Workspace {
 
     /// Count the words of every file of the project in the background,
     /// reading open files from `texts`.
-    fn count_words(&mut self, texts: &[(Entity<EditorState>, Arc<str>)], cx: &mut Context<Self>) {
+    fn count_words(
+        &mut self,
+        texts: &[(Entity<EditorState>, Arc<String>)],
+        cx: &mut Context<Self>,
+    ) {
         let files = self.project.read().unwrap().files();
-        let open: std::collections::HashMap<PathBuf, Arc<str>> = texts
+        let open: std::collections::HashMap<PathBuf, Arc<String>> = texts
             .iter()
             .filter_map(|(editor, text)| {
                 let b = self.buffers.iter().find(|b| &b.editor == editor)?;
@@ -1225,7 +1233,7 @@ impl Workspace {
                     for file in files {
                         let read;
                         let text = match open.get(&file) {
-                            Some(text) => &**text,
+                            Some(text) => text.as_str(),
                             None => match tex_project::read_regular(&file) {
                                 Some(text) => {
                                     read = text;
@@ -1322,7 +1330,11 @@ impl Workspace {
 
     /// Check the project (as indexed from `texts`, the buffers' text) in the
     /// background, then underline what was found.
-    fn run_checks(&mut self, texts: Vec<(Entity<EditorState>, Arc<str>)>, cx: &mut Context<Self>) {
+    fn run_checks(
+        &mut self,
+        texts: Vec<(Entity<EditorState>, Arc<String>)>,
+        cx: &mut Context<Self>,
+    ) {
         if !self.settings.live_checks || self.root.is_none() {
             self._checks = Task::ready(());
             if !self.issues.is_empty() {
@@ -1351,7 +1363,7 @@ impl Workspace {
                     let checked = texts
                         .iter()
                         .find(|(e, _)| *e == b.editor)
-                        .map_or(b.saved.as_str(), |(_, t)| t);
+                        .map_or(b.saved.as_str(), |(_, t)| t.as_str());
                     let same = *b.editor.read(cx).text() == *checked;
                     if same {
                         this.underline_issues(ix, cx);
