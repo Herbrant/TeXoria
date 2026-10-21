@@ -1664,7 +1664,7 @@ impl AgentPanel {
                         .min_w_0()
                         .truncate()
                         .text_sm()
-                        .child(format!("{n} file{} changed", if n == 1 { "" } else { "s" })),
+                        .child(format!("{n} file{} changed", crate::text::plural(n))),
                 )
                 .child(
                     Button::new("agent-review")
@@ -1755,7 +1755,7 @@ impl AgentPanel {
                             .icon(Glyph::Error)
                             .label(format!(
                                 "Fix {errors} Build Error{}",
-                                if errors == 1 { "" } else { "s" }
+                                crate::text::plural(errors)
                             ))
                             .disabled(!self.can_send())
                             .on_click(
@@ -1995,11 +1995,7 @@ fn detail(content: &[acp::ToolCallContent]) -> Option<String> {
                         similar::ChangeTag::Equal => {}
                     }
                 }
-                let name = d
-                    .path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                let name = crate::paths::file_name(&d.path);
                 out.push_str(&format!("{name}: +{added} −{removed}\n"));
             }
             _ => {}

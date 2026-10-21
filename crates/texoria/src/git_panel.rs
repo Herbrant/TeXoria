@@ -32,6 +32,7 @@ use crate::assets::Glyph;
 use crate::diff_view::DiffSource;
 use crate::file_tree::GitMark;
 use crate::overleaf;
+use crate::text::plural;
 
 /// The message of the commit a Sync makes when the message box is empty.
 const SYNC_MESSAGE: &str = "Update from TeXoria";
@@ -2078,10 +2079,6 @@ fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
-}
-
 /// A dialog with a body and Cancel / `ok` buttons; `on_ok` returns whether
 /// to close it.
 pub fn open_form(
@@ -2171,7 +2168,7 @@ fn relative_time_at(now: i64, ts: i64) -> String {
         3600..86_400 => format!("{} h ago", d / 3600),
         86_400..604_800 => {
             let n = d / 86_400;
-            format!("{n} day{} ago", if n == 1 { "" } else { "s" })
+            format!("{n} day{} ago", plural(n))
         }
         _ => {
             let (y, m, day) = civil_from_days(ts.div_euclid(86_400));

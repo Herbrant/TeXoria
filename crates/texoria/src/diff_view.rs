@@ -235,7 +235,7 @@ impl DiffView {
                 let n = self.state.read(cx).files().len();
                 (
                     "Changes by the agent".into(),
-                    Some(format!("{n} file{}", if n == 1 { "" } else { "s" }).into()),
+                    Some(format!("{n} file{}", crate::text::plural(n)).into()),
                 )
             }
         };

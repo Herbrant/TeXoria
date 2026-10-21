@@ -260,10 +260,7 @@ impl SearchPanel {
                 let file = &self.results.files[f];
                 let path = file.path.clone();
                 let collapsed = self.collapsed.contains(&path);
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                let name = crate::paths::file_name(&path);
                 let folder = self
                     .relative(&path)
                     .parent()
@@ -410,8 +407,8 @@ impl Render for SearchPanel {
                 format!(
                     "{count}{} result{} in {files} file{}",
                     if self.results.truncated { "+" } else { "" },
-                    if count == 1 { "" } else { "s" },
-                    if files == 1 { "" } else { "s" },
+                    crate::text::plural(count),
+                    crate::text::plural(files),
                 )
                 .into(),
             )

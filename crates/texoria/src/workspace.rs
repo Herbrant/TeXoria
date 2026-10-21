@@ -53,6 +53,7 @@ use crate::search_panel::{SearchPanel, SearchPanelEvent};
 use crate::settings::{Session, Settings, SpellLanguage, ThemeChoice};
 use crate::settings_window::SettingsWindow;
 use crate::spell::{self, AddToDictionary, BufferSpell, Dictionary, ReplaceMisspelling, Spell};
+use crate::text::{plural, thousands};
 use crate::theme::{self, ThemeExt};
 use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
@@ -2061,10 +2062,7 @@ impl Workspace {
             this.update_in(cx, |this, window, cx| match contents {
                 Ok(bytes) => match this.replace_file(&file, &bytes, window, cx) {
                     Ok(()) => {
-                        let name = file
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
+                        let name = crate::paths::file_name(&file);
                         window.push_notification(
                             Notification::success(format!("{name} restored from {short}"))
                                 .title("Version restored"),
@@ -2737,10 +2735,7 @@ impl Workspace {
                     if this.settings.set_session(session) {
                         this.settings.save();
                     }
-                    let name = dest
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
+                    let name = crate::paths::file_name(&dest);
                     window.push_notification(
                         Notification::success(format!("Saved {name}"))
                             .title("PDF exported")
@@ -4941,10 +4936,7 @@ impl Workspace {
                         let rel = crate::paths::relative(f, root_dir.as_deref());
                         format!("{}:{l}", rel.display())
                     }
-                    (Some(f), None) => f
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
+                    (Some(f), None) => crate::paths::file_name(f),
                     _ => String::new(),
                 };
                 let target = d.file.clone().zip(d.line);
@@ -5298,10 +5290,7 @@ impl Workspace {
                 .enumerate()
                 .map(|(i, p)| {
                     let p = p.clone();
-                    let name = p
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
+                    let name = crate::paths::file_name(&p);
                     let dir = p
                         .parent()
                         .map(|d| d.display().to_string())
@@ -5766,29 +5755,12 @@ fn text_hash(text: &str) -> u64 {
     h.finish()
 }
 
-/// `12,345`.
-fn thousands(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 /// The words of a selection, roughly: what has a letter or digit between
 /// spaces, LaTeX commands left out.
 fn selected_words(text: &str) -> usize {
     text.split_whitespace()
         .filter(|w| !w.starts_with('\\') && w.chars().any(char::is_alphanumeric))
         .count()
-}
-
-fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
 }
 
 /// The editor's right-click menu gets the agent's edits when text is selected.

@@ -134,12 +134,9 @@ fn relative_times() {
 }
 
 #[test]
-fn names_and_plurals() {
+fn file_names() {
     assert_eq!(file_name("chapters/intro.tex"), "intro.tex");
     assert_eq!(file_name("main.tex"), "main.tex");
-    assert_eq!(plural(0), "s");
-    assert_eq!(plural(1), "");
-    assert_eq!(plural(2), "s");
 }
 
 #[test]

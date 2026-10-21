@@ -23,6 +23,7 @@ mod search_panel;
 mod settings;
 mod settings_window;
 mod spell;
+mod text;
 mod theme;
 mod updater;
 mod vim;

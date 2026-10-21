@@ -287,10 +287,7 @@ impl FileTree {
     }
 
     fn prompt_rename(&mut self, from: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let current = from
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let current = crate::paths::file_name(&from);
         // Preselect the name without its extension, as file managers do.
         let stem = match current.rfind('.') {
             Some(dot) if dot > 0 && !from.is_dir() => dot,
@@ -351,10 +348,7 @@ impl FileTree {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let name = crate::paths::file_name(&path);
         let title: SharedString = format!("Delete {name}?").into();
         let description: SharedString = if is_dir {
             "The folder and everything in it are deleted. This cannot be undone.".into()

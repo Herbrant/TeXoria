@@ -10,6 +10,13 @@ pub fn relative<'a>(path: &'a Path, dir: Option<&Path>) -> &'a Path {
     dir.and_then(|d| path.strip_prefix(d).ok()).unwrap_or(path)
 }
 
+/// The last part of `path`'s name (`main.tex`), empty if it has none.
+pub fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 /// Whether `path` is LaTeX source, by its extension in any case (`.TEX` from old systems).
 pub fn is_latex(path: &Path) -> bool {
     tex_project::has_extension(path, &["tex", "ltx", "sty", "cls", "dtx"])
@@ -36,6 +43,12 @@ mod tests {
             Path::new("/q/a.tex")
         );
         assert_eq!(relative(Path::new("/p/a.tex"), None), Path::new("/p/a.tex"));
+    }
+
+    #[test]
+    fn file_names() {
+        assert_eq!(file_name(Path::new("/p/ch/a.tex")), "a.tex");
+        assert_eq!(file_name(Path::new("/")), "");
     }
 
     #[test]
