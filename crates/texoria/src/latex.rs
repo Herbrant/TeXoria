@@ -216,38 +216,7 @@ fn symbol_at(rope: &Rope, offset: usize) -> Option<Symbol> {
     let row = rope.offset_to_position(offset).line as usize;
     let start = rope.line_start_offset(row);
     let line = rope.slice_line(row).to_string();
-    let shift = |r: Range<usize>| r.start + start..r.end + start;
-    Some(match nav::symbol_at(&line, offset.checked_sub(start)?)? {
-        Symbol::Reference { name, range } => Symbol::Reference {
-            name,
-            range: shift(range),
-        },
-        Symbol::Citation { key, range } => Symbol::Citation {
-            key,
-            range: shift(range),
-        },
-        Symbol::Label { name, range } => Symbol::Label {
-            name,
-            range: shift(range),
-        },
-        Symbol::Path { path, kind, range } => Symbol::Path {
-            path,
-            kind,
-            range: shift(range),
-        },
-        Symbol::Package { name, range } => Symbol::Package {
-            name,
-            range: shift(range),
-        },
-        Symbol::Environment { name, range } => Symbol::Environment {
-            name,
-            range: shift(range),
-        },
-        Symbol::Command { name, range } => Symbol::Command {
-            name,
-            range: shift(range),
-        },
-    })
+    nav::symbol_at(&line, offset.checked_sub(start)?).map(|s| s.shifted(start))
 }
 
 fn lsp_range(rope: &Rope, range: Range<usize>) -> lsp_types::Range {

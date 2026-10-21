@@ -45,6 +45,20 @@ impl Symbol {
             | Symbol::Command { range, .. } => range.clone(),
         }
     }
+
+    /// The same symbol, `by` bytes further (found in a slice of the text that starts there).
+    pub fn shifted(mut self, by: usize) -> Self {
+        match &mut self {
+            Symbol::Reference { range, .. }
+            | Symbol::Citation { range, .. }
+            | Symbol::Label { range, .. }
+            | Symbol::Path { range, .. }
+            | Symbol::Package { range, .. }
+            | Symbol::Environment { range, .. }
+            | Symbol::Command { range, .. } => *range = range.start + by..range.end + by,
+        }
+        self
+    }
 }
 
 /// The symbol at byte `offset` of `text`.
@@ -463,6 +477,29 @@ mod tests {
         assert_eq!(sym("\\textbf{bo|ld}"), None);
         assert_eq!(sym("plain te|xt"), None);
         assert_eq!(sym("line\\\\|next"), None);
+    }
+
+    #[test]
+    fn shifted_symbols_keep_all_but_their_place() {
+        for text in [
+            "\\ref{a|b}",
+            "\\cite{k|}",
+            "\\input{c|h}",
+            "\\beg|in{x}",
+            "\\use|package{x}",
+        ] {
+            let (t, o) = at(text);
+            let symbol = symbol_at(&t, o).unwrap();
+            let moved = symbol.clone().shifted(10);
+            assert_eq!(
+                moved.range(),
+                symbol.range().start + 10..symbol.range().end + 10
+            );
+            assert_eq!(
+                std::mem::discriminant(&moved),
+                std::mem::discriminant(&symbol)
+            );
+        }
     }
 
     #[test]
