@@ -229,7 +229,11 @@ texoria ─┬─ tex-compile ── tex-log
   - Live preview: each buffer change schedules a timer (`settings.live_delay_ms`); on fire it
     re-indexes open buffers (outline/completions follow unsaved text) and, if live preview is on,
     saves and builds. Debouncing lives in the UI, so the `Compiler` is created with
-    `Duration::ZERO`.
+    `Duration::ZERO`. `Workspace::reindex` parses only the buffers whose text changed since
+    (`Buffer::indexed`, a hash), on the background executor, one re-index at a time (those asked
+    for meanwhile make one more); the same tree gives the word count. Whatever changes the project
+    from outside a buffer's text must clear `indexed` (`reindex_all`, `reload_bibs`), or an
+    unchanged buffer keeps a stale index.
   - Compiler events come from the scheduler's thread via a `smol` channel and are applied in a
     `cx.spawn` loop (`on_compile_event`).
   - A PDF in the build folder is shown only for projects opened before (`recent`) or once a
