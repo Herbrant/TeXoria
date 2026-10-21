@@ -1,11 +1,13 @@
 //! Running `git` as an isolated child process.
 
 use std::io::{Read, Write};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tex_sys::process::{kill_tree, new_session};
 
 use crate::Error;
 
@@ -58,7 +60,8 @@ pub(crate) fn run(mut cmd: Command, opts: Options) -> Result<Output, Error> {
     })
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
-    isolate(&mut cmd);
+    // ssh or a credential helper finds no terminal, and fails instead of waiting on it.
+    new_session(&mut cmd);
     // Not `{cmd:?}`: it lists the environment, credentials included.
     log::debug!(
         "{} {:?}",
@@ -140,61 +143,4 @@ fn drain(pipe: Option<impl Read + Send + 'static>) -> Drain {
         });
     }
     Drain { buf, done }
-}
-
-/// Unix: a new session, so ssh or a credential helper finds no terminal and
-/// fails instead of waiting on the one TeXoria was started from, and its own
-/// process group, so the whole tree can be killed. Windows: no console window.
-fn isolate(cmd: &mut Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // SAFETY: setsid is async-signal-safe.
-        unsafe {
-            cmd.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-}
-
-fn kill_tree(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        // git spawns ssh and remote helpers: signal the whole group.
-        let pgid = child.id() as libc::pid_t;
-        unsafe {
-            libc::kill(-pgid, libc::SIGKILL);
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // By its full path, never one found elsewhere, and without a console.
-        let taskkill = std::env::var_os("SystemRoot")
-            .map(|root| {
-                std::path::PathBuf::from(root)
-                    .join("System32")
-                    .join("taskkill.exe")
-            })
-            .unwrap_or_else(|| "taskkill.exe".into());
-        let _ = Command::new(taskkill)
-            .args(["/T", "/F", "/PID", &child.id().to_string()])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
 }

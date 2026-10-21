@@ -94,12 +94,7 @@ impl Grammar {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
+        tex_sys::process::no_window(&mut cmd);
         let child = cmd
             .spawn()
             .map_err(|e| format!("Cannot start languagetool-server: {e}"))?;

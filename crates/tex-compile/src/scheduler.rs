@@ -254,7 +254,8 @@ impl Worker {
                 cmd.stdout(Stdio::null()).stderr(Stdio::null());
             }
         }
-        isolate(&mut cmd);
+        // latexmk spawns pdflatex and bibtex: in a group of their own, all can be stopped.
+        tex_sys::process::own_group(&mut cmd);
 
         log::info!("compile #{id}: {:?}", cmd);
         match cmd.spawn() {
@@ -292,8 +293,7 @@ impl Worker {
                     // An infinite loop in the document: new edits would only
                     // queue behind it, so stop it.
                     let mut run = self.running.take().unwrap();
-                    kill_tree(&mut run.child);
-                    let _ = run.child.wait();
+                    tex_sys::process::kill_tree(&mut run.child);
                     self.finish_with(run, Status::Failed, Some(limit));
                 }
             }
@@ -378,8 +378,7 @@ impl Worker {
     /// Kill the running process tree; returns its job if there was one.
     fn kill_running(&mut self) -> Option<Job> {
         let mut run = self.running.take()?;
-        kill_tree(&mut run.child);
-        let _ = run.child.wait();
+        tex_sys::process::kill_tree(&mut run.child);
         let job = run.job.clone();
         self.finish(run, Status::Cancelled);
         Some(job)
@@ -398,51 +397,4 @@ fn ignore_build_dir(job: &Job) {
     {
         log::debug!("writing {}: {e}", ignore.display());
     }
-}
-
-/// Put the child in its own process group (Unix) / hide its console
-/// (Windows) so the whole tree can be killed and no window flashes.
-fn isolate(cmd: &mut std::process::Command) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-}
-
-fn kill_tree(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        // latexmk spawns pdflatex/bibtex: signal the whole group.
-        let pgid = child.id() as libc::pid_t;
-        unsafe {
-            libc::kill(-pgid, libc::SIGKILL);
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // By its full path, never one found elsewhere, and without a console.
-        let taskkill = std::env::var_os("SystemRoot")
-            .map(|root| {
-                std::path::PathBuf::from(root)
-                    .join("System32")
-                    .join("taskkill.exe")
-            })
-            .unwrap_or_else(|| "taskkill.exe".into());
-        let _ = std::process::Command::new(taskkill)
-            .args(["/T", "/F", "/PID", &child.id().to_string()])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    let _ = child.kill();
 }

@@ -90,7 +90,8 @@ impl Agent {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        process::isolate(&mut cmd);
+        // Agents start helpers (MCP servers, shells, language servers): stop them all.
+        tex_sys::process::new_session(&mut cmd);
         log::info!(
             "starting agent {}: {} {:?}",
             spec.name,
@@ -247,7 +248,7 @@ impl Agent {
 
 impl Drop for Agent {
     fn drop(&mut self) {
-        process::kill_tree(&mut self.child.lock().unwrap());
+        tex_sys::process::kill_tree(&mut self.child.lock().unwrap());
     }
 }
 

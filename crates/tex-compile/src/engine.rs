@@ -316,12 +316,7 @@ fn capture(mut cmd: Command, timeout: Duration) -> Option<String> {
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    tex_sys::process::no_window(&mut cmd);
     let mut child = cmd.spawn().ok()?;
     // Read while it runs: once the pipe is full, the child would wait for
     // the reader until the timeout.

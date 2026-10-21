@@ -7037,6 +7037,7 @@ dependencies = [
  "test-support",
  "tex-log",
  "tex-project",
+ "tex-sys",
  "which",
 ]
 
@@ -7057,12 +7058,12 @@ dependencies = [
 name = "tex-compile"
 version = "0.6.0"
 dependencies = [
- "libc",
  "log",
  "proptest",
  "tempfile",
  "test-support",
  "tex-log",
+ "tex-sys",
  "which",
 ]
 
@@ -7106,12 +7107,12 @@ dependencies = [
 name = "tex-git"
 version = "0.6.0"
 dependencies = [
- "libc",
  "log",
  "proptest",
  "similar",
  "tempfile",
  "test-support",
+ "tex-sys",
  "thiserror 2.0.21",
  "which",
 ]
@@ -7169,6 +7170,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-sys"
+version = "0.6.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "tex-update"
 version = "0.6.0"
 dependencies = [
@@ -7183,6 +7191,7 @@ dependencies = [
  "tar",
  "tempfile",
  "test-support",
+ "tex-sys",
  "ureq",
 ]
 
@@ -7228,6 +7237,7 @@ dependencies = [
  "tex-project",
  "tex-spell",
  "tex-syntax",
+ "tex-sys",
  "tex-update",
  "tex-vim",
  "toml 0.9.12+spec-1.1.0",

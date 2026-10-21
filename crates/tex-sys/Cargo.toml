@@ -1,0 +1,11 @@
+[package]
+name = "tex-sys"
+description = "Processes, paths and downloads as TeXoria's crates use them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

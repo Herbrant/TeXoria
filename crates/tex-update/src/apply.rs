@@ -157,7 +157,6 @@ exec "$@""#;
 
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
         let powershell = Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
         let args = self.installer_args();
@@ -183,7 +182,7 @@ exec "$@""#;
         };
         // Out of the app's job, if it is in one that ends its processes with
         // it; not every job allows that.
-        let flags = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+        let flags = CREATE_NEW_PROCESS_GROUP | tex_sys::process::NO_WINDOW;
         spawn(flags | CREATE_BREAKAWAY_FROM_JOB)
             .or_else(|_| spawn(flags))
             .with_context(|| format!("starting {}", powershell.display()))?;

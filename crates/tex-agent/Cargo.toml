@@ -16,15 +16,16 @@ which.workspace = true
 agent-client-protocol-schema = { version = "1.12", default-features = false }
 futures-channel = "0.3"
 getrandom = "0.3"
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
+tex-sys.workspace = true
 
 [dev-dependencies]
 test-support.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 futures-executor = "0.3"
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
 
 # A scripted ACP agent for tests (see the file's documentation).
 [[bin]]
