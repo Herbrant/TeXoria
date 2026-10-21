@@ -5006,7 +5006,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-view"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "log",
  "pdfium-render",
@@ -6872,7 +6872,7 @@ dependencies = [
 
 [[package]]
 name = "synctex"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "flate2",
  "proptest",
@@ -7018,14 +7018,14 @@ dependencies = [
 
 [[package]]
 name = "test-support"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "tex-agent"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "agent-client-protocol-schema",
  "futures-channel",
@@ -7046,7 +7046,7 @@ dependencies = [
 
 [[package]]
 name = "tex-cite"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "proptest",
@@ -7060,7 +7060,7 @@ dependencies = [
 
 [[package]]
 name = "tex-compile"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "log",
  "proptest",
@@ -7072,7 +7072,7 @@ dependencies = [
 
 [[package]]
 name = "tex-complete"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "nucleo-matcher",
  "proptest",
@@ -7108,7 +7108,7 @@ dependencies = [
 
 [[package]]
 name = "tex-git"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "log",
  "proptest",
@@ -7121,7 +7121,7 @@ dependencies = [
 
 [[package]]
 name = "tex-log"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "proptest",
  "regex",
@@ -7130,7 +7130,7 @@ dependencies = [
 
 [[package]]
 name = "tex-project"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "proptest",
  "regex",
@@ -7143,7 +7143,7 @@ dependencies = [
 
 [[package]]
 name = "tex-spell"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "encoding_rs",
@@ -7163,7 +7163,7 @@ dependencies = [
 
 [[package]]
 name = "tex-syntax"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "codebook-tree-sitter-latex",
  "proptest",
@@ -7174,7 +7174,7 @@ dependencies = [
 
 [[package]]
 name = "tex-sys"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "libc",
  "proptest",
@@ -7185,7 +7185,7 @@ dependencies = [
 
 [[package]]
 name = "tex-update"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -7204,7 +7204,7 @@ dependencies = [
 
 [[package]]
 name = "tex-vim"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "proptest",
  "test-support",
@@ -7212,7 +7212,7 @@ dependencies = [
 
 [[package]]
 name = "texoria"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

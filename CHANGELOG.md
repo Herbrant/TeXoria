@@ -3,6 +3,64 @@
 Notable changes to TeXoria, newest first. Each release's section is also its GitHub release notes
 (`scripts/release-notes.sh`), so every release must have one before it is tagged.
 
+## [0.7.0] - 2026-10-21
+
+### Added
+
+- TeXoria is offered for `.tex` files in the Finder's and Explorer's *Open With*, and can be made
+  their default app; on Windows the installer makes it their app only when they had none.
+  ([62af09f](https://github.com/Herbrant/TeXoria/commit/62af09f))
+
+### Changed
+
+- **A project is opened by its main `.tex` file**, or by one of its parts (its `% !TeX root`
+  comment, or the document that inputs it, leads to the main file). *Open Folder…* is gone:
+  guessing a folder's document failed when the `\documentclass` is in a file the main one inputs.
+  Folders, and a `.bib` with no project open, are refused with a message; once a project is open,
+  *Open…* opens any text file of its folder in a tab. After *Clone Repository…* or *Open from
+  Overleaf…* you pick the main file among the clone's `.tex` files (it opens at once when there is
+  only one). ([4d2a15f](https://github.com/Herbrant/TeXoria/commit/4d2a15f), [6975b98](https://github.com/Herbrant/TeXoria/commit/6975b98))
+- Faster and lighter while typing in long documents: only the files that changed are parsed
+  again, in the background and one parse at a time, the word count reuses that parse, and the
+  outline lays out only the rows in view (half the idle CPU with 400 sections).
+  ([1b9136c](https://github.com/Herbrant/TeXoria/commit/1b9136c), [3dabdee](https://github.com/Herbrant/TeXoria/commit/3dabdee), [cfffba8](https://github.com/Herbrant/TeXoria/commit/cfffba8), [a7360e0](https://github.com/Herbrant/TeXoria/commit/a7360e0), [692c71e](https://github.com/Herbrant/TeXoria/commit/692c71e), [82ebdc2](https://github.com/Herbrant/TeXoria/commit/82ebdc2), [d7f008d](https://github.com/Herbrant/TeXoria/commit/d7f008d))
+- The PDF preview keeps at most 64 MB of page bitmaps around the pages in view.
+  ([49f579a](https://github.com/Herbrant/TeXoria/commit/49f579a))
+
+### Security
+
+- Coding agents cannot write into `.git` under any of the other names Windows reads as `.git`
+  (trailing dots or spaces, NTFS streams, `GIT~1`). ([b3d9ceb](https://github.com/Herbrant/TeXoria/commit/b3d9ceb))
+- Git and the coding agents run with only the absolute folders of `PATH`: an agent's `PATH`
+  became empty when one of its folders could not be passed on, which on Unix runs programs from
+  the project folder. ([6e13ced](https://github.com/Herbrant/TeXoria/commit/6e13ced))
+
+### Fixed
+
+- Quitting TeXoria or turning the grammar check off stops LanguageTool's Java server, not only
+  the script that started it; a `texdoc` that times out is stopped with what it started.
+  ([2d5f312](https://github.com/Herbrant/TeXoria/commit/2d5f312), [020963e](https://github.com/Herbrant/TeXoria/commit/020963e))
+- A bibliography entry typed and not saved yet no longer disappears from completions and checks
+  after a build. ([c4b5922](https://github.com/Herbrant/TeXoria/commit/c4b5922))
+- A `!TeX root =` line is read only from a comment, and a document named `MAIN.TEX` is found as
+  the root of its parts. ([23559aa](https://github.com/Herbrant/TeXoria/commit/23559aa), [e3df922](https://github.com/Herbrant/TeXoria/commit/e3df922))
+- The grammar check reads `\autocite`, `\footcite`, `\nameref` and the other reference and
+  citation commands as what they stand for. ([6ca8d53](https://github.com/Herbrant/TeXoria/commit/6ca8d53))
+- A DOI is accepted with the same prefixes (`doi.org/`, `http://dx.doi.org/`…) by the citation
+  lookup and by the project checks. ([0632ae0](https://github.com/Herbrant/TeXoria/commit/0632ae0))
+- Restarting LanguageTool from the status bar no longer resets Vim mode's state. ([4460633](https://github.com/Herbrant/TeXoria/commit/4460633))
+- The tab bar scrolls and keeps the active tab in view, and the diagnostic popover's background
+  is opaque. ([25a2e18](https://github.com/Herbrant/TeXoria/commit/25a2e18), [263328b](https://github.com/Herbrant/TeXoria/commit/263328b))
+
+### Build and documentation
+
+- The code that deals with the system (child processes, paths, verified downloads) lives in one
+  crate, `tex-sys`, and the app's main window is split into a module per concern; the tests
+  share their helpers through `test-support`. ([cc1f665](https://github.com/Herbrant/TeXoria/commit/cc1f665), [9151115](https://github.com/Herbrant/TeXoria/commit/9151115), [20dc074](https://github.com/Herbrant/TeXoria/commit/20dc074), [22f1229](https://github.com/Herbrant/TeXoria/commit/22f1229), [51b670c](https://github.com/Herbrant/TeXoria/commit/51b670c))
+- Tools to measure memory and CPU, and CI actions moved off Node.js 20. ([a99ce8e](https://github.com/Herbrant/TeXoria/commit/a99ce8e), [e3760e9](https://github.com/Herbrant/TeXoria/commit/e3760e9), [b4d8108](https://github.com/Herbrant/TeXoria/commit/b4d8108))
+
+**Full changelog**: [v0.6.0...v0.7.0](https://github.com/Herbrant/TeXoria/compare/v0.6.0...v0.7.0)
+
 ## [0.6.0] - 2026-10-20
 
 ### Added
