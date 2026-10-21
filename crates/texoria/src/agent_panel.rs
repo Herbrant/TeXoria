@@ -594,13 +594,13 @@ impl AgentPanel {
                     Some(Err(e)) => {
                         return Err(TurnError::Failed(
                             format!("{} did not start: {e}", spec.name),
-                            Some(agent.stderr_tail()).filter(|s| !s.trim().is_empty()),
+                            stderr_details(&agent),
                         ));
                     }
                     None => {
                         return Err(TurnError::Failed(
                             format!("{} did not answer.", spec.name),
-                            Some(agent.stderr_tail()).filter(|s| !s.trim().is_empty()),
+                            stderr_details(&agent),
                         ));
                     }
                 };
@@ -649,7 +649,7 @@ impl AgentPanel {
             }
             Err(e) => Err(TurnError::Failed(
                 format!("{} could not start a session: {e}", spec.name),
-                Some(agent.stderr_tail()).filter(|s| !s.trim().is_empty()),
+                stderr_details(&agent),
             )),
         }
     }
@@ -1996,6 +1996,11 @@ fn detail(content: &[acp::ToolCallContent]) -> Option<String> {
     } else {
         out.to_string()
     })
+}
+
+/// What `agent` wrote on stderr, if anything, as the details of a failure.
+fn stderr_details(agent: &tex_agent::Agent) -> Option<String> {
+    Some(agent.stderr_tail()).filter(|s| !s.trim().is_empty())
 }
 
 #[cfg(test)]

@@ -632,7 +632,6 @@ impl PdfPane {
 
     fn render_find(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let f = self.find.as_ref()?;
-        let theme = cx.theme();
         let count: SharedString = if f.searching {
             "…".into()
         } else if f.input.read(cx).value().is_empty() {
@@ -643,22 +642,11 @@ impl PdfPane {
             format!("{} of {}", f.current.map_or(0, |c| c + 1), f.hits.len()).into()
         };
         Some(
-            h_flex()
-                .absolute()
+            floating_bar(cx)
                 .top(px(10.))
                 .right(px(14.))
-                // Over the pages: a press here must not reach them (the pane would take
-                // the focus from the field and start a selection).
-                .occlude()
                 .gap_1()
                 .p_1()
-                .rounded(theme.radius_lg)
-                .bg(theme.popover)
-                .border_1()
-                .border_color(theme.border)
-                .shadow_md()
-                .text_xs()
-                .text_color(theme.muted_foreground)
                 .child(
                     div()
                         .w(px(200.))
@@ -1077,20 +1065,11 @@ impl PdfPane {
                 .on_click(cx.listener(|this, _, window, cx| this.prompt_page(window, cx)))
                 .into_any_element(),
         };
-        h_flex()
-            .absolute()
+        floating_bar(cx)
             .bottom(px(14.))
             .right(px(14.))
-            .occlude()
             .gap_0p5()
             .p_0p5()
-            .rounded(cx.theme().radius_lg)
-            .bg(cx.theme().popover)
-            .border_1()
-            .border_color(cx.theme().border)
-            .shadow_md()
-            .text_xs()
-            .text_color(cx.theme().muted_foreground)
             .child(page)
             .child(
                 ui::icon_button(
@@ -1606,6 +1585,22 @@ pub(crate) fn page_side(pt: f32, zoom: f32, scale_factor: f32) -> f32 {
 fn to_render_image(bitmap: Bitmap) -> Option<Arc<RenderImage>> {
     let buffer = image::RgbaImage::from_raw(bitmap.width, bitmap.height, bitmap.bgra)?;
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
+}
+
+/// A row of controls floating over the pages. A press there must not reach them: the pane
+/// would take the focus from a field and start a selection.
+fn floating_bar(cx: &App) -> Div {
+    let theme = cx.theme();
+    h_flex()
+        .absolute()
+        .occlude()
+        .rounded(theme.radius_lg)
+        .bg(theme.popover)
+        .border_1()
+        .border_color(theme.border)
+        .shadow_md()
+        .text_xs()
+        .text_color(theme.muted_foreground)
 }
 
 #[cfg(test)]
