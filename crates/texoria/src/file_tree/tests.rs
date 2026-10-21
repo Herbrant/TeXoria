@@ -77,8 +77,7 @@ fn files(cx: &mut TestAppContext) -> Files {
 
 impl Files {
     fn draw(&self, cx: &mut TestAppContext) {
-        cx.update_window(self.window, |_, window, cx| window.draw(cx).clear(cx))
-            .unwrap();
+        testing::draw(cx, self.window);
     }
 
     fn update<R>(
@@ -115,16 +114,11 @@ impl Files {
     }
 
     fn type_and_confirm(&self, cx: &mut TestAppContext, text: &str) {
-        self.draw(cx);
-        cx.simulate_input(self.window, text);
-        self.draw(cx);
-        cx.dispatch_action(self.window, Confirm { secondary: false });
-        cx.run_until_parked();
+        testing::fill_and_confirm(cx, self.window, text);
     }
 
     fn has_dialog(&self, cx: &mut TestAppContext) -> bool {
-        cx.update_window(self.window, |_, window, cx| window.has_active_dialog(cx))
-            .unwrap()
+        testing::has_dialog(cx, self.window)
     }
 }
 

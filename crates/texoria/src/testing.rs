@@ -3,7 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, WindowOptions, base::Root};
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::{
+    AnyWindowHandle, AppContext, Entity, TestAppContext, WindowHandle, WindowOptions, base::Root,
+};
 
 use crate::settings::Settings;
 use crate::workspace::{Startup, Workspace};
@@ -247,16 +250,92 @@ pub fn agent_workspace(
 }
 
 /// Lay the window out and paint it, as a frame on screen would.
-pub fn draw(cx: &mut TestAppContext, window: WindowHandle<Root>) {
+pub fn draw(cx: &mut TestAppContext, window: impl Into<AnyWindowHandle>) {
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
         .unwrap();
 }
 
 /// The notifications shown in `window`.
-pub fn notifications(cx: &mut TestAppContext, window: WindowHandle<Root>) -> usize {
-    use gpui_kit::component::WindowExt as _;
+pub fn notifications(cx: &mut TestAppContext, window: impl Into<AnyWindowHandle>) -> usize {
     cx.update_window(window.into(), |_, window, cx| {
         window.notifications(cx).len()
     })
     .unwrap()
+}
+
+/// Whether `window` shows a dialog.
+pub fn has_dialog(cx: &mut TestAppContext, window: impl Into<AnyWindowHandle>) -> bool {
+    cx.update_window(window.into(), |_, window, cx| window.has_active_dialog(cx))
+        .unwrap()
+}
+
+/// Type `text` (if any) in the focused field of `window`'s dialog and press its OK button.
+pub fn fill_and_confirm(cx: &mut TestAppContext, window: impl Into<AnyWindowHandle>, text: &str) {
+    let window = window.into();
+    draw(cx, window);
+    if !text.is_empty() {
+        cx.simulate_input(window, text);
+    }
+    confirm(cx, window);
+}
+
+/// Press the OK button of `window`'s dialog.
+pub fn confirm(cx: &mut TestAppContext, window: impl Into<AnyWindowHandle>) {
+    let window = window.into();
+    draw(cx, window);
+    cx.dispatch_action(
+        window,
+        gpui_kit::base::actions::Confirm { secondary: false },
+    );
+    cx.run_until_parked();
+}
+
+/// Steps of the fake agent's scripts, in the session `s1`.
+pub mod acp {
+    use std::path::Path;
+
+    use serde_json::{Value, json};
+
+    /// A `session/update` of the default session, `s1`.
+    pub fn update(update: Value) -> Value {
+        json!({ "notify": { "method": "session/update", "params": {
+            "sessionId": "s1", "update": update,
+        }}})
+    }
+
+    pub fn says(text: &str) -> Value {
+        update(json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": { "type": "text", "text": text },
+        }))
+    }
+
+    /// The agent asks to `title`, offering to allow or reject it.
+    pub fn asks(title: &str) -> Value {
+        json!({ "request": { "method": "session/request_permission", "params": {
+            "sessionId": "s1",
+            "toolCall": { "toolCallId": "p1", "title": title },
+            "options": [
+                { "optionId": "yes", "name": "Allow", "kind": "allow_once" },
+                { "optionId": "no", "name": "Reject", "kind": "reject_once" },
+            ],
+        }}})
+    }
+
+    pub fn writes(path: &Path, content: &str) -> Value {
+        json!({ "request": { "method": "fs/write_text_file", "params": {
+            "sessionId": "s1", "path": path, "content": content,
+        }}})
+    }
+
+    pub fn reads(path: &Path, line: Option<u32>, limit: Option<u32>) -> Value {
+        json!({ "request": { "method": "fs/read_text_file", "params": {
+            "sessionId": "s1", "path": path, "line": line, "limit": limit,
+        }}})
+    }
+
+    /// Answers to `session/prompt`.
+    pub fn on_prompt(actions: Vec<Value>) -> Value {
+        json!({ "on": { "session/prompt": actions } })
+    }
 }

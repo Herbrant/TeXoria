@@ -4,6 +4,7 @@ use gpui_kit::{Entity, TestAppContext, WindowHandle, base::Root};
 use serde_json::{Value, json};
 
 use super::*;
+use crate::testing::acp::{asks, on_prompt, reads, says, update, writes};
 use crate::testing::{self, FakeAgent};
 use crate::workspace::Workspace;
 // `super::*` brings gpui's `test` attribute, which would shadow the standard one, and
@@ -83,51 +84,6 @@ impl AgentPanel {
             .expect("a pending permission request with that option");
         self.choose_permission(ix, option, cx);
     }
-}
-
-// ── Scripts ─────────────────────────────────────────────────────────────
-
-/// A `session/update` of the default session, `s1`.
-fn update(update: Value) -> Value {
-    json!({ "notify": { "method": "session/update", "params": {
-        "sessionId": "s1", "update": update,
-    }}})
-}
-
-fn says(text: &str) -> Value {
-    update(json!({
-        "sessionUpdate": "agent_message_chunk",
-        "content": { "type": "text", "text": text },
-    }))
-}
-
-/// The agent asks to `title`, offering to allow or reject it.
-fn asks(title: &str) -> Value {
-    json!({ "request": { "method": "session/request_permission", "params": {
-        "sessionId": "s1",
-        "toolCall": { "toolCallId": "p1", "title": title },
-        "options": [
-            { "optionId": "yes", "name": "Allow", "kind": "allow_once" },
-            { "optionId": "no", "name": "Reject", "kind": "reject_once" },
-        ],
-    }}})
-}
-
-fn writes(path: &Path, content: &str) -> Value {
-    json!({ "request": { "method": "fs/write_text_file", "params": {
-        "sessionId": "s1", "path": path, "content": content,
-    }}})
-}
-
-fn reads(path: &Path, line: Option<u32>, limit: Option<u32>) -> Value {
-    json!({ "request": { "method": "fs/read_text_file", "params": {
-        "sessionId": "s1", "path": path, "line": line, "limit": limit,
-    }}})
-}
-
-/// Answers to `session/prompt`.
-fn on_prompt(actions: Vec<Value>) -> Value {
-    json!({ "on": { "session/prompt": actions } })
 }
 
 // ── Driving the panel ───────────────────────────────────────────────────

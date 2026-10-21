@@ -7,6 +7,7 @@ use tex_agent::prompt::Rewrite;
 
 use super::*;
 use crate::testing::FakeAgent;
+use crate::testing::acp::{asks, on_prompt, update, writes};
 use core::prelude::v1::test;
 use gpui_kit::gpui;
 
@@ -24,33 +25,6 @@ fn with_agent(
         ws,
     };
     Some((app, fake))
-}
-
-fn on_prompt(actions: Vec<Value>) -> Value {
-    json!({ "on": { "session/prompt": actions } })
-}
-
-fn writes(path: &Path, content: &str) -> Value {
-    json!({ "request": { "method": "fs/write_text_file", "params": {
-        "sessionId": "s1", "path": path, "content": content,
-    }}})
-}
-
-fn asks(title: &str) -> Value {
-    json!({ "request": { "method": "session/request_permission", "params": {
-        "sessionId": "s1",
-        "toolCall": { "toolCallId": "p1", "title": title },
-        "options": [
-            { "optionId": "yes", "name": "Allow", "kind": "allow_once" },
-            { "optionId": "no", "name": "Reject", "kind": "reject_once" },
-        ],
-    }}})
-}
-
-fn update(update: Value) -> Value {
-    json!({ "notify": { "method": "session/update", "params": {
-        "sessionId": "s1", "update": update,
-    }}})
 }
 
 impl Open {

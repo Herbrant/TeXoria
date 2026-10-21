@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_kit::base::actions::Confirm;
 use gpui_kit::{TestAppContext, WindowOptions};
 use tex_git::{Change, Entry, Status};
 
@@ -344,8 +343,7 @@ impl Panel {
 
     /// Lay the window out and paint it, as a frame on screen would.
     fn draw(&self, cx: &mut TestAppContext) {
-        cx.update_window(self.window, |_, window, cx| window.draw(cx).clear(cx))
-            .unwrap();
+        testing::draw(cx, self.window);
     }
 
     fn requests(&self) -> Vec<GitOp> {
@@ -363,28 +361,20 @@ impl Panel {
     }
 
     fn notifications(&self, cx: &mut TestAppContext) -> usize {
-        cx.update_window(self.window, |_, window, cx| window.notifications(cx).len())
-            .unwrap()
+        testing::notifications(cx, self.window)
     }
 
     fn has_dialog(&self, cx: &mut TestAppContext) -> bool {
-        cx.update_window(self.window, |_, window, cx| window.has_active_dialog(cx))
-            .unwrap()
+        testing::has_dialog(cx, self.window)
     }
 
     /// Type `text` in the dialog's focused field and press its OK button.
     fn fill_and_confirm(&self, cx: &mut TestAppContext, text: &str) {
-        self.draw(cx);
-        if !text.is_empty() {
-            cx.simulate_input(self.window, text);
-        }
-        self.confirm(cx);
+        testing::fill_and_confirm(cx, self.window, text);
     }
 
     fn confirm(&self, cx: &mut TestAppContext) {
-        self.draw(cx);
-        cx.dispatch_action(self.window, Confirm { secondary: false });
-        cx.run_until_parked();
+        testing::confirm(cx, self.window);
     }
 }
 

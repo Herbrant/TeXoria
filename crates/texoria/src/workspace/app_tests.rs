@@ -93,22 +93,12 @@ impl Open {
     }
 
     fn has_dialog(&self, cx: &mut TestAppContext) -> bool {
-        cx.update_window(self.window.into(), |_, window, cx| {
-            window.has_active_dialog(cx)
-        })
-        .unwrap()
+        testing::has_dialog(cx, self.window)
     }
 
     /// Type `text` in the open dialog's field and press its OK button.
     fn fill_and_confirm(&self, cx: &mut TestAppContext, text: &str) {
-        self.draw(cx);
-        cx.simulate_input(self.window.into(), text);
-        self.draw(cx);
-        cx.dispatch_action(
-            self.window.into(),
-            gpui_kit::base::actions::Confirm { secondary: false },
-        );
-        cx.run_until_parked();
+        testing::fill_and_confirm(cx, self.window, text);
     }
 
     /// Dispatch `action` as a shortcut typed in the active editor (in the window, if none).
