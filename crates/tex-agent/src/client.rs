@@ -118,10 +118,7 @@ impl Agent {
                     tail.push_str(&line);
                     tail.push('\n');
                     if tail.len() > STDERR_TAIL {
-                        let mut cut = tail.len() - STDERR_TAIL;
-                        while !tail.is_char_boundary(cut) {
-                            cut += 1;
-                        }
+                        let cut = tail.ceil_char_boundary(tail.len() - STDERR_TAIL);
                         tail.drain(..cut);
                     }
                 }

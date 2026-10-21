@@ -182,11 +182,9 @@ pub fn find(regex: &Regex, text: &str, limit: usize) -> Vec<Match> {
             .map_or(text.len(), |i| m.start() + i);
         // The match's first line, with some context on each side.
         let end = m.end().min(line_end);
-        let from = floor_char(
-            text,
-            m.start().saturating_sub(PREVIEW_CONTEXT).max(line_start),
-        );
-        let to = ceil_char(text, (end + PREVIEW_CONTEXT).min(line_end));
+        let from =
+            text.floor_char_boundary(m.start().saturating_sub(PREVIEW_CONTEXT).max(line_start));
+        let to = text.ceil_char_boundary((end + PREVIEW_CONTEXT).min(line_end));
         let raw = &text[from..to];
         let lead = raw.len() - raw.trim_start().len();
         let preview = raw.trim().to_string();
@@ -203,20 +201,6 @@ pub fn find(regex: &Regex, text: &str, limit: usize) -> Vec<Match> {
         });
     }
     out
-}
-
-fn floor_char(s: &str, mut i: usize) -> usize {
-    while !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
-fn ceil_char(s: &str, mut i: usize) -> usize {
-    while !s.is_char_boundary(i) {
-        i += 1;
-    }
-    i
 }
 
 #[cfg(test)]

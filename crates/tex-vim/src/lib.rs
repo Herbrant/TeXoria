@@ -384,8 +384,8 @@ impl Vim {
     /// The visual selection from the anchor to `head` (both included).
     fn selection(&mut self, t: &str, head: usize) -> Action {
         // The text may have changed since the selection started (an undo, another program).
-        self.anchor = floor(t, self.anchor);
-        let head = floor(t, head);
+        self.anchor = t.floor_char_boundary(self.anchor);
+        let head = t.floor_char_boundary(head);
         self.head = head;
         let (a, h) = (self.anchor.min(head), self.anchor.max(head));
         let range = if self.mode == Mode::VisualLine {
@@ -510,9 +510,9 @@ impl Vim {
         let t = ctx.text;
         // In visual mode the editor's cursor is the end of the selection.
         let cur = if matches!(self.mode, Mode::Visual | Mode::VisualLine) {
-            floor(t, self.head)
+            t.floor_char_boundary(self.head)
         } else {
-            floor(t, ctx.cursor)
+            t.floor_char_boundary(ctx.cursor)
         };
         match cmd {
             Cmd::Move(m, count) => {
@@ -755,9 +755,9 @@ impl Vim {
         let t = ctx.text;
         let visual = matches!(self.mode, Mode::Visual | Mode::VisualLine);
         let cur = if visual {
-            floor(t, self.head)
+            t.floor_char_boundary(self.head)
         } else {
-            floor(t, ctx.cursor)
+            t.floor_char_boundary(ctx.cursor)
         };
         let ls = line_start(t, cur);
         let le = line_end(t, cur);
@@ -1335,15 +1335,6 @@ fn change_case(text: &str, how: char) -> String {
             }
         })
         .collect()
-}
-
-/// `i`, kept inside `t` and moved back to a character boundary.
-fn floor(t: &str, i: usize) -> usize {
-    let mut i = i.min(t.len());
-    while !t.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
 }
 
 /// The lines from the one of `a` to the one of `b`, newline included.

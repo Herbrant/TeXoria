@@ -61,10 +61,7 @@ pub fn recognize(prose: &str, region: Option<&str>) -> Option<&'static str> {
     if prose.chars().count() < MIN_PROSE {
         return None;
     }
-    let mut end = prose.len().min(MAX_PROSE);
-    while !prose.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = prose.floor_char_boundary(MAX_PROSE);
     let info = Detector::with_allowlist(catalog::detectable()).detect(&prose[..end])?;
     if !info.is_reliable() {
         return None;

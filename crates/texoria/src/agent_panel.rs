@@ -2013,10 +2013,7 @@ fn detail(content: &[acp::ToolCallContent]) -> Option<String> {
     if out.is_empty() {
         return None;
     }
-    let mut cut = out.len().min(DETAIL_CHARS);
-    while !out.is_char_boundary(cut) {
-        cut -= 1;
-    }
+    let cut = out.floor_char_boundary(DETAIL_CHARS);
     Some(if cut < out.len() {
         format!("{}…", &out[..cut])
     } else {
