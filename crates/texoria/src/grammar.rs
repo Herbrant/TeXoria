@@ -76,8 +76,8 @@ impl Grammar {
     /// Stop the server TeXoria started, if any.
     pub fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            // `languagetool-server` is a script that starts Java: stop both.
+            tex_sys::process::kill_tree(&mut child);
         }
         self.server = None;
         self.state = ServerState::Off;
@@ -88,13 +88,17 @@ impl Grammar {
         let program = tex_agent::find_program("languagetool-server").ok_or_else(|| {
             "LanguageTool is not installed (no languagetool-server program)".to_string()
         })?;
+        self.spawn_program(&program, port)
+    }
+
+    fn spawn_program(&mut self, program: &std::path::Path, port: u16) -> Result<(), String> {
         let mut cmd = Command::new(program);
         cmd.args(["--port", &port.to_string()])
             .env("PATH", tex_agent::search_path())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        tex_sys::process::no_window(&mut cmd);
+        tex_sys::process::own_group(&mut cmd);
         let child = cmd
             .spawn()
             .map_err(|e| format!("Cannot start languagetool-server: {e}"))?;
@@ -441,5 +445,54 @@ mod tests {
         let ranges: Vec<_> = found.iter().map(|p| p.range.clone()).collect();
         // Before the chunk or past its end: not about this chunk.
         assert_eq!(ranges, [0..2, 9..10]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_the_server_stops_what_it_started() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("java.pid");
+        // Like `languagetool-server`: a script that runs the server as its child.
+        let script = dir.path().join("languagetool-server");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\nwait\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let alive = |pid: &str| {
+            Command::new("/bin/sh")
+                .args(["-c", &format!("kill -0 {pid} 2>/dev/null")])
+                .status()
+                .unwrap()
+                .success()
+        };
+
+        let mut grammar = Grammar::default();
+        grammar.spawn_program(&script, 0).unwrap();
+        assert!(grammar.started_server());
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let pid = loop {
+            match std::fs::read_to_string(&pid_file) {
+                Ok(pid) if pid.ends_with('\n') => break pid.trim().to_string(),
+                _ => assert!(
+                    std::time::Instant::now() < deadline,
+                    "the script did not start"
+                ),
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(alive(&pid));
+        grammar.stop();
+        assert!(!grammar.started_server());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while alive(&pid) {
+            assert!(std::time::Instant::now() < deadline, "the server survived");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
