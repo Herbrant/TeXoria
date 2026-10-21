@@ -12,6 +12,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Deserialize;
 use tex_project::Project;
+use tex_syntax::{is_cite_command, is_ref_command};
 
 pub mod nav;
 
@@ -230,18 +231,6 @@ pub(crate) fn path_kind(cmd: &str) -> Option<(PathKind, bool)> {
         "\\addbibresource" | "\\addglobalbib" => (PathKind::BibResource, false),
         _ => return None,
     })
-}
-
-pub(crate) fn is_ref_command(c: &str) -> bool {
-    let c = c.trim_start_matches('\\').to_ascii_lowercase();
-    // `\href{url}` and `\hyperref{text}` take no label in braces.
-    (c.ends_with("ref") || c.ends_with("refs") || c == "labelcref")
-        && !matches!(c.as_str(), "href" | "hyperref")
-}
-
-pub(crate) fn is_cite_command(c: &str) -> bool {
-    let c = c.trim_start_matches('\\').to_ascii_lowercase();
-    c.contains("cite") || c == "citetext"
 }
 
 /// Compute completions at `offset`. `indent` is one indentation unit.

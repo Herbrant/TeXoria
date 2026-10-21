@@ -95,6 +95,15 @@ fn gap(text: &str, range: Range<usize>, out: &mut Vec<Piece>) {
     }
 }
 
+/// The name of the command `s` starts with (`\\cite` in `\\cite[p.~2]{k}`).
+fn leading_command(s: &str) -> Option<&str> {
+    let name = s.strip_prefix('\\')?;
+    let len = name
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(name.len());
+    (len > 0).then(|| &s[..len + 1])
+}
+
 /// What a stretch of markup stands for in a sentence.
 fn markup(text: &str, range: Range<usize>) -> Piece {
     let s = &text[range.clone()];
@@ -107,21 +116,8 @@ fn markup(text: &str, range: Range<usize>) -> Piece {
     } else {
         let what = if core.starts_with('$') || core.starts_with("\\(") || core.starts_with("\\[") {
             "X"
-        } else if [
-            "\\ref",
-            "\\eqref",
-            "\\cref",
-            "\\Cref",
-            "\\autoref",
-            "\\pageref",
-            "\\cite",
-            "\\parencite",
-            "\\textcite",
-            "\\citep",
-            "\\citet",
-        ]
-        .iter()
-        .any(|c| core.starts_with(c))
+        } else if leading_command(core)
+            .is_some_and(|c| tex_syntax::is_ref_command(c) || tex_syntax::is_cite_command(c))
         {
             "1"
         } else {
@@ -506,6 +502,19 @@ mod tests {
             .map(|(s, i)| i.clone().unwrap_or_else(|| s.clone()))
             .collect();
         assert_eq!(text, "An important result, see 1 and X.\n\nNext one.");
+        // Any command referring to labels or citing stands for a number, and only those.
+        for (doc, read) in [
+            ("See \\autocite{k}.", "See 1."),
+            ("See \\Cref{a,b}.", "See 1."),
+            ("See \\footcite[p.~2]{k}.", "See 1."),
+            ("See \\refstepcounter{x}.", "See ."),
+        ] {
+            let text: String = pieces(doc)
+                .into_iter()
+                .map(|(s, i)| i.unwrap_or(s))
+                .collect();
+            assert_eq!(text, read, "{doc}");
+        }
         // The pieces cover the source.
         assert_eq!(p.iter().map(|(s, _)| s.as_str()).collect::<String>(), doc);
     }

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 tex-project.workspace = true
+tex-syntax.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 nucleo-matcher = "0.3"

@@ -7077,6 +7077,7 @@ dependencies = [
  "tempfile",
  "test-support",
  "tex-project",
+ "tex-syntax",
 ]
 
 [[package]]

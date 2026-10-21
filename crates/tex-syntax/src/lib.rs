@@ -52,6 +52,22 @@ pub fn magic_comments<'a>(text: &'a str, key: &str) -> impl Iterator<Item = &'a 
     })
 }
 
+/// Whether the command `c` (with or without its `\`) refers to labels: `\ref`, `\eqref`,
+/// `\cref`, `\autoref`, `\nameref`, `\pageref`…
+pub fn is_ref_command(c: &str) -> bool {
+    let c = c.trim_start_matches('\\').to_ascii_lowercase();
+    // `\href{url}` and `\hyperref{text}` take no label in braces.
+    (c.ends_with("ref") || c.ends_with("refs") || c == "labelcref")
+        && !matches!(c.as_str(), "href" | "hyperref")
+}
+
+/// Whether the command `c` (with or without its `\`) cites bibliography keys: `\cite`,
+/// `\citep`, `\parencite`, `\autocite`, `\footcite`…
+pub fn is_cite_command(c: &str) -> bool {
+    let c = c.trim_start_matches('\\').to_ascii_lowercase();
+    c.contains("cite") || c == "citetext"
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OutlineKind {
     Part,

@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 
 use tex_project::{Project, resolve_bib, resolve_graphics, resolve_tex};
 
-use crate::{DB, PathKind, in_comment, is_cite_command, is_ref_command, path_kind, unclosed_brace};
+use crate::{DB, PathKind, in_comment, path_kind, unclosed_brace};
+use tex_syntax::{is_cite_command, is_ref_command};
 
 /// A name in the source, with the bytes it spans.
 #[derive(Debug, Clone, PartialEq, Eq)]
