@@ -301,9 +301,7 @@ impl Workspace {
             // (a `git pull` in a terminal, another editor).
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
-                    this.reload_from_disk(window, cx);
-                    this.files.update(cx, |f, cx| f.refresh(cx));
-                    this.git.update(cx, |g, cx| g.refresh(cx));
+                    this.refresh_from_disk(window, cx);
                 }
             }),
             cx.observe_window_appearance(window, |this, window, cx| {
@@ -1555,6 +1553,13 @@ impl Workspace {
         // `set_value` emits no change event.
         self.spellcheck(ix, Duration::ZERO, cx);
         self.grammar_check(ix, Duration::ZERO, cx);
+    }
+
+    /// Pick up what changed on disk: the buffers, the Files view and the Source Control panel.
+    fn refresh_from_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reload_from_disk(window, cx);
+        self.files.update(cx, |f, cx| f.refresh(cx));
+        self.git.update(cx, |g, cx| g.refresh(cx));
     }
 
     /// Pick up files changed on disk behind our back (git checkout, pull,
@@ -2974,9 +2979,7 @@ impl Workspace {
             AgentPanelEvent::Request(op) => self.run_agent_op(op.clone(), window, cx),
             AgentPanelEvent::Busy(busy) => self.set_agent_busy(*busy, window, cx),
             AgentPanelEvent::FilesChanged => {
-                self.reload_from_disk(window, cx);
-                self.files.update(cx, |f, cx| f.refresh(cx));
-                self.git.update(cx, |g, cx| g.refresh(cx));
+                self.refresh_from_disk(window, cx);
             }
             AgentPanelEvent::Review { patch, open } => {
                 self.show_agent_review(patch.clone(), *open, window, cx)
@@ -3068,9 +3071,7 @@ impl Workspace {
                 .update(cx, |state, cx| state.set_readonly(busy, cx));
         }
         if !busy {
-            self.reload_from_disk(window, cx);
-            self.files.update(cx, |f, cx| f.refresh(cx));
-            self.git.update(cx, |g, cx| g.refresh(cx));
+            self.refresh_from_disk(window, cx);
         }
         cx.notify();
     }
@@ -3185,6 +3186,15 @@ impl Workspace {
         self.run_agent_op(AgentOp::Send(prompt), window, cx);
     }
 
+    /// ⇧⌘K: hide the Agent panel if it shows, else show it.
+    fn toggle_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_sidebar && self.sidebar == Sidebar::Agent {
+            self.toggle_sidebar(Sidebar::Agent, cx);
+        } else {
+            self.show_agent(window, cx);
+        }
+    }
+
     fn show_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_sidebar(Sidebar::Agent, cx);
         self.agent.update(cx, |a, cx| a.focus_composer(window, cx));
@@ -3229,20 +3239,13 @@ impl Workspace {
 
     /// `pdf_page`: a PNG of a page of the PDF.
     fn tool_pdf_page(&mut self, call: ToolCall, cx: &mut Context<Self>) {
-        let pages = self.pdf.read(cx).page_count();
-        let page = call.arguments["page"].as_u64().unwrap_or(0) as usize;
-        if pages == 0 {
-            let _ = call
-                .reply
-                .send(ToolResult::error("There is no PDF yet: build first."));
-            return;
-        }
-        if page == 0 || page > pages {
-            let _ = call.reply.send(ToolResult::error(format!(
-                "The PDF has pages 1 to {pages}."
-            )));
-            return;
-        }
+        let (pages, page) = match self.page_arg(&call, true, cx) {
+            Ok((pages, page)) => (pages, page.unwrap_or_default()),
+            Err(e) => {
+                let _ = call.reply.send(e);
+                return;
+            }
+        };
         let scale = call.arguments["scale"]
             .as_f64()
             .unwrap_or(1.5)
@@ -3271,20 +3274,13 @@ impl Workspace {
 
     /// `pdf_text`: the text of a page, or of the whole PDF.
     fn tool_pdf_text(&mut self, call: ToolCall, cx: &mut Context<Self>) {
-        let pages = self.pdf.read(cx).page_count();
-        if pages == 0 {
-            let _ = call
-                .reply
-                .send(ToolResult::error("There is no PDF yet: build first."));
-            return;
-        }
-        let page = call.arguments["page"].as_u64().map(|p| p as usize);
-        if page.is_some_and(|p| p == 0 || p > pages) {
-            let _ = call.reply.send(ToolResult::error(format!(
-                "The PDF has pages 1 to {pages}."
-            )));
-            return;
-        }
+        let page = match self.page_arg(&call, false, cx) {
+            Ok((_, page)) => page,
+            Err(e) => {
+                let _ = call.reply.send(e);
+                return;
+            }
+        };
         let text = self.pdf.update(cx, |p, _| p.text(page.map(|p| p - 1)));
         cx.spawn(async move |_, _| {
             let result = match text.recv().await.ok().flatten() {
@@ -3294,6 +3290,32 @@ impl Workspace {
             let _ = call.reply.send(result);
         })
         .detach();
+    }
+
+    /// The PDF's page count, and the page `call` asks for (from 1; it may give none unless
+    /// `required`); else what to answer.
+    fn page_arg(
+        &self,
+        call: &ToolCall,
+        required: bool,
+        cx: &App,
+    ) -> Result<(usize, Option<usize>), ToolResult> {
+        let pages = self.pdf.read(cx).page_count();
+        if pages == 0 {
+            return Err(ToolResult::error("There is no PDF yet: build first."));
+        }
+        let page = call.arguments["page"].as_u64().map(|p| p as usize);
+        let page = if required {
+            Some(page.unwrap_or(0))
+        } else {
+            page
+        };
+        if page.is_some_and(|p| p == 0 || p > pages) {
+            return Err(ToolResult::error(format!(
+                "The PDF has pages 1 to {pages}."
+            )));
+        }
+        Ok((pages, page))
     }
 
     /// `bib_search`: the bibliography entries matching every word of `query`.
@@ -4211,11 +4233,7 @@ impl Workspace {
                             d.child(
                                 ui::icon_button("toggle-agent", Glyph::Sparkles, "Agent (⇧⌘K)")
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        if this.show_sidebar && this.sidebar == Sidebar::Agent {
-                                            this.toggle_sidebar(Sidebar::Agent, cx);
-                                        } else {
-                                            this.show_agent(window, cx);
-                                        }
+                                        this.toggle_agent(window, cx)
                                     })),
                             )
                         }),
@@ -5476,13 +5494,9 @@ impl Render for Workspace {
                 }
             }))
             .on_action(cx.listener(|this, _: &CloseTab, _, cx| this.close_tab(cx)))
-            .on_action(cx.listener(|this, _: &ToggleAgent, window, cx| {
-                if this.show_sidebar && this.sidebar == Sidebar::Agent {
-                    this.toggle_sidebar(Sidebar::Agent, cx);
-                } else {
-                    this.show_agent(window, cx);
-                }
-            }))
+            .on_action(
+                cx.listener(|this, _: &ToggleAgent, window, cx| this.toggle_agent(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &EditWithAgent, window, cx| {
                 this.prompt_edit_with_agent(window, cx)
             }))
@@ -5543,7 +5557,6 @@ impl Render for Workspace {
     }
 }
 
-/// A LaTeX source (not a `.bib`, `.cls` is fine).
 /// Replace a buffer's text with its formatted version as one undoable edit,
 /// keeping the cursor on the same line.
 fn apply_format(editor: &Entity<EditorState>, new: String, window: &mut Window, cx: &mut App) {
