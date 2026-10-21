@@ -2,14 +2,12 @@
 //! signed `SHA256SUMS`.
 
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use semver::Version;
-use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use crate::install::InstallKind;
@@ -96,7 +94,7 @@ fn download_at_most(
     let total = resp.body().content_length();
     let reader = resp.body_mut().with_config().limit(max_size).reader();
     let out = fs::File::create(&file).with_context(|| format!("creating {}", file.display()))?;
-    copy_verified(reader, out, expected, cancel, |n| progress(n, total))
+    tex_sys::download::copy_verified(reader, &out, expected, cancel, |n| progress(n, total))
         .with_context(|| format!("downloading {url}"))?;
     Ok(Update {
         version: release.version.clone(),
@@ -174,54 +172,18 @@ pub(crate) fn make_writable(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Copy `reader` into `out`, failing unless its SHA-256 is `expected`.
-fn copy_verified(
-    mut reader: impl Read,
-    mut out: fs::File,
-    expected: &str,
-    cancel: &AtomicBool,
-    mut progress: impl FnMut(u64),
-) -> Result<()> {
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 64 << 10];
-    let mut done = 0u64;
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            bail!("canceled");
-        }
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-        out.write_all(&buf[..n])?;
-        done += n as u64;
-        progress(done);
-    }
-    out.sync_all()?;
-    let actual: String = hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    if actual != expected {
-        bail!("SHA-256 mismatch: expected {expected}, got {actual}");
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+
+    use sha2::{Digest, Sha256};
     use test_support::http::{Response, serve_paths};
 
     use super::*;
     use crate::release::tests::keys;
 
     fn sha256(data: &[u8]) -> String {
-        Sha256::digest(data)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        format!("{:x}", Sha256::digest(data))
     }
 
     #[test]

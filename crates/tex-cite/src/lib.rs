@@ -12,12 +12,6 @@ use serde::Deserialize;
 use tex_project::bib;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
-/// Crossref asks clients to say who they are.
-const USER_AGENT: &str = concat!(
-    "TeXoria/",
-    env!("CARGO_PKG_VERSION"),
-    " (https://github.com/Herbrant/TeXoria)"
-);
 /// Search results shown, at most.
 const ROWS: usize = 10;
 /// Larger answers are not an entry.
@@ -126,7 +120,7 @@ impl Client {
     pub fn with_bases(doi: &str, arxiv: &str, crossref: &str) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
-            .user_agent(USER_AGENT)
+            .user_agent(tex_sys::download::USER_AGENT)
             .build()
             .into();
         let base = |s: &str| s.trim_end_matches('/').to_string();

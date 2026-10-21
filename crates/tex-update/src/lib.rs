@@ -25,7 +25,7 @@ pub use semver::Version;
 /// The running version.
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
-pub(crate) const USER_AGENT: &str = concat!("TeXoria/", env!("CARGO_PKG_VERSION"));
+pub(crate) use tex_sys::download::USER_AGENT;
 
 pub(crate) fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()

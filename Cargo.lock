@@ -7050,6 +7050,7 @@ dependencies = [
  "serde_json",
  "test-support",
  "tex-project",
+ "tex-sys",
  "ureq",
 ]
 
@@ -7145,11 +7146,11 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "spellbook",
  "tempfile",
  "test-support",
  "tex-syntax",
+ "tex-sys",
  "tree-sitter",
  "ureq",
  "whatlang",
@@ -7171,6 +7172,7 @@ name = "tex-sys"
 version = "0.6.0"
 dependencies = [
  "libc",
+ "sha2 0.10.9",
  "tempfile",
  "which",
 ]

@@ -221,7 +221,7 @@ impl Server {
     pub fn new(url: &str) -> Self {
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
-            .user_agent(concat!("TeXoria/", env!("CARGO_PKG_VERSION")))
+            .user_agent(tex_sys::download::USER_AGENT)
             .build()
             .into();
         Self {

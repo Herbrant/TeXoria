@@ -3,12 +3,11 @@
 //! with every file checked against its pinned SHA-256.
 
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
-use sha2::{Digest, Sha256};
+use anyhow::{Context, Result, anyhow};
 
 use crate::catalog;
 use crate::checker::Speller;
@@ -97,7 +96,7 @@ impl Store {
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
-            .user_agent(concat!("TeXoria/", env!("CARGO_PKG_VERSION")))
+            .user_agent(tex_sys::download::USER_AGENT)
             .build()
             .into();
         // Both files are verified before either is in place, so the cache never
@@ -112,9 +111,10 @@ impl Store {
                 .with_context(|| format!("downloading {url}"))?;
             let reader = resp.body_mut().with_config().limit(self.max_size).reader();
             let tmp = tempfile::NamedTempFile::new_in(dir)?;
-            temps.push(
-                copy_verified(reader, tmp, sha).with_context(|| format!("downloading {url}"))?,
-            );
+            let never = AtomicBool::new(false);
+            tex_sys::download::copy_verified(reader, tmp.as_file(), sha, &never, |_| {})
+                .with_context(|| format!("downloading {url}"))?;
+            temps.push(tmp);
         }
         let mut temps = temps.into_iter();
         for dest in [&files.aff, &files.dic] {
@@ -140,34 +140,6 @@ impl Store {
         Speller::new(&aff_text, &dic_text)
             .with_context(|| format!("parsing the {code} dictionary ({})", files.aff.display()))
     }
-}
-
-/// Copy `reader` into `tmp`, failing unless its SHA-256 is `expected`.
-fn copy_verified(
-    mut reader: impl Read,
-    mut tmp: tempfile::NamedTempFile,
-    expected: &str,
-) -> Result<tempfile::NamedTempFile> {
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 64 << 10];
-    loop {
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-        tmp.write_all(&buf[..n])?;
-    }
-    tmp.as_file().sync_all()?;
-    let actual: String = hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    if actual != expected {
-        bail!("SHA-256 mismatch: expected {expected}, got {actual}");
-    }
-    Ok(tmp)
 }
 
 /// Hunspell files are UTF-8 or in the charset named by the `.aff`'s `SET`.
@@ -272,18 +244,6 @@ fn system_names(code: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use test_support::http::{Response, Server, serve, serve_paths};
-
-    #[test]
-    fn verifies_downloads() {
-        let dir = tempfile::tempdir().unwrap();
-        // SHA-256 of "abc".
-        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-        let tmp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
-        let ok = copy_verified(&b"abc"[..], tmp, abc).unwrap();
-        assert_eq!(fs::read(ok.path()).unwrap(), b"abc");
-        let tmp = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
-        assert!(copy_verified(&b"abd"[..], tmp, abc).is_err());
-    }
 
     #[test]
     fn decodes_legacy_charsets() {

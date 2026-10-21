@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 tex-syntax.workspace = true
+tex-sys.workspace = true
 # Must match the tree-sitter major used by tex-syntax.
 tree-sitter = "0.26"
 anyhow.workspace = true
@@ -18,7 +19,6 @@ whatlang = "0.18"
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
 encoding_rs = "0.8"
 
 [dev-dependencies]
