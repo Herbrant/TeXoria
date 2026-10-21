@@ -879,7 +879,7 @@ fn trusting_a_repository_lets_git_run(cx: &mut TestAppContext) {
         return;
     };
     let dir = s.dir.join("paper");
-    copy(&test_support::fixtures().join("sample"), &dir);
+    test_support::copy_dir(&test_support::fixtures().join("sample"), &dir);
     s.run(&dir, &["init", "--quiet"]);
     let settings = tempfile::tempdir().unwrap();
     let (window, ws) = testing::open(cx, Some(dir.join("main.tex")), saved_in(settings.path()));
@@ -902,18 +902,6 @@ fn trusting_a_repository_lets_git_run(cx: &mut TestAppContext) {
         ws.update_settings(|s| s.trusted_projects.clear(), window, cx)
     });
     assert!(!app.read(cx, |ws, _| ws.settings.is_trusted(&dir)));
-}
-
-fn copy(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap().flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            copy(&path, &to.join(entry.file_name()));
-        } else {
-            std::fs::copy(&path, to.join(entry.file_name())).unwrap();
-        }
-    }
 }
 
 #[gpui::test]

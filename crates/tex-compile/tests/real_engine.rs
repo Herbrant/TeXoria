@@ -2,30 +2,13 @@
 //! has. Skipped (passes trivially) when no TeX engine is installed, unless
 //! `TEXORIA_REQUIRE_TEX=1` (`TEXORIA_REQUIRE_TECTONIC=1` for Tectonic).
 
-use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 
 use tex_compile::{Compiler, Event, Job, Status, detect};
 
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap().flatten() {
-        let name = entry.file_name();
-        if name == ".texoria" {
-            continue;
-        }
-        let dst = to.join(&name);
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &dst);
-        } else {
-            std::fs::copy(entry.path(), dst).unwrap();
-        }
-    }
-}
-
 fn vendor_tectonic() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/tectonic")
+    test_support::vendor("tectonic")
 }
 
 #[test]
@@ -55,7 +38,7 @@ fn compiles_sample_with_tectonic() {
 fn compile_sample(engine: tex_compile::Engine) {
     let src = test_support::fixtures().join("sample");
     let dir = tempfile::tempdir().unwrap();
-    copy_dir(&src, dir.path());
+    test_support::copy_dir(&src, dir.path());
 
     let (tx, rx) = mpsc::channel();
     let compiler = Compiler::new(engine, Duration::ZERO, move |e| {

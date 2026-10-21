@@ -456,7 +456,7 @@ mod tests {
     use super::*;
 
     fn sample() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample")
+        test_support::fixtures().join("sample")
     }
 
     #[test]
@@ -517,11 +517,7 @@ mod tests {
     /// Write `files` (path, text) into a new temporary folder.
     fn project(files: &[(&str, &str)]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        for (path, text) in files {
-            let path = dir.path().join(path);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, text).unwrap();
-        }
+        test_support::write_files(dir.path(), files);
         dir
     }
 

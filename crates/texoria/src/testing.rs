@@ -47,23 +47,8 @@ pub fn open(
 /// repository: building would add a `.texoria` folder there).
 pub fn fixture_copy(name: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    copy_dir(&test_support::fixtures().join(name), dir.path());
+    test_support::copy_dir(&test_support::fixtures().join(name), dir.path());
     dir
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap().flatten() {
-        let (name, path) = (entry.file_name(), entry.path());
-        if name == ".texoria" {
-            continue;
-        }
-        if path.is_dir() {
-            copy_dir(&path, &to.join(name));
-        } else {
-            std::fs::copy(&path, to.join(name)).unwrap();
-        }
-    }
 }
 
 /// git with the user's and the system's configuration out of the way, in a temporary folder

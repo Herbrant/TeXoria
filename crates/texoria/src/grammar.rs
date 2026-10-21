@@ -354,20 +354,17 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn stopping_the_server_stops_what_it_started() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let pid_file = dir.path().join("java.pid");
         // Like `languagetool-server`: a script that runs the server as its child.
-        let script = dir.path().join("languagetool-server");
-        std::fs::write(
-            &script,
-            format!(
+        let script = test_support::executable(
+            dir.path(),
+            "languagetool-server",
+            &format!(
                 "#!/bin/sh\nsleep 30 &\necho $! > '{}'\nwait\n",
                 pid_file.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let alive = |pid: &str| {
             Command::new("/bin/sh")
                 .args(["-c", &format!("kill -0 {pid} 2>/dev/null")])

@@ -118,12 +118,7 @@ fn walk(dir: &Path, depth: usize, budget: &mut usize, out: &mut Vec<(PathBuf, us
 mod tests {
     use super::*;
 
-    fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
-        let path = dir.join(name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, text).unwrap();
-        path
-    }
+    use test_support::write;
 
     const DOC: &str = "\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}\n";
 

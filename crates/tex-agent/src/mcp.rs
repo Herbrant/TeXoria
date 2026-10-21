@@ -583,11 +583,9 @@ mod tests {
             .map(|_| TcpStream::connect(server.addr).unwrap())
             .collect();
         // Wait until all are being served.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while server.shared.open.lock().unwrap().len() < MAX_CONNECTIONS {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        assert!(test_support::within(Duration::from_secs(5), || {
+            server.shared.open.lock().unwrap().len() == MAX_CONNECTIONS
+        }));
         let mut extra = TcpStream::connect(server.addr).unwrap();
         extra
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -596,11 +594,9 @@ mod tests {
         assert!(hung_up(&mut extra), "one too many");
         drop(idle);
         // Room again once they are gone.
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while !server.shared.open.lock().unwrap().is_empty() {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        assert!(test_support::within(Duration::from_secs(10), || {
+            server.shared.open.lock().unwrap().is_empty()
+        }));
         let (mut w, mut r) = connect(&server);
         assert_eq!(
             ask(
@@ -629,11 +625,11 @@ mod tests {
         let _ = writeln!(w, "{}", json!({"jsonrpc":"2.0","id":2,"method":"ping"}));
         assert!(hung_up(r.get_mut()));
         // Nobody listens any more.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while TcpStream::connect(addr).is_ok() {
-            assert!(std::time::Instant::now() < deadline, "still accepting");
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let closed = || TcpStream::connect(addr).is_err();
+        assert!(
+            test_support::within(Duration::from_secs(5), closed),
+            "still accepting"
+        );
     }
 
     #[test]

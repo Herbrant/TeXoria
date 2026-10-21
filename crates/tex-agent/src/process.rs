@@ -213,18 +213,7 @@ pub(crate) mod tests {
 
     /// An empty file `name` in `dir` that `which` takes for a program.
     pub(crate) fn executable(dir: &Path, name: &str) -> PathBuf {
-        let path = dir.join(if cfg!(windows) {
-            format!("{name}.exe")
-        } else {
-            name.to_string()
-        });
-        std::fs::write(&path, "").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        path
+        test_support::executable(dir, name, "")
     }
 
     #[test]

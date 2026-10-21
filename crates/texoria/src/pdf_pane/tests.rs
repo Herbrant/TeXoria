@@ -215,20 +215,7 @@ fn fixture(path: &str) -> PathBuf {
 
 /// The repository's PDFium, if it was fetched.
 fn pdfium() -> Option<Vec<PathBuf>> {
-    let dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../vendor/pdfium"));
-    let found = std::fs::read_dir(&dir).is_ok_and(|mut d| {
-        d.any(|e| {
-            e.is_ok_and(|e| {
-                let n = e.file_name().to_string_lossy().to_lowercase();
-                n.contains("pdfium") && !n.ends_with(".txt")
-            })
-        })
-    });
-    if !found {
-        test_support::skip("PDFIUM", "no PDFium in vendor/pdfium");
-        return None;
-    }
-    Some(vec![dir])
+    test_support::pdfium().map(|dir| vec![dir])
 }
 
 /// A pane alone in a window.

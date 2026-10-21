@@ -458,7 +458,7 @@ Count:10
 
     #[test]
     fn real_pdflatex_output() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/synctex");
+        let dir = test_support::fixtures().join("synctex");
         let st = SyncTex::open(&dir.join("sample.synctex.gz")).unwrap();
         assert_eq!(st.page_count(), 2);
         // The fixture was written on Unix: on Windows `/proj/...` has no drive

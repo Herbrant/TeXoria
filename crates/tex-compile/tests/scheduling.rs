@@ -43,14 +43,10 @@ impl Events {
 
     /// Wait for the `n`th event of the kind `pick` keeps, and return it.
     fn wait<T>(&self, n: usize, pick: impl Fn(&Event) -> Option<T>) -> T {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            if let Some(found) = self.all().iter().filter_map(&pick).nth(n - 1) {
-                return found;
-            }
-            assert!(Instant::now() < deadline, "timed out: {:#?}", self.all());
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        test_support::eventually(Duration::from_secs(20), || {
+            self.all().iter().filter_map(&pick).nth(n - 1)
+        })
+        .unwrap_or_else(|| panic!("timed out: {:#?}", self.all()))
     }
 
     fn wait_finished(&self, n: usize) -> Output {
@@ -100,11 +96,10 @@ impl Heartbeat {
     }
 
     fn wait_started(&self) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while self.len() == 0 {
-            assert!(Instant::now() < deadline, "the grandchild never started");
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        assert!(
+            test_support::within(Duration::from_secs(20), || self.len() > 0),
+            "the grandchild never started"
+        );
     }
 
     #[track_caller]

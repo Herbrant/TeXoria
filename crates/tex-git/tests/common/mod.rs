@@ -81,9 +81,7 @@ impl Sandbox {
 }
 
 pub fn write(repo: &Repo, rel: &str, text: &str) {
-    let p = repo.abs_path(rel);
-    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-    std::fs::write(p, text).unwrap();
+    test_support::write(repo.root(), rel, text);
 }
 
 pub fn read(repo: &Repo, rel: &str) -> String {

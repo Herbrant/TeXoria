@@ -677,15 +677,7 @@ mod tests {
 
     /// An empty file that `which` takes for a program.
     fn program(dir: &Path, name: &str) -> PathBuf {
-        std::fs::create_dir_all(dir).unwrap();
-        let path = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-        std::fs::write(&path, "").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        path
+        test_support::executable(dir, name, "")
     }
 
     #[test]

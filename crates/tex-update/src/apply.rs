@@ -566,8 +566,7 @@ mod tests {
                 "Exec=/home/me/.local/bin/texoria",
             ),
         ] {
-            fs::create_dir_all(p.join(path).parent().unwrap()).unwrap();
-            fs::write(p.join(path), content).unwrap();
+            test_support::write(p, path, content);
         }
         let archive = tarball(&[
             ("usr/bin/texoria", b"new"),
@@ -974,17 +973,10 @@ image-path      : /private/tmp/u/other.dmg
     #[cfg(unix)]
     #[test]
     fn relaunches_after_exit() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = tempfile::tempdir().unwrap();
-        let program = dir.path().join("texoria");
         let marker = dir.path().join("started");
-        fs::write(
-            &program,
-            format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display()),
-        )
-        .unwrap();
-        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        let script = format!("#!/bin/sh\necho \"$@\" > '{}'\n", marker.display());
+        let program = test_support::executable(dir.path(), "texoria", &script);
         let relaunch = Relaunch {
             program,
             args: vec!["--new".into()],

@@ -316,8 +316,7 @@ mod tests {
 
     #[test]
     fn the_sample_project_has_no_issues() {
-        let root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample/main.tex");
+        let root = test_support::fixtures().join("sample/main.tex");
         let p = Project::open(root);
         assert_eq!(run(&p), Vec::new());
     }

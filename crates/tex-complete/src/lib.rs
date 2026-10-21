@@ -600,11 +600,7 @@ fn innermost_open_env(text: &str) -> Option<String> {
 #[cfg(test)]
 pub(crate) fn temp_project(files: &[(&str, &str)]) -> (tempfile::TempDir, Project) {
     let dir = tempfile::tempdir().unwrap();
-    for (name, text) in files {
-        let path = dir.path().join(name);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, text).unwrap();
-    }
+    test_support::write_files(dir.path(), files);
     let project = Project::open(dir.path().join(files[0].0));
     (dir, project)
 }

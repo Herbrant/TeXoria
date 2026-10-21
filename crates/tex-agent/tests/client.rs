@@ -227,17 +227,12 @@ fn modes_sign_in_and_cancel() {
     let session = acp::SessionId::new("s1");
     block_on(agent.set_mode(session.clone(), acp::SessionModeId::new("code"))).unwrap();
     agent.cancel(&session);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let log = fake.log();
-        if let Some(cancel) = log.iter().find(|m| m["method"] == "session/cancel") {
-            assert_eq!(cancel["params"]["sessionId"], "s1");
-            assert!(cancel.get("id").is_none(), "a notification");
-            break;
-        }
-        assert!(Instant::now() < deadline, "{log:?}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let cancel = test_support::eventually(Duration::from_secs(10), || {
+        (fake.log().into_iter()).find(|m| m["method"] == "session/cancel")
+    })
+    .unwrap_or_else(|| panic!("{:?}", fake.log()));
+    assert_eq!(cancel["params"]["sessionId"], "s1");
+    assert!(cancel.get("id").is_none(), "a notification");
     let set_mode = fake
         .log()
         .into_iter()
@@ -390,14 +385,7 @@ fn a_program_that_cannot_start() {
 
 /// Whether process `pid` is gone within a few seconds.
 fn gone(pid: u32) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if !alive(pid) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
+    test_support::within(Duration::from_secs(10), || !alive(pid))
 }
 
 #[cfg(unix)]

@@ -178,14 +178,7 @@ impl Fixture {
 /// Whether the lock at `path` is free, or soon is: a process another test is starting holds
 /// a copy of every open file until it runs its program (a fork shares the lock).
 fn released(path: &std::path::Path) -> bool {
-    let start = std::time::Instant::now();
-    while Lock::busy_at(path) {
-        if start.elapsed() > Duration::from_secs(5) {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    true
+    test_support::within(Duration::from_secs(5), || !Lock::busy_at(path))
 }
 
 fn available() -> UpdateState {

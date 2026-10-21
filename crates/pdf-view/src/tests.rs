@@ -1,6 +1,5 @@
 use super::*;
 use std::ops::Range;
-use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -47,7 +46,7 @@ fn finds_the_nearest_char() {
 }
 
 fn vendor() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/pdfium")
+    test_support::vendor("pdfium")
 }
 
 /// A renderer on the repository's `vendor/pdfium`, if PDFium is there. Only a missing

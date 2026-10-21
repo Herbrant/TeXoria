@@ -6,23 +6,7 @@ use super::*;
 use core::prelude::v1::test;
 use gpui_kit::gpui;
 
-/// `vendor/pdfium`, if `scripts/fetch-pdfium.sh` fetched it.
-fn pdfium() -> Option<PathBuf> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/pdfium");
-    let found = std::fs::read_dir(&dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|e| {
-            let name = e.file_name().to_string_lossy().to_lowercase();
-            name.contains("pdfium") && !name.ends_with(".txt")
-        });
-    if !found {
-        test_support::skip("PDFIUM", "vendor/pdfium is missing");
-        return None;
-    }
-    Some(dir)
-}
+use test_support::pdfium;
 
 #[gpui::test]
 fn pdf_tools_read_the_pdf_on_screen(cx: &mut TestAppContext) {
