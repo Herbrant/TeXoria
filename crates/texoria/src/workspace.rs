@@ -4028,7 +4028,6 @@ impl Workspace {
                 .on_click(cx.listener(|this, _, _, cx| {
                     if matches!(this.grammar.state, ServerState::Unreachable(_)) {
                         this.start_grammar(Duration::ZERO, cx);
-                        this.vim = this.settings.vim_mode.then(tex_vim::Vim::new);
                     }
                 }))
                 .into_any_element(),
