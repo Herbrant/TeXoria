@@ -321,6 +321,19 @@ pub fn resolve_bib(root_dir: &Path, path: &str) -> PathBuf {
     resolve_with_ext(root_dir, path, "bib")
 }
 
+/// `file` relative to `dir`, written as in the sources: with `/` on every system; `file` as
+/// the system writes it if it is not in `dir`.
+pub fn source_path(dir: &Path, file: &Path) -> String {
+    match file.strip_prefix(dir) {
+        Ok(rel) => rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+        Err(_) => file.display().to_string(),
+    }
+}
+
 /// Whether the extension of `path` is one of `extensions`, in any case (`.TEX` from old
 /// systems).
 pub fn has_extension(path: &Path, extensions: &[&str]) -> bool {
@@ -701,6 +714,23 @@ mod tests {
         assert_eq!(
             resolve_bib(root, abs.to_str().unwrap()),
             normalize(&abs.with_extension("bib"))
+        );
+    }
+
+    #[test]
+    fn relative_paths_use_slashes() {
+        let dir = std::env::temp_dir().join("p");
+        assert_eq!(source_path(&dir, &dir.join("ch").join("a.tex")), "ch/a.tex");
+        let outside = std::env::temp_dir().join("q.tex");
+        assert_eq!(source_path(&dir, &outside), outside.display().to_string());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn relative_paths_use_slashes_on_windows() {
+        assert_eq!(
+            source_path(Path::new(r"C:\p"), Path::new(r"C:\p\ch\sub\a.tex")),
+            "ch/sub/a.tex"
         );
     }
 

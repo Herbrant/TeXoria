@@ -1634,11 +1634,7 @@ impl Workspace {
 
     /// Point the Source Control panel at the current project.
     fn sync_git(&mut self, cx: &mut Context<Self>) {
-        let dir = self
-            .root
-            .as_ref()
-            .and_then(|r| r.parent())
-            .map(Path::to_path_buf);
+        let dir = self.project_dir();
         // Trust is the repository's: its configuration is what runs.
         let trusted = dir
             .as_deref()
@@ -3156,22 +3152,14 @@ impl Workspace {
     /// `path` relative to the project, as the agents' tools show it: with `/` on every system,
     /// like the paths of `\input` and `\includegraphics`.
     fn tool_path(&self, path: &Path) -> String {
-        let rel = self.relative(path);
-        if rel.is_absolute() {
-            // Outside the project: as the system writes it.
-            return rel.display().to_string();
+        match self.project_dir() {
+            Some(dir) => tex_project::source_path(&dir, path),
+            None => path.display().to_string(),
         }
-        let parts: Vec<_> = rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect();
-        parts.join("/")
     }
 
     fn relative(&self, path: &Path) -> PathBuf {
-        self.project_dir()
-            .and_then(|d| path.strip_prefix(d).ok().map(Path::to_path_buf))
-            .unwrap_or_else(|| path.to_path_buf())
+        crate::paths::relative(path, self.project_dir().as_deref()).to_path_buf()
     }
 
     fn set_agent_busy(&mut self, busy: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -4725,11 +4713,7 @@ impl Workspace {
 
     fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let root_dir = self
-            .root
-            .as_ref()
-            .and_then(|r| r.parent())
-            .map(Path::to_path_buf);
+        let root_dir = self.project_dir();
         let diff_title: Option<SharedString> =
             self.diff.as_ref().map(|d| d.read(cx).title().into());
         // The last tab stays, so it has no close button.
@@ -4748,10 +4732,7 @@ impl Workspace {
             .border_b_1()
             .border_color(theme.border)
             .children(self.buffers.iter().enumerate().map(|(i, b)| {
-                let name = root_dir
-                    .as_ref()
-                    .and_then(|d| b.path.strip_prefix(d).ok())
-                    .unwrap_or(&b.path)
+                let name = crate::paths::relative(&b.path, root_dir.as_deref())
                     .to_string_lossy()
                     .into_owned();
                 let active = i == self.active && !self.diff_active;
@@ -4943,11 +4924,7 @@ impl Workspace {
 
     fn render_diagnostics(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let root_dir = self
-            .root
-            .as_ref()
-            .and_then(|r| r.parent())
-            .map(Path::to_path_buf);
+        let root_dir = self.project_dir();
         let problems = self.problems();
         let rows = problems
             .iter()
@@ -4961,10 +4938,7 @@ impl Workspace {
                 };
                 let location = match (&d.file, d.line) {
                     (Some(f), Some(l)) => {
-                        let rel = root_dir
-                            .as_ref()
-                            .and_then(|r| f.strip_prefix(r).ok())
-                            .unwrap_or(f);
+                        let rel = crate::paths::relative(f, root_dir.as_deref());
                         format!("{}:{l}", rel.display())
                     }
                     (Some(f), None) => f

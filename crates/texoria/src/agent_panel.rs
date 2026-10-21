@@ -1473,11 +1473,7 @@ impl AgentPanel {
             t.title.clone().into()
         };
         let location = t.locations.first().map(|l| {
-            let rel = self
-                .dir
-                .as_ref()
-                .and_then(|d| l.path.strip_prefix(d).ok())
-                .unwrap_or(&l.path)
+            let rel = crate::paths::relative(&l.path, self.dir.as_deref())
                 .display()
                 .to_string();
             let label = match l.line {

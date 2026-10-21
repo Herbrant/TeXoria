@@ -250,10 +250,7 @@ impl SearchPanel {
     }
 
     fn relative<'a>(&self, path: &'a Path) -> &'a Path {
-        self.dir
-            .as_ref()
-            .and_then(|d| path.strip_prefix(d).ok())
-            .unwrap_or(path)
+        crate::paths::relative(path, self.dir.as_deref())
     }
 
     fn render_row(&self, row: Row, ix: usize, cx: &mut Context<Self>) -> AnyElement {

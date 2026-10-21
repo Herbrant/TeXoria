@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use tex_project::{Project, resolve_bib, resolve_graphics, resolve_tex};
+use tex_project::{Project, resolve_bib, resolve_graphics, resolve_tex, source_path};
 
 use crate::{DB, PathKind, in_comment, path_kind, unclosed_brace};
 use tex_syntax::{is_cite_command, is_ref_command};
@@ -230,7 +230,8 @@ pub fn definition(project: &Project, symbol: &Symbol) -> Option<Target> {
 /// What to show about `symbol` on hover, as Markdown.
 pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
     let dir = project.root_dir();
-    let place = |file: &Path, line: u32| format!("{}:{}", escape(&relative(dir, file)), line + 1);
+    let place =
+        |file: &Path, line: u32| format!("{}:{}", escape(&source_path(dir, file)), line + 1);
     let mut out = String::new();
     match symbol {
         Symbol::Reference { name, .. } => {
@@ -299,7 +300,7 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
                 let _ = writeln!(out, "{}\n", tail.join(", "));
             }
             let entry = code(&format!("@{}{{{key}}}", e.kind));
-            let _ = write!(out, "{entry} — {}", escape(&relative(dir, file)));
+            let _ = write!(out, "{entry} — {}", escape(&source_path(dir, file)));
         }
         Symbol::Path { path, kind, .. } => {
             let found = match definition(project, symbol) {
@@ -312,7 +313,7 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
                     let _ = write!(
                         out,
                         "{} — {}",
-                        code(&relative(dir, &file)),
+                        code(&source_path(dir, &file)),
                         human_size(size)
                     );
                     if *kind == PathKind::Graphics {
@@ -350,7 +351,7 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
                     out,
                     "**Environment** {} — {}",
                     code(name),
-                    escape(&relative(dir, file))
+                    escape(&source_path(dir, file))
                 );
             } else {
                 let e = DB.environments.iter().find(|e| &e.name == name)?;
@@ -377,18 +378,6 @@ pub fn hover(project: &Project, symbol: &Symbol) -> Option<String> {
         }
     }
     Some(out)
-}
-
-/// `file` relative to `dir`, written as in the sources: with `/` on every system.
-fn relative(dir: &Path, file: &Path) -> String {
-    match file.strip_prefix(dir) {
-        Ok(rel) => rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/"),
-        Err(_) => file.display().to_string(),
-    }
 }
 
 fn human_size(bytes: u64) -> String {
@@ -506,23 +495,6 @@ mod tests {
         assert!(
             package.ends_with("(https://texdoc.org/pkg/tikz-cd)"),
             "{package}"
-        );
-    }
-
-    #[test]
-    fn relative_paths_use_slashes() {
-        let dir = std::env::temp_dir().join("p");
-        assert_eq!(relative(&dir, &dir.join("ch").join("a.tex")), "ch/a.tex");
-        let outside = std::env::temp_dir().join("q.tex");
-        assert_eq!(relative(&dir, &outside), outside.display().to_string());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn relative_paths_use_slashes_on_windows() {
-        assert_eq!(
-            relative(Path::new(r"C:\p"), Path::new(r"C:\p\ch\sub\a.tex")),
-            "ch/sub/a.tex"
         );
     }
 
@@ -902,7 +874,7 @@ mod tests {
         assert_eq!(escape("plain é"), "plain é");
         let dir = Path::new("/p");
         assert_eq!(
-            relative(dir, Path::new("/elsewhere/x.tex")),
+            source_path(dir, Path::new("/elsewhere/x.tex")),
             Path::new("/elsewhere/x.tex").display().to_string()
         );
     }

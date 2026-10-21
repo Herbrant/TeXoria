@@ -4,6 +4,12 @@ use std::path::Path;
 
 pub use tex_sys::paths::{canonical, plain};
 
+/// `path` relative to `dir` (the project's folder), as the system writes it; `path` itself
+/// outside of it.
+pub fn relative<'a>(path: &'a Path, dir: Option<&Path>) -> &'a Path {
+    dir.and_then(|d| path.strip_prefix(d).ok()).unwrap_or(path)
+}
+
 /// Whether `path` is LaTeX source, by its extension in any case (`.TEX` from old systems).
 pub fn is_latex(path: &Path) -> bool {
     tex_project::has_extension(path, &["tex", "ltx", "sty", "cls", "dtx"])
@@ -17,6 +23,20 @@ pub fn is_bibtex(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paths_relative_to_the_project() {
+        let dir = Path::new("/p");
+        assert_eq!(
+            relative(&dir.join("ch/a.tex"), Some(dir)),
+            Path::new("ch/a.tex")
+        );
+        assert_eq!(
+            relative(Path::new("/q/a.tex"), Some(dir)),
+            Path::new("/q/a.tex")
+        );
+        assert_eq!(relative(Path::new("/p/a.tex"), None), Path::new("/p/a.tex"));
+    }
 
     #[test]
     fn latex_sources() {
