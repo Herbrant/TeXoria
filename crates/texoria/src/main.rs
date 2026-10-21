@@ -51,7 +51,6 @@ actions!(
     texoria,
     [
         Open,
-        OpenFolder,
         Save,
         Build,
         CancelBuild,
@@ -98,7 +97,6 @@ actions!(
 fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("secondary-o", Open, None),
-        KeyBinding::new("secondary-shift-o", OpenFolder, None),
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-shift-s", ExportPdf, None),
         KeyBinding::new("secondary-shift-enter", TogglePreviewWindow, None),
@@ -166,7 +164,6 @@ fn set_menus(cx: &mut App) {
         ]),
         Menu::new("File").items([
             MenuItem::action("Open…", Open),
-            MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::action("Save", Save),
             MenuItem::action("Export PDF…", ExportPdf),
             MenuItem::action("Clone Repository…", CloneRepository),
@@ -319,7 +316,7 @@ fn main_window(cx: &App) -> Option<(AnyWindowHandle, Entity<Workspace>)> {
     })
 }
 
-/// Open the main window on `path` (a file or a folder, or none for the start page).
+/// Open the main window on `path` (a `.tex` file, or none for the start page).
 fn open_main_window(path: Option<PathBuf>, cx: &mut App) {
     // The title bar moves the window and handles double clicks itself
     // (otherwise macOS does both too, and delays clicks on its buttons).

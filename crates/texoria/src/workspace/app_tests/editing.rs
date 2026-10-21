@@ -157,7 +157,7 @@ fn a_project_reopens_its_tabs(cx: &mut TestAppContext) {
         startup
     };
     // The project opened: its tabs, and the one that was active.
-    let (_, ws) = testing::open(cx, Some(dir.clone()), startup());
+    let (_, ws) = testing::open(cx, Some(main.clone()), startup());
     let tabs = ws.read_with(cx, |ws, _| {
         let paths: Vec<PathBuf> = ws.buffers.iter().map(|b| b.path.clone()).collect();
         (paths, ws.buffers[ws.active].path.clone())
@@ -165,29 +165,37 @@ fn a_project_reopens_its_tabs(cx: &mut TestAppContext) {
     // The root's tab was closed: it stays closed.
     assert_eq!(tabs.0, [methods.clone(), bib.clone()]);
     assert_eq!(tabs.1, methods);
-    // A file of it opened: that file, in its project (not a document of its own).
+    // A file that is not a .tex one does not open a project, not even its own.
     let (_, ws) = testing::open(cx, Some(bib.clone()), startup());
-    let (root, active) = ws.read_with(cx, |ws, _| {
-        (ws.root.clone(), ws.buffers[ws.active].path.clone())
-    });
-    assert_eq!(root, Some(main));
-    assert_eq!(active, bib);
+    let (root, state) = ws.read_with(cx, |ws, _| (ws.root.clone(), ws.state.clone()));
+    assert_eq!(root, None);
+    let CompileState::Failed(e) = state else {
+        panic!("no error");
+    };
+    assert!(
+        e.ends_with("is not a .tex file: open the document's main .tex file"),
+        "{e}"
+    );
 }
 
 #[gpui::test]
-fn opening_projects_and_folders(cx: &mut TestAppContext) {
+fn opening_projects(cx: &mut TestAppContext) {
     let app = Open::empty(cx, quiet());
     app.draw(cx);
-    // A folder without a document.
-    let empty = tempfile::tempdir().unwrap();
-    app.update(cx, |ws, window, cx| {
-        ws.open_path(empty.path().to_path_buf(), window, cx)
-    });
+    // A folder, even a project's: which of its files is the document is not guessed.
+    let tmp = testing::fixture_copy("sample");
+    let dir = paths::canonical(tmp.path());
+    app.update(cx, |ws, window, cx| ws.open_path(dir.clone(), window, cx));
     let CompileState::Failed(e) = app.read(cx, |ws, _| ws.state.clone()) else {
         panic!("no error");
     };
-    assert!(e.starts_with("No LaTeX document "), "{e}");
+    assert!(
+        e.ends_with("is a folder: open the document's main .tex file"),
+        "{e}"
+    );
     assert!(app.read(cx, |ws, _| ws.root.is_none()));
+    assert!(!dir.join(".texoria").exists());
+    let empty = tempfile::tempdir().unwrap();
     // A path that does not exist (mistyped, or a recent project since moved): nothing
     // opened, built or remembered.
     let gone = paths::canonical(empty.path()).join("gone.tex");
@@ -203,12 +211,10 @@ fn opening_projects_and_folders(cx: &mut TestAppContext) {
         && !ws.settings.recent.contains(&gone)));
     assert!(!empty.path().join(".texoria").exists());
 
-    // Through the Open Folder dialog, a folder with one.
-    let tmp = testing::fixture_copy("sample");
-    let dir = paths::canonical(tmp.path());
-    app.dispatch(cx, crate::OpenFolder);
+    // Through the Open dialog, the main file.
+    app.dispatch(cx, crate::Open);
     assert!(cx.did_prompt_for_paths());
-    cx.simulate_path_prompt_response(|_| Some(vec![dir.clone()]));
+    cx.simulate_path_prompt_response(|_| Some(vec![dir.join("main.tex")]));
     cx.run_until_parked();
     assert_eq!(
         app.read(cx, |ws, _| ws.root.clone()),

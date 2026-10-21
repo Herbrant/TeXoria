@@ -116,12 +116,7 @@ impl Render for Workspace {
             .bg(theme.background)
             .text_color(theme.foreground)
             .font_family(theme.font_family.clone())
-            .on_action(
-                cx.listener(|this, _: &Open, window, cx| this.prompt_open(false, window, cx)),
-            )
-            .on_action(
-                cx.listener(|this, _: &OpenFolder, window, cx| this.prompt_open(true, window, cx)),
-            )
+            .on_action(cx.listener(|this, _: &Open, window, cx| this.prompt_open(window, cx)))
             .on_action(cx.listener(|this, _: &Save, window, cx| this.save(window, cx)))
             .on_action(
                 cx.listener(|this, _: &FormatDocument, window, cx| {

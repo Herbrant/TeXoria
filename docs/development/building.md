@@ -19,7 +19,7 @@ git clone https://github.com/Herbrant/TeXoria.git && cd TeXoria
 cargo run -p texoria -- tests/fixtures/sample/main.tex
 ```
 
-`cargo run` accepts a `.tex` file or a folder. Both fetch scripts verify the SHA-256 of what
+`cargo run` accepts a `.tex` file. Both fetch scripts verify the SHA-256 of what
 they download. The `vendor/` folders are only used by binaries built in the checkout
 (`target/`): a release build never looks at paths of the machine it was built on.
 

@@ -2,17 +2,13 @@
 
 ## Open a project
 
-Start TeXoria and choose *Open a document…* (⌘O on macOS, Ctrl+O elsewhere). You can pick a
-`.tex` file or a whole folder. On Windows and Linux the system dialog cannot show files and
-folders together, so folders have their own *Open a folder…* (File › Open Folder…,
-Ctrl+Shift+O). The welcome screen can also *Clone a repository…* or *Open from Overleaf…* (see
-[Git](git.md) and [Overleaf](overleaf.md)).
-
-For a folder, TeXoria looks for its documents, whatever their name, in the folder and two
-levels of subfolders: `.tex` files with a `\documentclass` that no other document includes
-(`\input`, `\include`, `\subfile`) and whose `% !TeX root` comment does not name another
-file. It opens the one you worked on last, or else one with a `\begin{document}`, preferring
-the least deep and then the one that includes the most files.
+Start TeXoria, choose *Open a document…* (⌘O on macOS, Ctrl+O elsewhere) and pick the
+project's main `.tex` file: the one you would compile, even if its `\documentclass` is in a
+file it `\input`s. A part of the project opens it too: its `% !TeX root` comment, or the
+document that includes it (in its folder or up to two folders above), leads to the main file.
+TeXoria opens `.tex` files only: not folders, and not a `.bib` on its own. The welcome screen
+can also *Clone a repository…* or *Open from Overleaf…* (see [Git](git.md) and
+[Overleaf](overleaf.md)).
 
 A project opens again with the tabs you left open, and on the one you were working in (unless
 you opened a specific file of it).
@@ -22,10 +18,10 @@ is listed under *Open With*, and you can make it their default app there. On mac
 opened while TeXoria runs takes the place of the open project, as with *Open a document…*.
 Windows installs make TeXoria the app of `.tex` files only when they had none.
 
-From a terminal, pass the file or folder as the only argument:
+From a terminal, pass the file as the only argument:
 
 ```sh
-texoria path/to/thesis/                                        # Linux
+texoria path/to/thesis/thesis.tex                              # Linux
 /Applications/TeXoria.app/Contents/MacOS/texoria thesis.tex    # macOS
 ```
 

@@ -69,8 +69,7 @@ Or use a package manager:
 
 ## Getting started
 
-Open a `.tex` file with ⌘O (Ctrl+O) or a project folder with ⇧⌘O (Ctrl+Shift+O), and start
-writing: the preview follows. The [documentation](docs/README.md) covers everything else,
+Open a project's main `.tex` file with ⌘O (Ctrl+O), and start writing: the preview follows. The [documentation](docs/README.md) covers everything else,
 starting from [Getting started](docs/getting-started.md).
 
 ## Contributing

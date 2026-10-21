@@ -77,21 +77,10 @@ impl Workspace {
                             .primary()
                             .icon(Glyph::Open)
                             .label("Open a document…")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.prompt_open(false, window, cx)
-                            })),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.prompt_open(window, cx)),
+                            ),
                     )
-                    .when(!OPEN_PICKS_FOLDERS, |d| {
-                        d.child(
-                            Button::new("open-folder")
-                                .outline()
-                                .icon(Glyph::Open)
-                                .label("Open a folder…")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.prompt_open(true, window, cx)
-                                })),
-                        )
-                    })
                     .child(
                         Button::new("clone")
                             .outline()

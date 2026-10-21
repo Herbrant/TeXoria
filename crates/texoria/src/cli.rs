@@ -1,4 +1,4 @@
-//! The command line: `texoria [FILE | FOLDER]`.
+//! The command line: `texoria [FILE]`.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -10,17 +10,17 @@ pub enum Launch {
     Bridge,
     Help,
     Version,
-    /// Open the window, on a file or a folder if one is given.
+    /// Open the window, on a file if one is given.
     Open(Option<PathBuf>),
     /// An option TeXoria does not know.
     Unknown(String),
 }
 
 pub const USAGE: &str = "\
-Usage: texoria [FILE | FOLDER]
+Usage: texoria [FILE]
 
-Opens a .tex file, or the main file of a folder (the LaTeX document, with
-\\documentclass, that no other one includes; subfolders are searched too).
+Opens a .tex file: the main file of a document, or one of its parts (its
+% !TeX root comment, or the document that inputs it, leads to the main file).
 
 Options:
   -h, --help     Print this help

@@ -49,21 +49,6 @@ fn pdfium_is_looked_for_next_to_the_executable_first() {
 }
 
 #[test]
-fn finds_the_main_file_of_a_folder() {
-    let dir = tempfile::tempdir().unwrap();
-    assert_eq!(find_main_file(dir.path(), &[]), None);
-    std::fs::write(dir.path().join("main.tex"), "\\section{Not the root}").unwrap();
-    let doc = "\\documentclass{article}\n\\begin{document}\n\\end{document}";
-    std::fs::write(dir.path().join("b.tex"), doc).unwrap();
-    std::fs::write(dir.path().join("a.tex"), doc).unwrap();
-    let (a, b) = (dir.path().join("a.tex"), dir.path().join("b.tex"));
-    assert_eq!(find_main_file(dir.path(), &[]), Some(a.clone()));
-    // The document opened last wins.
-    let other = PathBuf::from("/elsewhere/main.tex");
-    assert_eq!(find_main_file(dir.path(), &[other, b.clone(), a]), Some(b));
-}
-
-#[test]
 fn run_summaries() {
     let done = |status| CompileState::Done {
         status,
@@ -101,10 +86,10 @@ fn file_uris() {
 }
 
 #[gpui::test]
-fn opens_a_project_folder(cx: &mut TestAppContext) {
+fn opens_a_project(cx: &mut TestAppContext) {
     let dir = testing::fixture_copy("sample");
-    let (_, workspace) = testing::open(cx, Some(dir.path().to_path_buf()), testing::startup());
     let main = paths::canonical(&dir.path().join("main.tex"));
+    let (_, workspace) = testing::open(cx, Some(main.clone()), testing::startup());
     workspace.read_with(cx, |ws, _| {
         assert_eq!(ws.root.as_ref(), Some(&main));
         assert_eq!(ws.buffers.len(), 1);
@@ -119,41 +104,75 @@ fn pick(
     cx: &mut TestAppContext,
     window: WindowHandle<Root>,
     workspace: &Entity<Workspace>,
-    folder: bool,
     path: PathBuf,
 ) {
     cx.update_window(window.into(), |_, window, cx| {
-        workspace.update(cx, |ws, cx| ws.prompt_open(folder, window, cx))
+        workspace.update(cx, |ws, cx| ws.prompt_open(window, cx))
     })
     .unwrap();
     cx.simulate_path_prompt_response(|options| {
-        // Outside macOS a dialog that may pick folders shows only folders.
-        assert_eq!(options.files, !folder);
-        assert_eq!(options.directories, folder || cfg!(target_os = "macos"));
+        // Files only: a folder is not a document.
+        assert!(options.files && !options.directories);
         Some(vec![path])
     });
     cx.run_until_parked();
 }
 
 #[gpui::test]
-fn opens_a_file_or_a_folder_from_the_dialog(cx: &mut TestAppContext) {
+fn opens_a_file_from_the_dialog(cx: &mut TestAppContext) {
     let dir = testing::fixture_copy("sample");
     let (window, workspace) = testing::open(cx, None, testing::startup());
     let main = paths::canonical(&dir.path().join("main.tex"));
     let methods = paths::canonical(&dir.path().join("chapters/methods.tex"));
 
-    pick(cx, window, &workspace, false, methods.clone());
+    pick(cx, window, &workspace, methods.clone());
     workspace.read_with(cx, |ws, _| {
         assert_eq!(ws.root.as_ref(), Some(&main));
         assert_eq!(ws.buffers[ws.active].path, methods);
     });
+}
 
+#[gpui::test]
+fn a_clone_opens_on_the_main_file_the_user_picks(cx: &mut TestAppContext) {
+    let tmp = testing::fixture_copy("sample");
+    let dir = paths::canonical(tmp.path());
+    std::fs::write(dir.join("notes.txt"), "not a source").unwrap();
+    std::fs::write(dir.join("Z.TEX"), "\\section{Old}").unwrap();
+    let (main, methods) = (dir.join("main.tex"), dir.join("chapters/methods.tex"));
+    // The top folder's first, then by path; any `.tex` may be the main file.
+    let sources = cloning::tex_files(&dir);
+    assert_eq!(sources, [main.clone(), dir.join("Z.TEX"), methods.clone()]);
+
+    // Several: the user picks one (the first is preselected).
     let (window, workspace) = testing::open(cx, None, testing::startup());
-    pick(cx, window, &workspace, true, dir.path().to_path_buf());
+    with(cx, window, &workspace, |ws, window, cx| {
+        ws.choose_main_file(dir.clone(), sources, window, cx)
+    });
+    assert!(testing::has_dialog(cx, window));
+    assert!(workspace.read_with(cx, |ws, _| ws.root.is_none()));
+    testing::confirm(cx, window);
     workspace.read_with(cx, |ws, _| {
         assert_eq!(ws.root.as_ref(), Some(&main));
         assert_eq!(ws.buffers[ws.active].path, main);
     });
+
+    // Only one: opened at once.
+    let (window, workspace) = testing::open(cx, None, testing::startup());
+    with(cx, window, &workspace, |ws, window, cx| {
+        ws.choose_main_file(dir.clone(), vec![methods.clone()], window, cx)
+    });
+    assert!(!testing::has_dialog(cx, window));
+    assert_eq!(workspace.read_with(cx, |ws, _| ws.root.clone()), Some(main));
+
+    // None: nothing to open.
+    let empty = tempfile::tempdir().unwrap();
+    assert!(cloning::tex_files(empty.path()).is_empty());
+    let (window, workspace) = testing::open(cx, None, testing::startup());
+    with(cx, window, &workspace, |ws, window, cx| {
+        ws.choose_main_file(empty.path().to_path_buf(), Vec::new(), window, cx)
+    });
+    let state = workspace.read_with(cx, |ws, _| ws.state.clone());
+    assert!(matches!(&state, CompileState::Failed(e) if e.starts_with("No .tex file in ")));
 }
 
 /// The sample project opened on `main.tex`, in a temporary copy.

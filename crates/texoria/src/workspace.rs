@@ -60,28 +60,13 @@ use crate::updater::{self, UpdateState, Updater, UpdaterEvent};
 use crate::{
     AddCitation, Build, CancelBuild, CheckForUpdates, CloneRepository, CloseTab, Commit,
     DecreaseFontSize, EditWithAgent, ExportPdf, Fetch, FindInProject, FixWithAgent, FormatDocument,
-    ForwardSearch, IncreaseFontSize, NewBranch, Open, OpenFolder, OpenFromOverleaf, OpenSettings,
-    Pull, Push, ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent,
-    ToggleComment, ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline,
-    TogglePreviewWindow, ToggleSoftWrap, ToggleTheme, ToggleVimMode, ZoomIn, ZoomOut, ZoomToFit,
+    ForwardSearch, IncreaseFontSize, NewBranch, Open, OpenFromOverleaf, OpenSettings, Pull, Push,
+    ResetFontSize, Save, ShowSourceControl, StopAgent, SyncOverleaf, ToggleAgent, ToggleComment,
+    ToggleDiagnostics, ToggleFiles, ToggleLivePreview, ToggleOutline, TogglePreviewWindow,
+    ToggleSoftWrap, ToggleTheme, ToggleVimMode, ZoomIn, ZoomOut, ZoomToFit,
 };
 
 const SOFT_WRAP_MAX_LINES: usize = 4000;
-
-/// Whether the system's open dialog can pick a file or a folder at once. Only macOS's can: the
-/// XDG portal (Linux) and Windows' dialog asked for folders show folders only, and the portal
-/// hands back the current folder when a file is chosen anyway.
-const OPEN_PICKS_FOLDERS: bool = cfg!(target_os = "macos");
-
-/// The open dialog of *Open…* (`folder: false`) or *Open Folder…*.
-fn open_prompt(folder: bool) -> PathPromptOptions {
-    PathPromptOptions {
-        files: !folder,
-        directories: folder || OPEN_PICKS_FOLDERS,
-        multiple: false,
-        prompt: Some("Open".into()),
-    }
-}
 
 #[derive(Debug, Clone)]
 enum CompileState {
@@ -668,17 +653,6 @@ fn run_summary(state: &CompileState) -> String {
         },
         CompileState::Failed(msg) => msg.to_string(),
     }
-}
-
-/// The document to open for the folder `dir`: the one opened last (`recent`, most recent
-/// first), or else the most likely main file.
-fn find_main_file(dir: &Path, recent: &[PathBuf]) -> Option<PathBuf> {
-    let docs = tex_project::main_file::main_files(dir);
-    recent
-        .iter()
-        .find(|r| docs.contains(r))
-        .or(docs.first())
-        .cloned()
 }
 
 /// Where to look for the PDFium shared library: next to the executable,

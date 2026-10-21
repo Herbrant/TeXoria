@@ -12,6 +12,8 @@ a premium feature: the project's owner needs a paid plan. Git must be installed.
 2. Paste an authentication token, created in Overleaf's *Account Settings* under *Git
    Integration*.
 3. Pick where to put the project.
+4. If the project has more than one `.tex` file, pick its main file (the one Overleaf
+   compiles).
 
 The token is kept in the system keychain, and only once Overleaf has accepted it. Tokens expire
 after a year: when Overleaf rejects one, TeXoria asks for a new one.

@@ -52,7 +52,7 @@ branch from the current commit (*New Branch…*).
 ## Clone and init
 
 - *Clone Repository…* (welcome screen or *Git* menu) clones from GitHub, GitLab or any Git URL
-  and opens the project.
+  and opens the project: if it has more than one `.tex` file, you pick its main file.
 - *Initialize Repository* in the panel turns the current project into a repository.
 
 Working with Overleaf? See [Overleaf](overleaf.md).

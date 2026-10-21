@@ -4,7 +4,6 @@
 pub mod bib;
 pub mod check;
 pub mod files;
-pub mod main_file;
 pub mod search;
 
 use std::collections::{HashMap, HashSet};
@@ -426,21 +425,13 @@ pub fn find_root(file: &Path, text: &str) -> PathBuf {
             let idx = Index::from_text(&src);
             let includes_us = idx.includes.iter().any(|i| match i.kind {
                 IncludeKind::Tex => resolve_tex(d, &i.path) == normalize(file),
-                IncludeKind::Bib => resolve_bib(d, &i.path) == normalize(file),
-                IncludeKind::Graphics => false,
+                IncludeKind::Bib | IncludeKind::Graphics => false,
             });
             if includes_us {
                 return p;
             }
         }
         candidate_dir = d.parent();
-    }
-    // Not a LaTeX source (a `.bib` no document names, a package, notes): the folder's
-    // document, which a build of the file itself would not be.
-    if !has_extension(file, &["tex"])
-        && let Some(main) = main_file::main_files(dir).into_iter().next()
-    {
-        return main;
     }
     file.to_path_buf()
 }
@@ -803,29 +794,27 @@ mod tests {
     }
 
     #[test]
-    fn other_files_belong_to_the_folders_document() {
+    fn a_main_file_without_the_class_is_its_own_root() {
+        // The class is in a preamble the main file inputs.
         let dir = project(&[
             (
                 "main.tex",
-                "\\documentclass{article}\\bibliography{bib/refs,other}",
+                "\\input{preamble}\n\\begin{document}\\input{ch}\\end{document}",
             ),
-            ("bib/refs.bib", "@book{a,}"),
-            ("other.bib", "@book{b,}"),
-            ("unused.bib", "@book{c,}"),
-            ("notes.txt", "to do"),
+            ("preamble.tex", "\\documentclass{article}"),
             ("ch.tex", "\\section{x}"),
+            ("refs.bib", "@book{a,}"),
         ]);
-        let main = normalize(&dir.path().join("main.tex"));
-        for name in ["bib/refs.bib", "other.bib", "unused.bib", "notes.txt"] {
-            let file = normalize(&dir.path().join(name));
-            assert_eq!(find_root(&file, ""), main, "{name}");
-        }
+        let main = dir.path().join("main.tex");
+        assert_eq!(
+            find_root(&main, &std::fs::read_to_string(&main).unwrap()),
+            main
+        );
         // A part no document includes is a document of its own (it may be on its way).
-        let ch = normalize(&dir.path().join("ch.tex"));
+        let ch = dir.path().join("ch.tex");
         assert_eq!(find_root(&ch, "\\section{x}"), ch);
-        // With no document around, the file itself.
-        let alone = project(&[("refs.bib", "")]);
-        let bib = alone.path().join("refs.bib");
+        // A bibliography is no LaTeX source: never another document's part.
+        let bib = dir.path().join("refs.bib");
         assert_eq!(find_root(&bib, ""), bib);
     }
 

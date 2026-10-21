@@ -1,5 +1,9 @@
 //! Cloning a repository, or an Overleaf project.
 
+use std::cell::Cell;
+
+use gpui_kit::component::radio::RadioGroup;
+
 use super::*;
 
 impl Workspace {
@@ -93,29 +97,19 @@ impl Workspace {
                 if overleaf && let Err(e) = repo.exclude_local_files() {
                     log::warn!("{e}");
                 }
-                Ok(repo.root().to_path_buf())
+                let dir = repo.root().to_path_buf();
+                let sources = tex_files(&dir);
+                Ok((dir, sources))
             },
             move |this, result, window, cx| {
                 this.cloning = None;
                 let (url, dest, credential) = job;
                 match result {
-                    Ok(dir) => {
+                    Ok((dir, sources)) => {
                         if let Some(c) = &credential {
                             overleaf::save_token(&c.url, &c.password, window, cx);
                         }
-                        this.open_path(dir.clone(), window, cx);
-                        // We created it, so its configuration is git's default; its
-                        // latexmkrc comes from the remote and still needs consent. A
-                        // `%!TEX root` may point elsewhere: that is not ours to trust.
-                        let dir = crate::paths::canonical(&dir);
-                        let top = this
-                            .root
-                            .as_deref()
-                            .and_then(Path::parent)
-                            .and_then(git_panel::repo_top);
-                        if top.as_deref() == Some(dir.as_path()) {
-                            this.trust_git(cx);
-                        }
+                        this.choose_main_file(dir, sources, window, cx);
                     }
                     Err(tex_git::Error::Cancelled) => {}
                     Err(tex_git::Error::Auth { .. }) if let Some(c) = credential => {
@@ -150,6 +144,106 @@ impl Workspace {
         )
         .detach();
         cx.notify();
+    }
+
+    /// Open the clone in `dir` on the one of its `.tex` files (`sources`) that the user picks
+    /// as the main file, or on the only one: no file is assumed to be the document.
+    pub(super) fn choose_main_file(
+        &mut self,
+        dir: PathBuf,
+        sources: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match sources.as_slice() {
+            [] => {
+                self.state =
+                    CompileState::Failed(format!("No .tex file in {}", dir.display()).into());
+                cx.notify();
+            }
+            [file] => self.open_clone(&dir, file.clone(), window, cx),
+            _ => {
+                let names: Vec<SharedString> = sources
+                    .iter()
+                    .map(|f| {
+                        f.strip_prefix(&dir)
+                            .unwrap_or(f)
+                            .display()
+                            .to_string()
+                            .into()
+                    })
+                    .collect();
+                let chosen = Rc::new(Cell::new(0));
+                let shown = chosen.clone();
+                let weak = cx.entity().downgrade();
+                dialogs::open_form(
+                    window,
+                    cx,
+                    "Choose the Main File",
+                    "Open",
+                    None,
+                    move |_, cx| {
+                        let shown = shown.clone();
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(
+                                        "The file to build: the one with \\documentclass, or the \
+                                         one that inputs the file that has it.",
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("main-file-list")
+                                    .max_h(px(320.))
+                                    .overflow_y_scroll()
+                                    .child(
+                                        RadioGroup::vertical("main-file")
+                                            .children(names.clone())
+                                            .selected_index(Some(shown.get()))
+                                            .on_click(move |ix, window, _| {
+                                                shown.set(*ix);
+                                                window.refresh();
+                                            }),
+                                    ),
+                            )
+                            .into_any_element()
+                    },
+                    move |window, cx| {
+                        let file = sources[chosen.get()].clone();
+                        weak.update(cx, |this, cx| this.open_clone(&dir, file, window, cx))
+                            .ok();
+                        true
+                    },
+                );
+            }
+        }
+    }
+
+    /// Open `file` of the clone in `dir`, and trust the clone.
+    fn open_clone(
+        &mut self,
+        dir: &Path,
+        file: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_path(file, window, cx);
+        // We created it, so its configuration is git's default; its latexmkrc comes from the
+        // remote and still needs consent. A `%!TEX root` may point elsewhere: that is not ours
+        // to trust.
+        let dir = crate::paths::canonical(dir);
+        let top = self
+            .root
+            .as_deref()
+            .and_then(Path::parent)
+            .and_then(git_panel::repo_top);
+        if top.as_deref() == Some(dir.as_path()) {
+            self.trust_git(cx);
+        }
     }
 
     pub(super) fn overleaf_project(&self, input: &str) -> Option<tex_git::overleaf::Project> {
@@ -247,4 +341,22 @@ impl Workspace {
         })
         .detach();
     }
+}
+
+/// The `.tex` files of `dir` and its subfolders, those nearest the top first, then by path
+/// (case-insensitive).
+pub(super) fn tex_files(dir: &Path) -> Vec<PathBuf> {
+    fn collect(nodes: Vec<files::FileNode>, out: &mut Vec<PathBuf>) {
+        for node in nodes {
+            match node.children {
+                Some(children) => collect(children, out),
+                None if tex_project::has_extension(&node.path, &["tex"]) => out.push(node.path),
+                None => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    collect(files::scan(dir), &mut out);
+    out.sort_by_cached_key(|p| (p.components().count(), p.to_string_lossy().to_lowercase()));
+    out
 }

@@ -3,35 +3,37 @@
 use super::*;
 
 impl Workspace {
-    pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        let path = crate::paths::canonical(&path);
+    pub fn open_path(&mut self, file: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let file = crate::paths::canonical(&file);
         // A mistyped path on the command line, or a recent project since moved: not a
         // document to build (its folder would get a build folder).
-        if !path.exists() {
-            self.state = CompileState::Failed(format!("{} does not exist", path.display()).into());
-            if let Some(ix) = self.settings.recent.iter().position(|p| *p == path) {
+        if !file.exists() {
+            self.state = CompileState::Failed(format!("{} does not exist", file.display()).into());
+            if let Some(ix) = self.settings.recent.iter().position(|p| *p == file) {
                 self.settings.recent.remove(ix);
                 self.settings.save();
             }
             cx.notify();
             return;
         }
-        let file = if path.is_dir() {
-            find_main_file(&path, &self.settings.recent)
-        } else {
-            Some(path.clone())
-        };
-        let Some(file) = file else {
+        // A project is opened by its main file (or one of its parts): nothing guesses which
+        // file of a folder is the document, and a `.bib` or a package is not one.
+        if file.is_dir() || !tex_project::has_extension(&file, &["tex"]) {
+            let what = if file.is_dir() {
+                "a folder"
+            } else {
+                "not a .tex file"
+            };
             self.state = CompileState::Failed(
                 format!(
-                    "No LaTeX document (a .tex file with \\documentclass) in {}",
-                    path.display()
+                    "{} is {what}: open the document's main .tex file",
+                    file.display()
                 )
                 .into(),
             );
             cx.notify();
             return;
-        };
+        }
         let text = tex_project::read_regular(&file).unwrap_or_default();
         let root = tex_project::find_root(&file, &text);
         let root = crate::paths::canonical(&root);
@@ -357,13 +359,13 @@ impl Workspace {
         .detach();
     }
 
-    pub(super) fn prompt_open(
-        &mut self,
-        folder: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let paths = cx.prompt_for_paths(open_prompt(folder));
+    pub(super) fn prompt_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open".into()),
+        });
         cx.spawn_in(window, async move |this, cx| {
             let Some(path) = paths
                 .await
