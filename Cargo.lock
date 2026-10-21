@@ -7019,6 +7019,9 @@ dependencies = [
 [[package]]
 name = "test-support"
 version = "0.6.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "tex-agent"

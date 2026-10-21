@@ -157,19 +157,19 @@ mod tests {
 
     #[test]
     fn writes_copies_and_makes_programs() {
-        let dir = std::env::temp_dir().join(format!("test-support-{}", std::process::id()));
+        // Removed even if an assertion fails.
+        let tmp = tempfile::tempdir().unwrap();
+        let (dir, whole) = (tmp.path().join("project"), tmp.path().join("whole"));
         write_files(&dir, &[("a/b.tex", "x"), ("c.tex", "y")]);
         write(&dir, ".texoria/build.log", "z");
         let copy = dir.join("copy");
         copy_dir(&dir.join("a"), &copy);
         assert_eq!(std::fs::read_to_string(copy.join("b.tex")).unwrap(), "x");
-        copy_dir(&dir, &dir.with_extension("copy"));
-        assert!(!dir.with_extension("copy").join(".texoria").exists());
+        copy_dir(&dir, &whole);
+        assert!(whole.join("c.tex").is_file());
+        assert!(!whole.join(".texoria").exists());
         let program = executable(&dir, "tool", "");
         assert!(program.is_file());
-        for d in [dir.clone(), dir.with_extension("copy")] {
-            std::fs::remove_dir_all(d).unwrap();
-        }
     }
 
     #[test]

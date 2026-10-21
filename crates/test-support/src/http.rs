@@ -41,7 +41,9 @@ impl Request {
     }
 }
 
-/// `s` with its `%XX` escapes decoded (`+` stays).
+/// `s` with its `%XX` escapes decoded (`+` stays). Panics on a malformed escape or a result
+/// that is not UTF-8: in a test, that is a failure.
+#[track_caller]
 pub fn percent_decode(s: &str) -> String {
     let (mut out, b) = (Vec::new(), s.as_bytes());
     let mut i = 0;
