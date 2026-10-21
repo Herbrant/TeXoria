@@ -168,21 +168,40 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<InputState> {
+        let input = self.row_input(
+            "https://latex.example.org",
+            url,
+            Self::save_servers,
+            window,
+            cx,
+        );
+        self.servers.push(input.clone());
+        input
+    }
+
+    /// An input of a list's row, which saves the list (`save`) as it changes.
+    fn row_input(
+        &mut self,
+        placeholder: &'static str,
+        value: String,
+        save: fn(&Self, &mut Context<Self>),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
         let input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("https://latex.example.org")
-                .default_value(url)
+                .placeholder(placeholder)
+                .default_value(value)
         });
         self._subscriptions.push(cx.subscribe_in(
             &input,
             window,
-            |this, _, ev: &InputEvent, _, cx| {
+            move |this, _, ev: &InputEvent, _, cx| {
                 if let InputEvent::Change = ev {
-                    this.save_servers(cx);
+                    save(this, cx);
                 }
             },
         ));
-        self.servers.push(input.clone());
         input
     }
 
@@ -222,21 +241,7 @@ impl SettingsWindow {
             ("Arguments", agent.args.join(" ")),
         ]
         .map(|(placeholder, value)| {
-            let input = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder(placeholder)
-                    .default_value(value)
-            });
-            self._subscriptions.push(cx.subscribe_in(
-                &input,
-                window,
-                |this, _, ev: &InputEvent, _, cx| {
-                    if let InputEvent::Change = ev {
-                        this.save_agents(cx);
-                    }
-                },
-            ));
-            input
+            self.row_input(placeholder, value, Self::save_agents, window, cx)
         });
         let first = fields[0].clone();
         self.agents.push(fields);
@@ -344,8 +349,7 @@ impl SettingsWindow {
                 .item(
                     SettingItem::new(
                         "Soft wrap",
-                        bool_field(&t, |s| s.soft_wrap, |s, v| s.soft_wrap = v)
-                            .default_value(Settings::default().soft_wrap),
+                        switch!(&t, soft_wrap),
                     )
                     .description(
                         "Wrap long lines in the editor. Very long files always start unwrapped; \
@@ -355,8 +359,7 @@ impl SettingsWindow {
                 .item(
                     SettingItem::new(
                         "Vim mode",
-                        bool_field(&t, |s| s.vim_mode, |s, v| s.vim_mode = v)
-                            .default_value(Settings::default().vim_mode),
+                        switch!(&t, vim_mode),
                     )
                     .description(
                         "Edit with Vim's keys: normal, insert and visual modes, operators, \
@@ -367,8 +370,7 @@ impl SettingsWindow {
                 .item(
                     SettingItem::new(
                         "Format on save",
-                        bool_field(&t, |s| s.format_on_save, |s, v| s.format_on_save = v)
-                            .default_value(Settings::default().format_on_save),
+                        switch!(&t, format_on_save),
                     )
                     .description(
                         "Indent the file with tex-fmt when you save it with ⌘S (⇧⌥F formats it \
@@ -378,8 +380,7 @@ impl SettingsWindow {
             Group::new().title("Checks").item(
                 SettingItem::new(
                     "Check references",
-                    bool_field(&t, |s| s.live_checks, |s, v| s.live_checks = v)
-                        .default_value(Settings::default().live_checks),
+                    switch!(&t, live_checks),
                 )
                 .description(
                     "Underline, as you type, references and citations to labels and entries \
@@ -393,8 +394,7 @@ impl SettingsWindow {
                 .item(
                     SettingItem::new(
                         "Check spelling",
-                        bool_field(&t, |s| s.spell_check, |s, v| s.spell_check = v)
-                            .default_value(Settings::default().spell_check),
+                        switch!(&t, spell_check),
                     )
                     .description(
                         "Underline misspelled words. The language of each file comes from a \
@@ -418,8 +418,7 @@ impl SettingsWindow {
                 .item(
                     SettingItem::new(
                         "Check grammar",
-                        bool_field(&t, |s| s.grammar_check, |s, v| s.grammar_check = v)
-                            .default_value(Settings::default().grammar_check),
+                        switch!(&t, grammar_check),
                     )
                     .description(
                         "Underline grammar and style mistakes found by LanguageTool, in the \
@@ -446,8 +445,7 @@ impl SettingsWindow {
                 .item(
                     SettingItem::new(
                         "Start the server",
-                        bool_field(&t, |s| s.languagetool_start, |s, v| s.languagetool_start = v)
-                            .default_value(Settings::default().languagetool_start),
+                        switch!(&t, languagetool_start),
                     )
                     .description(
                         "Run languagetool-server when the server is on this computer and not \
@@ -477,16 +475,8 @@ impl SettingsWindow {
             .map(|e| (e.clone(), e.clone()))
             .collect();
         let engine = if engines.is_empty() {
-            SettingItem::new(
-                "Engine",
-                SettingField::render(|_, _, cx| {
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("None found")
-                }),
-            )
-            .description("Install TeX Live or MiKTeX, or place tectonic next to TeXoria.")
+            SettingItem::new("Engine", muted_field("None found"))
+                .description("Install TeX Live or MiKTeX, or place tectonic next to TeXoria.")
         } else {
             SettingItem::new(
                 "Engine",
@@ -529,12 +519,8 @@ impl SettingsWindow {
                 Group::new()
                     .title("Live preview")
                     .item(
-                        SettingItem::new(
-                            "Live preview",
-                            bool_field(&t, |s| s.live_preview, |s, v| s.live_preview = v)
-                                .default_value(defaults.live_preview),
-                        )
-                        .description("Save and build automatically after edits."),
+                        SettingItem::new("Live preview", switch!(&t, live_preview))
+                            .description("Save and build automatically after edits."),
                     )
                     .item(
                         SettingItem::new(
@@ -567,22 +553,13 @@ impl SettingsWindow {
                 Group::new()
                     .title("Repository")
                     .item(
-                        SettingItem::new(
-                            "Pull with rebase",
-                            bool_field(&t, |s| s.pull_rebase, |s, v| s.pull_rebase = v)
-                                .default_value(defaults.pull_rebase),
-                        )
-                        .description(
+                        SettingItem::new("Pull with rebase", switch!(&t, pull_rebase)).description(
                             "Rebase local commits on top of the pulled ones instead of merging.",
                         ),
                     )
                     .item(
-                        SettingItem::new(
-                            "Side-by-side diffs",
-                            bool_field(&t, |s| s.diff_split, |s, v| s.diff_split = v)
-                                .default_value(defaults.diff_split),
-                        )
-                        .description("Show changes in two columns instead of one."),
+                        SettingItem::new("Side-by-side diffs", switch!(&t, diff_split))
+                            .description("Show changes in two columns instead of one."),
                     )
                     .item(
                         SettingItem::new(
@@ -623,61 +600,25 @@ impl SettingsWindow {
     }
 
     fn render_servers(&self, view: &Entity<Self>) -> Div {
-        let rows = self.servers.iter().enumerate().map(|(ix, input)| {
-            let view = view.downgrade();
-            h_flex()
-                .gap_2()
-                .child(div().flex_1().child(Input::new(input)))
-                .child(
-                    ui::icon_button(("remove-server", ix), Glyph::Close, "Remove").on_click(
-                        move |_, _, cx| {
-                            let _ = view.update(cx, |this, cx| this.remove_server(ix, cx));
-                        },
-                    ),
-                )
-        });
-        let add = {
-            let view = view.downgrade();
-            Button::new("add-server")
-                .icon(Glyph::Plus)
-                .label("Add Server")
-                .on_click(move |_, window, cx| {
-                    let _ = view.update(cx, |this, cx| this.add_server(window, cx));
-                })
-        };
-        v_flex()
-            .w_full()
-            .gap_2()
-            .children(rows)
-            .child(h_flex().child(add))
+        let rows = (self.servers.iter()).map(|input| div().flex_1().child(Input::new(input)));
+        editable_list(
+            view,
+            rows,
+            ("remove-server", Self::remove_server),
+            ("add-server", "Add Server", Self::add_server),
+        )
     }
 
     fn agents_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let t = self.target.clone();
         let found = t.shown().agents.clone();
         let agent = match found {
-            None => SettingItem::new(
-                "Agent",
-                SettingField::render(|_, _, cx| {
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Looking for agents…")
-                }),
-            ),
-            Some(list) if list.is_empty() => SettingItem::new(
-                "Agent",
-                SettingField::render(|_, _, cx| {
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("None found")
-                }),
-            )
-            .description(
-                "Install Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor, OpenCode or \
+            None => SettingItem::new("Agent", muted_field("Looking for agents…")),
+            Some(list) if list.is_empty() => SettingItem::new("Agent", muted_field("None found"))
+                .description(
+                    "Install Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor, OpenCode or \
                  another agent that supports the Agent Client Protocol, or add one below.",
-            ),
+                ),
             Some(list) => {
                 let first = list[0].0.clone();
                 SettingItem::new(
@@ -727,39 +668,20 @@ impl SettingsWindow {
     }
 
     fn render_agents(&self, view: &Entity<Self>) -> Div {
-        let rows = self
-            .agents
-            .iter()
-            .enumerate()
-            .map(|(ix, [name, command, args])| {
-                let view = view.downgrade();
-                h_flex()
-                    .gap_2()
-                    .child(div().w(px(140.)).child(Input::new(name)))
-                    .child(div().flex_1().child(Input::new(command)))
-                    .child(div().w(px(120.)).child(Input::new(args)))
-                    .child(
-                        ui::icon_button(("remove-agent", ix), Glyph::Close, "Remove").on_click(
-                            move |_, _, cx| {
-                                let _ = view.update(cx, |this, cx| this.remove_agent(ix, cx));
-                            },
-                        ),
-                    )
-            });
-        let add = {
-            let view = view.downgrade();
-            Button::new("add-agent")
-                .icon(Glyph::Plus)
-                .label("Add Agent")
-                .on_click(move |_, window, cx| {
-                    let _ = view.update(cx, |this, cx| this.add_agent(window, cx));
-                })
-        };
-        v_flex()
-            .w_full()
-            .gap_2()
-            .children(rows)
-            .child(h_flex().child(add))
+        let rows = self.agents.iter().map(|[name, command, args]| {
+            h_flex()
+                .flex_1()
+                .gap_2()
+                .child(div().w(px(140.)).child(Input::new(name)))
+                .child(div().flex_1().child(Input::new(command)))
+                .child(div().w(px(120.)).child(Input::new(args)))
+        });
+        editable_list(
+            view,
+            rows,
+            ("remove-agent", Self::remove_agent),
+            ("add-agent", "Add Agent", Self::add_agent),
+        )
     }
 
     fn trust_page(&self) -> SettingPage {
@@ -841,14 +763,9 @@ impl SettingsWindow {
             self.groups([Group::new()
                 .title("Updates")
                 .item(
-                    SettingItem::new(
-                        "Check for updates",
-                        bool_field(&t, |s| s.check_updates, |s, v| s.check_updates = v)
-                            .default_value(Settings::default().check_updates),
-                    )
-                    .description(format!(
-                        "Look for a new release at startup, at most once a day. {how}"
-                    )),
+                    SettingItem::new("Check for updates", switch!(&t, check_updates)).description(
+                        format!("Look for a new release at startup, at most once a day. {how}"),
+                    ),
                 )
                 .item(check)]),
         )
@@ -879,6 +796,57 @@ impl Group {
 }
 
 /// A switch bound to one `bool` of the settings.
+type Remove = fn(&mut SettingsWindow, usize, &mut Context<SettingsWindow>);
+type Add = fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>);
+
+/// `rows` of inputs, each with a button that removes it (`remove`: its id and what it does),
+/// and a button that adds one (`add`: its id, label and what it does).
+fn editable_list(
+    view: &Entity<SettingsWindow>,
+    rows: impl Iterator<Item = impl ParentElement + IntoElement>,
+    remove: (&'static str, Remove),
+    add: (&'static str, &'static str, Add),
+) -> Div {
+    let rows = rows.enumerate().map(|(ix, cells)| {
+        let view = view.downgrade();
+        h_flex().gap_2().child(cells).child(
+            ui::icon_button((remove.0, ix), Glyph::Close, "Remove").on_click(move |_, _, cx| {
+                let _ = view.update(cx, |this, cx| (remove.1)(this, ix, cx));
+            }),
+        )
+    });
+    let view = view.downgrade();
+    let add = Button::new(add.0)
+        .icon(Glyph::Plus)
+        .label(add.1)
+        .on_click(move |_, window, cx| {
+            let _ = view.update(cx, |this, cx| (add.2)(this, window, cx));
+        });
+    v_flex()
+        .w_full()
+        .gap_2()
+        .children(rows)
+        .child(h_flex().child(add))
+}
+
+/// A field that only says `text`, muted.
+fn muted_field(text: &'static str) -> SettingField<SharedString> {
+    SettingField::render(move |_, _, cx| {
+        div()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(text)
+    })
+}
+
+/// A switch bound to the setting `$field`, whose default is shown.
+macro_rules! switch {
+    ($t:expr, $field:ident) => {
+        bool_field($t, |s| s.$field, |s, v| s.$field = v).default_value(Settings::default().$field)
+    };
+}
+use switch;
+
 fn bool_field(
     t: &Target,
     get: fn(&Settings) -> bool,
