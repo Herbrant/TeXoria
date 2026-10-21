@@ -311,12 +311,13 @@ pub fn texdoc(package: &str) -> Option<PathBuf> {
 }
 
 /// Run `cmd` without a console and return its standard output, unless it
-/// fails to start or runs longer than `timeout`.
+/// fails to start or runs longer than `timeout` (then it is stopped with what
+/// it started: texdoc is a wrapper on Windows).
 fn capture(mut cmd: Command, timeout: Duration) -> Option<String> {
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
-    tex_sys::process::no_window(&mut cmd);
+    tex_sys::process::own_group(&mut cmd);
     let mut child = cmd.spawn().ok()?;
     // Read while it runs: once the pipe is full, the child would wait for
     // the reader until the timeout.
@@ -332,8 +333,7 @@ fn capture(mut cmd: Command, timeout: Duration) -> Option<String> {
             Ok(Some(_)) => break,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
             _ => {
-                let _ = child.kill();
-                let _ = child.wait();
+                tex_sys::process::kill_tree(&mut child);
                 return None;
             }
         }
@@ -689,6 +689,32 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(10));
         let missing = Command::new(std::env::temp_dir().join("no-such-program"));
         assert_eq!(capture(missing, Duration::from_secs(1)), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_stops_what_the_program_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg(format!(
+            "sleep 30 & echo $! > '{}'; wait",
+            pid_file.display()
+        ));
+        assert_eq!(capture(cmd, Duration::from_millis(500)), None);
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let alive = || {
+            Command::new("/bin/sh")
+                .args(["-c", &format!("kill -0 {} 2>/dev/null", pid.trim())])
+                .status()
+                .unwrap()
+                .success()
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive() {
+            assert!(Instant::now() < deadline, "the program's child survived");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// An environment with only `vars`.
