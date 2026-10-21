@@ -18,6 +18,20 @@ pub struct Request {
 }
 
 impl Request {
+    /// The fields of a form-encoded body (`a=1&b=x+y`), decoded.
+    pub fn form(&self) -> Vec<(String, String)> {
+        let decode = |s: &str| percent_decode(&s.replace('+', " "));
+        std::str::from_utf8(&self.body)
+            .unwrap()
+            .split('&')
+            .filter(|kv| !kv.is_empty())
+            .map(|kv| {
+                let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+                (decode(k), decode(v))
+            })
+            .collect()
+    }
+
     pub fn header(&self, name: &str) -> Option<&str> {
         let name = name.to_ascii_lowercase();
         self.headers
@@ -25,6 +39,32 @@ impl Request {
             .find(|(n, _)| *n == name)
             .map(|(_, v)| v.as_str())
     }
+}
+
+/// `s` with its `%XX` escapes decoded (`+` stays).
+pub fn percent_decode(s: &str) -> String {
+    let (mut out, b) = (Vec::new(), s.as_bytes());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap());
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).unwrap()
+}
+
+/// The URL of a loopback port where nothing listens (it was bound, then let go).
+pub fn closed_url() -> String {
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    format!("http://127.0.0.1:{port}")
 }
 
 /// What to answer.
@@ -212,6 +252,24 @@ fn reason(status: u16) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn decodes_forms() {
+        let req = super::Request {
+            method: "POST".into(),
+            path: "/".into(),
+            headers: Vec::new(),
+            body: b"text=a+b%26c&language=fr%C3%A9".to_vec(),
+        };
+        assert_eq!(
+            req.form(),
+            [
+                ("text".to_string(), "a b&c".to_string()),
+                ("language".to_string(), "fré".to_string())
+            ]
+        );
+        assert!(super::closed_url().starts_with("http://127.0.0.1:"));
+    }
+
     use super::*;
 
     fn get(url: &str, path: &str, body: &str) -> String {

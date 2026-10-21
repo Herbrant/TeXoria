@@ -630,34 +630,7 @@ mod tests {
 #[cfg(test)]
 mod server_tests {
     use super::*;
-    use test_support::http::{Request, Response as Answer, serve, serve_paths};
-
-    /// The fields of a form-encoded body.
-    fn form(req: &Request) -> Vec<(String, String)> {
-        let decode = |s: &str| {
-            let s = s.replace('+', " ");
-            let (mut out, b) = (Vec::new(), s.as_bytes());
-            let mut i = 0;
-            while i < b.len() {
-                if b[i] == b'%' {
-                    out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap());
-                    i += 3;
-                } else {
-                    out.push(b[i]);
-                    i += 1;
-                }
-            }
-            String::from_utf8(out).unwrap()
-        };
-        std::str::from_utf8(&req.body)
-            .unwrap()
-            .split('&')
-            .map(|kv| {
-                let (k, v) = kv.split_once('=').unwrap();
-                (decode(k), decode(v))
-            })
-            .collect()
-    }
+    use test_support::http::{Response as Answer, serve, serve_paths};
 
     fn field(fields: &[(String, String)], name: &str) -> Option<String> {
         fields
@@ -689,13 +662,8 @@ mod server_tests {
         let garbage = serve(|_| Answer::ok("<html>not json</html>"));
         assert!(Server::new(garbage.url()).languages().is_err());
         // Nothing listens there.
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
         assert!(
-            Server::new(&format!("http://127.0.0.1:{port}"))
+            Server::new(&test_support::http::closed_url())
                 .languages()
                 .is_err()
         );
@@ -743,7 +711,7 @@ mod server_tests {
 
         let req = &server.requests()[0];
         assert_eq!(req.method, "POST");
-        let fields = form(req);
+        let fields = req.form();
         assert_eq!(field(&fields, "language").as_deref(), Some("it"));
         assert_eq!(field(&fields, "disabledRules"), None);
         let data: serde_json::Value =
@@ -772,7 +740,7 @@ mod server_tests {
                 .unwrap()
                 .is_empty()
         );
-        let fields = form(&server.requests()[0]);
+        let fields = server.requests()[0].form();
         assert_eq!(
             field(&fields, "disabledRules").as_deref(),
             Some("WHITESPACE_RULE,COMMA_PARENTHESIS")

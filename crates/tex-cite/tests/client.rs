@@ -91,12 +91,7 @@ fn doi_refuses_huge_answers() {
 #[test]
 fn unreachable_server_is_an_error() {
     // Bound and dropped: nothing listens there any more.
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let base = format!("http://127.0.0.1:{port}");
+    let base = test_support::http::closed_url();
     let client = Client::with_bases(&base, &base, &base);
     assert!(client.doi("10.1/x").is_err());
     assert!(client.arxiv("2301.01234").is_err());

@@ -963,7 +963,7 @@ mod tests {
             for (encoded, extra) in [(encode_query(&s), "+"), (encode_path(&s), "/();:")] {
                 proptest::prop_assert!(encoded.chars().all(|c| c.is_ascii_alphanumeric()
                     || "-._~%".contains(c) || extra.contains(c)), "{}", encoded);
-                proptest::prop_assert_eq!(percent_decode(&encoded.replace('+', "%20")), s.clone());
+                proptest::prop_assert_eq!(test_support::http::percent_decode(&encoded.replace('+', "%20")), s.clone());
             }
         }
 
@@ -1041,22 +1041,6 @@ mod tests {
             proptest::prop_assert_eq!(&entry.key, "key");
             proptest::prop_assert_eq!(entry.fields.len(), fields.len());
         }
-    }
-
-    fn percent_decode(s: &str) -> String {
-        let mut out = Vec::new();
-        let b = s.as_bytes();
-        let mut i = 0;
-        while i < b.len() {
-            if b[i] == b'%' {
-                out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap());
-                i += 3;
-            } else {
-                out.push(b[i]);
-                i += 1;
-            }
-        }
-        String::from_utf8(out).unwrap()
     }
 
     /// Against the real services: `TEXORIA_CITE_ONLINE=1`.
