@@ -225,6 +225,19 @@ fn opening_projects(cx: &mut TestAppContext) {
         [dir.join("main.tex")]
     );
     app.draw(cx);
+    // A file of the open project that is not a .tex one: a tab, in the same project.
+    let state = |cx: &mut TestAppContext| app.read(cx, |ws, _| format!("{:?}", ws.state));
+    let before = state(cx);
+    app.update(cx, |ws, window, cx| {
+        ws.open_path(dir.join("refs.bib"), window, cx)
+    });
+    let bib = dir.join("refs.bib").to_string_lossy().replace('\\', "/");
+    assert_eq!(app.active(cx), bib);
+    assert_eq!(
+        app.read(cx, |ws, _| ws.root.clone()),
+        Some(dir.join("main.tex"))
+    );
+    assert_eq!(state(cx), before);
 
     // A file whose `%!TEX root` points to the main file: the project is the main file's.
     let other = tempfile::tempdir().unwrap();

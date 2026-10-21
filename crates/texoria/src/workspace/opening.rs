@@ -19,6 +19,12 @@ impl Workspace {
         // A project is opened by its main file (or one of its parts): nothing guesses which
         // file of a folder is the document, and a `.bib` or a package is not one.
         if file.is_dir() || !tex_project::has_extension(&file, &["tex"]) {
+            // A file of the open project (its bibliography, a package): a tab of it.
+            let inside = self.project_dir().is_some_and(|d| file.starts_with(d));
+            if inside && file.is_file() && files::looks_like_text(&file) {
+                self.activate_file(file, window, cx);
+                return;
+            }
             let what = if file.is_dir() {
                 "a folder"
             } else {

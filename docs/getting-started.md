@@ -6,9 +6,10 @@ Start TeXoria, choose *Open a document…* (⌘O on macOS, Ctrl+O elsewhere) and
 project's main `.tex` file: the one you would compile, even if its `\documentclass` is in a
 file it `\input`s. A part of the project opens it too: its `% !TeX root` comment, or the
 document that includes it (in its folder or up to two folders above), leads to the main file.
-TeXoria opens `.tex` files only: not folders, and not a `.bib` on its own. The welcome screen
-can also *Clone a repository…* or *Open from Overleaf…* (see [Git](git.md) and
-[Overleaf](overleaf.md)).
+TeXoria opens projects by a `.tex` file only: not by a folder, nor by a `.bib` on its own
+(once a project is open, *Open a document…* opens any text file of its folder, such as its
+`.bib`, in a tab). The welcome screen can also *Clone a repository…* or *Open from Overleaf…*
+(see [Git](git.md) and [Overleaf](overleaf.md)).
 
 A project opens again with the tabs you left open, and on the one you were working in (unless
 you opened a specific file of it).
@@ -67,11 +68,8 @@ it, in order, from:
 1. a `% !TeX root = ../main.tex` comment in the first 20 lines of the file;
 2. the file itself, if it has a `\documentclass`;
 3. a `.tex` file with a `\documentclass` in the same directory or up to two levels above it,
-   that includes the file through `\input` or `\include` (or, for a `.bib` file,
-   `\bibliography` or `\addbibresource`);
-4. for a file that is not a `.tex` one (a `.bib` file, a package, notes), the document of its
-   folder;
-5. otherwise, the file itself.
+   that includes the file through `\input` or `\include`;
+4. otherwise, the file itself.
 
 ## Where the PDF goes
 
