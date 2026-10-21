@@ -78,7 +78,9 @@ needs a TeX engine, pdf-view's tests need `vendor/pdfium`. Shared fixtures live 
 building or editing it. The sample project must compile with **zero diagnostics** (asserted by
 the e2e test; it is also the README screenshot). `crates/test-support` (dev-dependency only, it
 depends on no workspace crate) also has the `|` cursor-marker helper, a loopback HTTP server for
-the network clients and an isolated Git environment. Processes are faked by binaries built with
+the network clients (`http`, with form decoding and `closed_url`), an isolated Git
+(`git::Isolated`), file helpers (`write`, `write_files`, `copy_dir`, `executable`), `vendor`/
+`pdfium` and polling (`within`, `eventually`): use them rather than writing another copy. Processes are faked by binaries built with
 the tests (`tex-compile`'s `fake-engine`, `tex-agent`'s `fake-acp-agent`, through
 `CARGO_BIN_EXE_*`), and invariants are property-tested with proptest (commit
 `proptest-regressions/`). Never use `std::env::set_var` in tests: inject the value instead. A
@@ -104,6 +106,15 @@ texoria ─┬─ tex-compile ── tex-log
          └─ tex-update (self-update)
 ```
 
+`tex-sys` is a leaf crate that most of them use (not drawn): what they share about the system.
+
+- **tex-sys** (no workspace dependency): `process` starts a child in a group of its own
+  (`new_session` for git and agents, `own_group` for engines, texdoc and LanguageTool) without a
+  console window, and `kill_tree` stops all it started; `paths` has `plain`/`canonical` (Windows'
+  `\\?\` paths), `lexical` (`.`/`..`), `home`, `absolute_path` (the `PATH` programs run with:
+  absolute dirs only, never empty on Unix) and `find_program`; `download` has `copy_verified`
+  (SHA-256) and the `USER_AGENT` every HTTP client sends. Code compiled only on one system lives
+  here once: change it with care.
 - **tex-compile**: `engine::detect()` returns engines best-first — system latexmk (pdfLaTeX,
   XeLaTeX, LuaLaTeX flavors; also probes well-known TeX Live/MacTeX/MiKTeX/TinyTeX dirs not on a
   GUI app's `PATH`) then Tectonic (bundled next to the executable / in the app bundle, or on
@@ -184,6 +195,15 @@ texoria ─┬─ tex-compile ── tex-log
 - **tex-vim**: Vim on plain text: keys in, `Action`s (edits in byte offsets, cursor, selection,
   undo, yank…) out; `.` replays the recorded keys on a copy of the text and returns one edit.
 - **texoria** (`workspace.rs` is the main window: outline or files | editor tabs | PDF pane):
+  - `workspace.rs` holds the `Workspace` type, its construction and shared helpers; its methods
+    are split by concern into `workspace/*.rs` (`impl Workspace` blocks, `pub(super)`: building,
+    indexing, buffers, agent, mcp_tools, spelling, sidebar, tabs, chrome…), its `Render` impl
+    and actions in `workspace/view.rs`.
+  - Shared pieces: `dialogs.rs` (`open_form`, `prompt_text` for a one-line question,
+    `confirm_danger`), `ui.rs` (`icon_button`, `banner`, `spinning`, `sidebar`), `tasks.rs`
+    (`Background::{background_then, background_then_in, forward}` on an entity's `Context`),
+    `underlines.rs` (wavy underlines with notes and their correction code actions),
+    `text.rs` (`plural`, `thousands`) and `paths.rs`.
   - Tests run headless on GPUI's test platform (`#[gpui::test]`, dev-dependency `gpui-pre` with
     `test-support`; gpui-kit's own feature would resolve its `gpui-fast` engine, whose pins
     conflict). `testing.rs` opens real workspaces from a `Startup` (settings, engines, PDFium
@@ -281,8 +301,8 @@ texoria ─┬─ tex-compile ── tex-log
     `HoverNote`s add the checks' and the grammar's messages to the hover.
   - `checks.rs` and `grammar.rs` underline, like spelling, the live checks (run after each
     re-index) and LanguageTool's findings (`Grammar` starts `languagetool-server` when allowed and
-    stops it on quit). Their hover messages are matched to underlines by text and position,
-    since deleted ranges disappear from a decoration collection.
+    stops its process group on quit). Their hover messages are matched to underlines by text and
+    position (`underlines::Notes`), since deleted ranges disappear from a decoration collection.
   - `search_panel.rs` is the Search view of the sidebar; Replace All edits open buffers through
     the editor and writes the others. `edit.rs` holds the comment toggling and tex-fmt formatting.
   - `vim.rs`: with `Settings::vim_mode`, `cx.intercept_keystrokes` gives the active editor's keys

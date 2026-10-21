@@ -15,6 +15,9 @@ texoria ─┬─ tex-compile ── tex-log
          └─ tex-update (self-update)
 ```
 
+Most crates also use `tex-sys`, a leaf crate for what they share about the system: child
+processes and their trees, paths and the `PATH`, verified downloads.
+
 | Crate | Role |
 |---|---|
 | [`texoria`](../../crates/texoria) | The app: window, editor tabs, panels, settings, themes |
@@ -29,6 +32,7 @@ texoria ─┬─ tex-compile ── tex-log
 | [`synctex`](../../crates/synctex) | `.synctex(.gz)` reader, forward and inverse search |
 | [`pdf-view`](../../crates/pdf-view) | PDF rasterization with PDFium on a dedicated thread |
 | [`tex-update`](../../crates/tex-update) | Updates: latest release, signed checksums, download and install |
+| [`tex-sys`](../../crates/tex-sys) | Child processes, paths and the `PATH`, verified downloads |
 
 ## Build
 
@@ -107,7 +111,9 @@ in `.git/config`; Overleaf tokens are only sent over HTTPS and live in the syste
 ## The app
 
 - `workspace.rs` is the main window: sidebar (outline, files, source control or agent), editor
-  tabs, PDF pane and status bar.
+  tabs, PDF pane and status bar. Its methods are split by concern into `workspace/*.rs`.
+- `dialogs.rs`, `ui.rs`, `tasks.rs`, `underlines.rs` and `text.rs` hold what the views share:
+  dialogs, interface pieces, background work, wavy underlines and text helpers.
 - `git_panel.rs`, `diff_view.rs` and `overleaf.rs` implement source control.
 - `agent_panel.rs` is the Agent sidebar (chat, permissions, review), `agent_tools.rs` the MCP
   tools answered by the workspace.

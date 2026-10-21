@@ -21,8 +21,11 @@ cargo test -p synctex inverse          # tests whose name matches
 - `http::serve` / `serve_paths`: a loopback HTTP server with canned answers (status, headers,
   delays, a fake `Content-Length`) that records the requests. Network clients (citations,
   LanguageTool, dictionaries, updates) are tested against it, never against the real services.
-- `git::isolated_env`: environment variables that keep the user's Git configuration out of a
-  test.
+- `git::isolated_env` / `git::Isolated`: Git with the user's configuration kept out of a test.
+- `write`, `write_files`, `copy_dir`, `executable`: files, fixture copies and fake programs.
+- `vendor(name)` / `pdfium()`: the repository's `vendor/` folders.
+- `within(timeout, done)` / `eventually(timeout, found)`: polling until something happens.
+- `http::percent_decode`, `Request::form`, `http::closed_url`: for the HTTP clients' tests.
 - `skip(need, why)`: see below.
 
 Programs the code under test starts are faked by small binaries built with the crate's tests:
