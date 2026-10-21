@@ -795,8 +795,9 @@ impl Group {
     }
 }
 
-/// A switch bound to one `bool` of the settings.
+/// What a list's remove button does with its row.
 type Remove = fn(&mut SettingsWindow, usize, &mut Context<SettingsWindow>);
+/// What a list's add button does.
 type Add = fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>);
 
 /// `rows` of inputs, each with a button that removes it (`remove`: its id and what it does),
@@ -847,6 +848,7 @@ macro_rules! switch {
 }
 use switch;
 
+/// A switch bound to one `bool` of the settings.
 fn bool_field(
     t: &Target,
     get: fn(&Settings) -> bool,

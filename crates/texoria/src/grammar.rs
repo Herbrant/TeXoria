@@ -96,6 +96,9 @@ impl Grammar {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        // A group of its own, so that `stop` ends Java with the script. It is then out of a
+        // terminal's foreground group: if TeXoria dies without `stop` (Ctrl-C, a crash), the
+        // server stays, and the next start finds it listening and uses it.
         tex_sys::process::own_group(&mut cmd);
         let child = cmd
             .spawn()
