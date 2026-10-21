@@ -327,9 +327,8 @@ fn hooks_path(config: &Path, top: &Path) -> Option<PathBuf> {
         }
     }
     let path = found.filter(|p| !p.is_empty())?;
-    let home = || std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
     Some(match path.strip_prefix("~/") {
-        Some(rest) => PathBuf::from(home()?).join(rest),
+        Some(rest) => tex_sys::paths::home(&tex_sys::paths::process_env)?.join(rest),
         None => lexical(&top.join(path)),
     })
 }

@@ -7,7 +7,6 @@ license.workspace = true
 [dependencies]
 tex-log.workspace = true
 log.workspace = true
-which.workspace = true
 tex-sys.workspace = true
 
 [dev-dependencies]

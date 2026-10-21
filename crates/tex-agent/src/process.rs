@@ -57,16 +57,13 @@ pub fn find(name: &str) -> Option<PathBuf> {
 
 /// `name` on `path`.
 pub(crate) fn find_in(name: &str, path: OsString) -> Option<PathBuf> {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    which::which_in(name, Some(path), cwd).ok()
+    tex_sys::paths::find_program(name, Some(path), &[]).map(|(program, _)| program)
 }
 
 /// Where package managers and installers put command-line tools (`var`
 /// reads the environment).
 fn well_known_dirs(var: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
-    let home = var("HOME")
-        .or_else(|| var("USERPROFILE"))
-        .map(PathBuf::from);
+    let home = tex_sys::paths::home(var);
     let mut dirs = Vec::new();
     if let Some(h) = &home {
         for d in [

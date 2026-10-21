@@ -20,6 +20,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use tex_sys::paths::{find_program, plain_drive};
+
 pub use parse::{Branch, Change, Commit, Entry, Operation, Status};
 pub use process::Cancel;
 pub use repo::{CommitOptions, Repo, SyncOutcome, clone_dir_name, is_git_dir, untracked_patch};
@@ -108,13 +110,7 @@ impl Git {
     /// Locate git: `PATH`, then well-known install dirs a GUI app's `PATH`
     /// may lack. Runs it once to check that it works.
     pub fn find() -> Option<Git> {
-        let program = which::which("git").ok().or_else(|| {
-            let exe = format!("git{}", std::env::consts::EXE_SUFFIX);
-            fallback_dirs()
-                .into_iter()
-                .map(|d| d.join(&exe))
-                .find(|p| p.is_file())
-        })?;
+        let (program, _) = find_program("git", std::env::var_os("PATH"), &fallback_dirs())?;
         if cfg!(target_os = "macos") && program == Path::new("/usr/bin/git") && !has_clt() {
             // The stub would pop up the Command Line Tools installer.
             return None;
@@ -238,7 +234,7 @@ impl Git {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        let target = plain(dest);
+        let target = plain_drive(dest);
         let args: [&std::ffi::OsStr; 4] = [
             "clone".as_ref(),
             "--".as_ref(),
@@ -262,7 +258,7 @@ impl Git {
 
     fn command(&self, dir: &Path) -> Command {
         let mut c = Command::new(&self.program);
-        c.current_dir(plain(dir))
+        c.current_dir(plain_drive(dir))
             .args([
                 "--no-pager",
                 "-c",
@@ -374,20 +370,7 @@ fn classify(command: String, output: String) -> Error {
 
 fn canon(path: &str) -> PathBuf {
     let p = PathBuf::from(path);
-    plain(&std::fs::canonicalize(&p).unwrap_or(p))
-}
-
-/// `\\?\C:\dir` as `C:\dir`. `canonicalize` returns such verbatim paths on
-/// Windows, and git does not understand them as a working directory or an
-/// argument.
-pub(crate) fn plain(path: &Path) -> PathBuf {
-    #[cfg(windows)]
-    if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix(r"\\?\"))
-        && rest.as_bytes().get(1) == Some(&b':')
-    {
-        return PathBuf::from(rest);
-    }
-    path.to_path_buf()
+    plain_drive(&std::fs::canonicalize(&p).unwrap_or(p))
 }
 
 fn fallback_dirs() -> Vec<PathBuf> {
@@ -697,19 +680,6 @@ mod tests {
         assert_eq!(git.network_timeout, None);
         assert_eq!(git.env, [("A".into(), "1".into())]);
         assert!(git.credential.is_none());
-    }
-
-    #[test]
-    fn plain_paths() {
-        assert_eq!(plain(Path::new("/a/b")), Path::new("/a/b"));
-        #[cfg(windows)]
-        {
-            assert_eq!(plain(Path::new(r"\\?\C:\dir")), Path::new(r"C:\dir"));
-            // Only drive paths: a verbatim UNC path has no other spelling git takes.
-            let unc = Path::new(r"\\?\UNC\server\share");
-            assert_eq!(plain(unc), unc);
-            assert_eq!(plain(Path::new(r"C:\dir")), Path::new(r"C:\dir"));
-        }
     }
 
     #[test]

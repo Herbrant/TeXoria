@@ -7038,7 +7038,6 @@ dependencies = [
  "tex-log",
  "tex-project",
  "tex-sys",
- "which",
 ]
 
 [[package]]
@@ -7064,7 +7063,6 @@ dependencies = [
  "test-support",
  "tex-log",
  "tex-sys",
- "which",
 ]
 
 [[package]]
@@ -7114,7 +7112,6 @@ dependencies = [
  "test-support",
  "tex-sys",
  "thiserror 2.0.21",
- "which",
 ]
 
 [[package]]
@@ -7174,6 +7171,8 @@ name = "tex-sys"
 version = "0.6.0"
 dependencies = [
  "libc",
+ "tempfile",
+ "which",
 ]
 
 [[package]]

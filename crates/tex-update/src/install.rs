@@ -64,7 +64,8 @@ impl InstallKind {
         let Ok(exe) = std::env::current_exe().and_then(|e| e.canonicalize()) else {
             return Self::Manual("TeXoria could not find where it is installed.");
         };
-        let exe = plain(exe);
+        // `canonicalize`'s `\\?\C:\dir` would be the installer's folder (`/D=`).
+        let exe = tex_sys::paths::plain_drive(&exe);
         let var = |name| std::env::var_os(name).map(PathBuf::from);
         let appdir = var("APPDIR").and_then(|d| d.canonicalize().ok());
         let appimage = running_appimage(&exe, var("APPIMAGE"), appdir.as_deref());
@@ -233,18 +234,6 @@ fn running_appimage(
     appdir: Option<&Path>,
 ) -> Option<PathBuf> {
     appimage.filter(|_| appdir.is_some_and(|d| exe.starts_with(d)))
-}
-
-/// `\\?\C:\dir` as `C:\dir`. `canonicalize` returns such verbatim paths on
-/// Windows, which the installer would take as its folder (`/D=`).
-fn plain(path: PathBuf) -> PathBuf {
-    #[cfg(windows)]
-    if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix(r"\\?\"))
-        && rest.as_bytes().get(1) == Some(&b':')
-    {
-        return PathBuf::from(rest);
-    }
-    path
 }
 
 #[cfg(test)]
@@ -616,21 +605,6 @@ mod tests {
         let kind = InstallKind::detect();
         assert!(!kind.self_updating(), "{kind:?}");
         assert!(kind.instructions().is_some(), "{kind:?}");
-    }
-
-    #[test]
-    fn plain_paths() {
-        let p = PathBuf::from("/a/b");
-        assert_eq!(plain(p.clone()), p);
-        #[cfg(windows)]
-        {
-            assert_eq!(
-                plain(r"\\?\C:\TeXoria".into()),
-                PathBuf::from(r"C:\TeXoria")
-            );
-            let unc = PathBuf::from(r"\\?\UNC\server\share");
-            assert_eq!(plain(unc.clone()), unc);
-        }
     }
 
     #[test]

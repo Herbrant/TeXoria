@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use tex_sys::paths::{Env, absolute_path, find_program, home, process_env};
+
 /// Which TeX format/engine latexmk should drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Flavor {
@@ -192,21 +194,13 @@ impl Engine {
 /// Rc files latexmk reads from the directory it runs in.
 const PROJECT_RC_FILES: [&str; 2] = ["latexmkrc", ".latexmkrc"];
 
-/// Reads an environment variable: the process's ([`process_env`]), or
-/// another one in tests.
-type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
-
-fn process_env(key: &str) -> Option<OsString> {
-    std::env::var_os(key)
-}
-
 /// The system and user rc files latexmk would read on its own, in its order.
 fn latexmk_rc_files(env: Env) -> Vec<PathBuf> {
     let env_path = |k: &str| env(k).filter(|v| !v.is_empty()).map(PathBuf::from);
     let mut files = Vec::new();
     files.extend(system_rc_candidates(env).into_iter().find(|p| p.is_file()));
 
-    let home = env_path("HOME").or_else(|| env_path("USERPROFILE"));
+    let home = home(env);
     let xdg = env_path("XDG_CONFIG_HOME")
         .or_else(|| home.as_ref().map(|h| h.join(".config")))
         .map(|d| d.join("latexmk").join("latexmkrc"));
@@ -230,24 +224,10 @@ fn system_rc_candidates(env: Env) -> Vec<PathBuf> {
     }
 }
 
-/// `dirs`, then `path` (the process's `PATH`), without empty or relative
-/// entries: those name the current directory (the project) on Unix. A dir
-/// that cannot be in a `PATH` (its name has the separator) is left out
-/// rather than failing the whole.
+/// `dirs`, then `path` (the process's `PATH`), as [`absolute_path`] keeps them.
 fn prepend_path(dirs: &[PathBuf], path: Option<OsString>) -> OsString {
-    let current = path.unwrap_or_default();
-    let all: Vec<PathBuf> = dirs
-        .iter()
-        .cloned()
-        .chain(std::env::split_paths(&current))
-        .filter(|d| d.is_absolute() && std::env::join_paths([d]).is_ok())
-        .collect();
-    if all.is_empty() && cfg!(unix) {
-        // An empty `PATH` is one empty entry, which `execvp` reads as the
-        // current directory.
-        return OsString::from("/usr/bin:/bin");
-    }
-    std::env::join_paths(all).unwrap_or_default()
+    let path = path.unwrap_or_default();
+    absolute_path(dirs.iter().cloned().chain(std::env::split_paths(&path)))
 }
 
 /// Discover every usable engine, best first: system TeX (more complete and
@@ -261,7 +241,7 @@ pub fn detect(bundled_dir: Option<&Path>) -> Vec<Engine> {
 fn detect_in(bundled_dir: Option<&Path>, env: Env, exe: Option<&Path>) -> Vec<Engine> {
     let mut engines = Vec::new();
 
-    if let Some((latexmk, bin_dir)) = find_tool("latexmk", env("PATH"), &tex_bin_dirs(env)) {
+    if let Some((latexmk, bin_dir)) = find_program("latexmk", env("PATH"), &tex_bin_dirs(env)) {
         let extra_path = bin_dir.into_iter().collect::<Vec<_>>();
         for flavor in [Flavor::PdfLatex, Flavor::XeLatex, Flavor::LuaLatex] {
             engines.push(Engine {
@@ -277,7 +257,7 @@ fn detect_in(bundled_dir: Option<&Path>, env: Env, exe: Option<&Path>) -> Vec<En
     // The copy shipped with the app wins over the caller's extra dir.
     let mut tectonic_dirs = exe.map(bundled_tectonic_dirs).unwrap_or_default();
     tectonic_dirs.extend(bundled_dir.map(Path::to_path_buf));
-    if let Some((binary, _)) = find_tool("tectonic", env("PATH"), &tectonic_dirs) {
+    if let Some((binary, _)) = find_program("tectonic", env("PATH"), &tectonic_dirs) {
         engines.push(Engine {
             kind: EngineKind::Tectonic { binary },
             extra_path: Vec::new(),
@@ -294,7 +274,7 @@ pub fn find_tex_tool(name: &str) -> Option<(PathBuf, OsString)> {
 }
 
 fn find_tex_tool_in(name: &str, env: Env) -> Option<(PathBuf, OsString)> {
-    let (tool, dir) = find_tool(name, env("PATH"), &tex_bin_dirs(env))?;
+    let (tool, dir) = find_program(name, env("PATH"), &tex_bin_dirs(env))?;
     let extra: Vec<PathBuf> = dir.into_iter().collect();
     Some((tool, prepend_path(&extra, env("PATH"))))
 }
@@ -359,35 +339,10 @@ fn parse_texdoc(out: &str) -> Option<PathBuf> {
         .find(|p| p.is_absolute())
 }
 
-/// Look for `name` on `path` (`PATH`) first, then in `fallback` dirs.
-/// Returns the binary and, if found in a fallback dir, that dir (to add to
-/// `PATH`).
-fn find_tool(
-    name: &str,
-    path: Option<OsString>,
-    fallback: &[PathBuf],
-) -> Option<(PathBuf, Option<PathBuf>)> {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    if let Ok(p) = which::which_in(name, path, cwd) {
-        return Some((p, None));
-    }
-    let exe = format!("{name}{}", std::env::consts::EXE_SUFFIX);
-    fallback
-        .iter()
-        .map(|d| d.join(&exe))
-        .find(|p| p.is_file())
-        .map(|p| {
-            let dir = p.parent().map(Path::to_path_buf);
-            (p, dir)
-        })
-}
-
 /// Well-known TeX binary locations not necessarily on a GUI app's `PATH`.
 fn tex_bin_dirs(env: Env) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    let home = env("HOME")
-        .or_else(|| env("USERPROFILE"))
-        .map(PathBuf::from);
+    let home = home(env);
 
     if cfg!(target_os = "macos") {
         dirs.push(PathBuf::from("/Library/TeX/texbin"));
@@ -616,23 +571,17 @@ mod tests {
     }
 
     #[test]
-    fn path_survives_a_dir_that_cannot_be_joined() {
-        let bad = if cfg!(windows) { "C:\\a\"b" } else { "/a:b" };
-        let good = std::env::temp_dir();
-        let joined = prepend_path(&[PathBuf::from(bad), good.clone()], None);
-        let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
-        assert_eq!(dirs, vec![good], "{joined:?}");
-        // Also from `PATH` itself (on Unix, `:` splits it first).
+    fn path_puts_the_tools_first() {
+        let tools = std::env::temp_dir().join("tools");
         let path = std::env::join_paths([std::env::temp_dir()]).unwrap();
-        assert_eq!(prepend_path(&[], Some(path.clone())), path);
+        assert_eq!(
+            prepend_path(std::slice::from_ref(&tools), Some(path)),
+            std::env::join_paths([tools, std::env::temp_dir()]).unwrap()
+        );
         // Never empty on Unix: an empty `PATH` is one empty entry, which
         // `execvp` (latexmk's `system`) reads as the current directory.
         for empty in [None, Some(OsString::new()), Some(".".into())] {
-            let path = prepend_path(&[], empty);
-            assert_eq!(path.is_empty(), cfg!(windows), "{path:?}");
-            if !path.is_empty() {
-                assert!(std::env::split_paths(&path).all(|d| d.is_absolute()));
-            }
+            assert_eq!(prepend_path(&[], empty).is_empty(), cfg!(windows));
         }
     }
 
@@ -900,23 +849,6 @@ mod tests {
             assert_eq!(defaults.len(), 3);
             assert!(defaults.iter().all(|p| p.ends_with("LatexMk")));
         }
-    }
-
-    #[test]
-    fn finds_tools_on_path_then_in_fallbacks() {
-        let dir = tempfile::tempdir().unwrap();
-        let on_path = dir.path().join("path");
-        let fallback = dir.path().join("fallback");
-        let a = program(&on_path, "tool");
-        let b = program(&fallback, "tool");
-        let path = std::env::join_paths([&on_path]).unwrap();
-        let dirs = [dir.path().join("nothing"), fallback.clone()];
-        assert_eq!(
-            find_tool("tool", Some(path.clone()), &dirs),
-            Some((a, None))
-        );
-        assert_eq!(find_tool("tool", None, &dirs), Some((b, Some(fallback))));
-        assert_eq!(find_tool("other", Some(path), &dirs), None);
     }
 
     #[test]

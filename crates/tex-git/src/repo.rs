@@ -103,7 +103,7 @@ impl Repo {
 
     /// The repository-relative, `/`-separated form of an absolute path.
     pub fn rel_path(&self, abs: &Path) -> Option<String> {
-        let abs = crate::plain(abs);
+        let abs = tex_sys::paths::plain_drive(abs);
         let rel = abs.strip_prefix(&self.root).ok()?;
         let parts: Vec<_> = rel
             .components()

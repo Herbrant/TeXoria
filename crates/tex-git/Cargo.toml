@@ -8,7 +8,6 @@ license.workspace = true
 log.workspace = true
 similar.workspace = true
 thiserror.workspace = true
-which.workspace = true
 tex-sys.workspace = true
 
 [dev-dependencies]
