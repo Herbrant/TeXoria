@@ -64,24 +64,6 @@ fn finds_the_main_file_of_a_folder() {
 }
 
 #[test]
-fn package_names() {
-    for ok in [
-        "amsmath",
-        "biblatex-chicago",
-        "l3kernel",
-        "pgf_v3",
-        "tikz.code",
-    ] {
-        assert!(is_package_name(ok), "{ok}");
-    }
-    for bad in [
-        "", "-h", "..", "../x", "a/b", "a b", "x?y=1", "é", "a#b", "%2e%2e",
-    ] {
-        assert!(!is_package_name(bad), "{bad}");
-    }
-}
-
-#[test]
 fn run_summaries() {
     let done = |status| CompileState::Done {
         status,

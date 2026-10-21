@@ -346,10 +346,11 @@ fn capture(mut cmd: Command, timeout: Duration) -> Option<String> {
     reader.join().ok()?
 }
 
-/// A name, never an option.
-fn is_package_name(name: &str) -> bool {
+/// Whether `name` can be a LaTeX package's: it goes to `texdoc` as an argument (never an
+/// option) and into a texdoc.org URL (never a path).
+pub fn is_package_name(name: &str) -> bool {
     !name.is_empty()
-        && !name.starts_with('-')
+        && !name.starts_with(['-', '.'])
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
@@ -1055,10 +1056,20 @@ mod tests {
 
     #[test]
     fn package_names() {
-        for ok in ["amsmath", "l3kernel", "tikz-cd", "a_b.c"] {
+        for ok in [
+            "amsmath",
+            "l3kernel",
+            "tikz-cd",
+            "a_b.c",
+            "biblatex-chicago",
+            "pgf_v3",
+        ] {
             assert!(is_package_name(ok), "{ok}");
         }
-        for bad in ["", "-h", "--help", "a b", "à", "a/b", "a\\b", "a;b"] {
+        for bad in [
+            "", "-h", "--help", "a b", "à", "a/b", "a\\b", "a;b", "..", "../x", ".x", "x?y=1",
+            "a#b", "%2e%2e",
+        ] {
             assert!(!is_package_name(bad), "{bad}");
             assert_eq!(texdoc(bad), None);
         }

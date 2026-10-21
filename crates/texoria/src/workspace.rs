@@ -1003,7 +1003,7 @@ impl Workspace {
 
     /// Open a package's documentation: the local one, else texdoc.org's.
     fn package_docs(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
-        if !is_package_name(&name) {
+        if !tex_compile::is_package_name(&name) {
             return;
         }
         cx.spawn_in(window, async move |this, cx| {
@@ -5918,16 +5918,6 @@ fn remove(path: &Path) -> std::io::Result<()> {
     } else {
         std::fs::remove_file(path)
     }
-}
-
-/// Whether `name` can be a LaTeX package's: it goes to `texdoc` as an argument and into a
-/// texdoc.org URL.
-fn is_package_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.starts_with(['-', '.'])
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 /// How the last build went, for an agent's `problems` call.
