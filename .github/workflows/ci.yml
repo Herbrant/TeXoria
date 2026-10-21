@@ -83,7 +83,7 @@ jobs:
 
       # Tectonic downloads its support files on first use: keep them between runs (its cache
       # folder on Linux, macOS and Windows).
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cache/tectonic
@@ -121,7 +121,7 @@ jobs:
       - name: Coverage minimums
         run: ./scripts/coverage-check.sh target/coverage.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-${{ matrix.name }}
