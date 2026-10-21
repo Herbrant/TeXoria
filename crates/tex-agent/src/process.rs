@@ -32,7 +32,9 @@ pub fn search_path() -> OsString {
 }
 
 /// The directories of `login` (the login shell's `PATH`), then of `path`,
-/// then `known`: absolute ones only, each once.
+/// then `known`, as [`tex_sys::paths::absolute_path`] keeps them: agents run
+/// in the project, where a relative entry (`.`) would let a `node` planted
+/// there run instead of the real one.
 fn join_search_path(
     login: Option<OsString>,
     path: Option<OsString>,
@@ -43,11 +45,7 @@ fn join_search_path(
         dirs.extend(std::env::split_paths(&path));
     }
     dirs.extend(known);
-    let mut seen = std::collections::HashSet::new();
-    // Agents run in the project: a relative entry (`.`) would let a
-    // `node` planted there run instead of the real one.
-    dirs.retain(|d| d.is_absolute() && seen.insert(d.clone()));
-    std::env::join_paths(dirs).unwrap_or_default()
+    tex_sys::paths::absolute_path(dirs)
 }
 
 /// `name` on [`search_path`].
@@ -243,7 +241,16 @@ pub(crate) mod tests {
         let joined = join_search_path(Some(login), Some(path), vec![abs("known"), abs("env")]);
         let dirs: Vec<PathBuf> = std::env::split_paths(&joined).collect();
         assert_eq!(dirs, [abs("login"), abs("both"), abs("env"), abs("known")]);
-        assert!(join_search_path(None, None, Vec::new()).is_empty());
+        // A dir that cannot be in a `PATH` is left out, not the whole.
+        let bad = if cfg!(windows) { "C:\\a\"b" } else { "/a:b" };
+        let joined = join_search_path(None, None, vec![PathBuf::from(bad), abs("known")]);
+        assert_eq!(
+            std::env::split_paths(&joined).collect::<Vec<_>>(),
+            [abs("known")]
+        );
+        // Never empty on Unix: `execvp` reads an empty `PATH` as the current directory.
+        let empty = join_search_path(None, None, Vec::new());
+        assert_eq!(empty.is_empty(), cfg!(windows));
     }
 
     #[test]

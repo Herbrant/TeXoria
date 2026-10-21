@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use tex_sys::paths::{find_program, plain_drive};
+use tex_sys::paths::{absolute_path, find_program, plain_drive};
 
 pub use parse::{Branch, Change, Commit, Entry, Operation, Status};
 pub use process::Cancel;
@@ -281,10 +281,7 @@ impl Git {
             // from it in place of one on `PATH` (cmd.exe, a relative entry).
             .env("NoDefaultCurrentDirectoryInExePath", "1");
         if let Some(path) = std::env::var_os("PATH") {
-            let dirs = std::env::split_paths(&path).filter(|d| d.is_absolute());
-            if let Ok(clean) = std::env::join_paths(dirs) {
-                c.env("PATH", clean);
-            }
+            c.env("PATH", absolute_path(std::env::split_paths(&path)));
         }
         for (k, v) in &self.env {
             c.env(k, v);
@@ -607,6 +604,22 @@ mod tests {
         // Without a message, the command it was.
         let e = classify("gc".into(), "\n".into());
         assert_eq!(e.to_string(), "git gc failed");
+    }
+
+    #[test]
+    fn commands_find_programs_on_absolute_dirs_only() {
+        let cmd = Git::at("git").command(Path::new("."));
+        let path = cmd
+            .get_envs()
+            .find(|(k, _)| *k == "PATH")
+            .and_then(|(_, v)| v);
+        if let Some(path) = path {
+            assert!(!path.is_empty() || cfg!(windows));
+            assert!(
+                std::env::split_paths(path).all(|d| d.is_absolute()),
+                "{path:?}"
+            );
+        }
     }
 
     #[test]
