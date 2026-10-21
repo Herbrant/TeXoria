@@ -595,7 +595,7 @@ fn check_rev(rev: &str) -> Result<()> {
 /// Whether a file name may stand for `.git` on some file system: in any case
 /// (macOS, Windows), with the trailing dots and spaces Windows drops, as an
 /// NTFS stream (`.git::$INDEX_ALLOCATION`) or a short name (`GIT~1`).
-fn is_git_dir(name: &str) -> bool {
+pub fn is_git_dir(name: &str) -> bool {
     let name = name.trim_end_matches(['.', ' ']).to_ascii_lowercase();
     name == ".git" || name.starts_with(".git:") || name == "git~1"
 }

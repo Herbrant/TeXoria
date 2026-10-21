@@ -851,6 +851,12 @@ fn writes_stay_in_the_project() {
     assert!(!inside(&d, &d.join(".git/config")));
     assert!(!inside(&d, &d.join(".GIT/hooks/pre-commit")));
     assert!(!inside(&d, &d.join("ch/.Git/config")));
+    // As Windows reads names: trailing dots and spaces, a stream, the short name.
+    assert!(!inside(&d, &d.join(".git./config")));
+    assert!(!inside(&d, &d.join(".git ./hooks/pre-commit")));
+    assert!(!inside(&d, &d.join(".git::$INDEX_ALLOCATION/config")));
+    assert!(!inside(&d, &d.join("GIT~1/config")));
+    assert!(inside(&d, &d.join(".github/workflows/ci.yml")));
     assert!(!inside(&d, std::path::Path::new("main.tex")));
     assert!(writable(&d, &d.join("ch/intro.tex")).is_ok());
     assert!(writable(&d, &d.join("latexmkrc")).is_err());

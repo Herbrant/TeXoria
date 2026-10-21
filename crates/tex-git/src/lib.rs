@@ -22,7 +22,7 @@ use std::time::Duration;
 
 pub use parse::{Branch, Change, Commit, Entry, Operation, Status};
 pub use process::Cancel;
-pub use repo::{CommitOptions, Repo, SyncOutcome, clone_dir_name, untracked_patch};
+pub use repo::{CommitOptions, Repo, SyncOutcome, clone_dir_name, is_git_dir, untracked_patch};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

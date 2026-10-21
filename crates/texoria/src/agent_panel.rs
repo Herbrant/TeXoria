@@ -1902,7 +1902,8 @@ fn remove_added(dir: &Path, abs: &Path) -> std::io::Result<()> {
 }
 
 /// Whether `path` is inside `dir` (once resolved, for what exists of it),
-/// and not in its `.git` (in any case: disks are often case-insensitive).
+/// and not in its `.git` (under any name a file system takes for it, see
+/// [`tex_git::is_git_dir`]).
 fn inside(dir: &Path, path: &Path) -> bool {
     if !path.is_absolute() {
         return false;
@@ -1930,7 +1931,7 @@ fn inside(dir: &Path, path: &Path) -> bool {
     let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     resolved.strip_prefix(&dir).is_ok_and(|rel| {
         !rel.components()
-            .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+            .any(|c| tex_git::is_git_dir(&c.as_os_str().to_string_lossy()))
     })
 }
 
