@@ -106,9 +106,7 @@ fn walk(dir: &Path, depth: usize, budget: &mut usize, out: &mut Vec<(PathBuf, us
             if depth + 1 < MAX_DEPTH {
                 walk(&path, depth + 1, budget, out);
             }
-        } else if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("tex"))
+        } else if crate::has_extension(&path, &["tex"])
             && fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= files::MAX_TEXT_BYTES)
         {
             out.push((path, depth));

@@ -46,13 +46,11 @@ pub enum PathKind {
 }
 
 impl PathKind {
-    const GRAPHICS: &[&str] = &["pdf", "png", "jpg", "jpeg", "eps", "svg"];
-
     fn accepts(self, ext: &str) -> bool {
         let ext = ext.to_ascii_lowercase();
         match self {
             PathKind::Tex => ext == "tex",
-            PathKind::Graphics => Self::GRAPHICS.contains(&ext.as_str()),
+            PathKind::Graphics => tex_project::GRAPHICS_EXTENSIONS.contains(&ext.as_str()),
             PathKind::Bib | PathKind::BibResource => ext == "bib",
         }
     }

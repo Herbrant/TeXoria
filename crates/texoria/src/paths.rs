@@ -21,17 +21,12 @@ pub fn plain(path: &Path) -> PathBuf {
 
 /// Whether `path` is LaTeX source, by its extension in any case (`.TEX` from old systems).
 pub fn is_latex(path: &Path) -> bool {
-    const EXTENSIONS: [&str; 5] = ["tex", "ltx", "sty", "cls", "dtx"];
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x)))
+    tex_project::has_extension(path, &["tex", "ltx", "sty", "cls", "dtx"])
 }
 
 /// Whether `path` is a BibTeX database (`.bib`, in any case).
 pub fn is_bibtex(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("bib"))
+    tex_project::has_extension(path, &["bib"])
 }
 
 /// `\\?\C:\dir` as `C:\dir` and `\\?\UNC\server\share` as `\\server\share`.

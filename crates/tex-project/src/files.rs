@@ -136,11 +136,7 @@ pub fn safe_to_open(path: &Path) -> bool {
     let Ok(target) = fs::canonicalize(path) else {
         return false;
     };
-    let safe_name = |p: &Path| {
-        p.extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| SAFE_TO_OPEN.iter().any(|s| s.eq_ignore_ascii_case(e)))
-    };
+    let safe_name = |p: &Path| crate::has_extension(p, SAFE_TO_OPEN);
     target.is_file() && safe_name(path) && safe_name(&target)
 }
 

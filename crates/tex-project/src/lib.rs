@@ -320,6 +320,14 @@ pub fn resolve_bib(root_dir: &Path, path: &str) -> PathBuf {
     resolve_with_ext(root_dir, path, "bib")
 }
 
+/// Whether the extension of `path` is one of `extensions`, in any case (`.TEX` from old
+/// systems).
+pub fn has_extension(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| extensions.iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
 /// Extensions tried, in order, for an `\includegraphics` without one.
 pub const GRAPHICS_EXTENSIONS: &[&str] = &["pdf", "png", "jpg", "jpeg", "eps", "svg"];
 
@@ -400,7 +408,7 @@ pub fn find_root(file: &Path, text: &str) -> PathBuf {
         let Some(d) = candidate_dir else { break };
         for entry in std::fs::read_dir(d).into_iter().flatten().flatten() {
             let p = entry.path();
-            if p == file || p.extension().is_none_or(|e| e != "tex") {
+            if p == file || !has_extension(&p, &["tex"]) {
                 continue;
             }
             // Runs on the UI thread, maybe in a folder full of unrelated files.
@@ -430,7 +438,7 @@ pub fn find_root(file: &Path, text: &str) -> PathBuf {
     }
     // Not a LaTeX source (a `.bib` no document names, a package, notes): the folder's
     // document, which a build of the file itself would not be.
-    if file.extension().is_none_or(|e| e != "tex")
+    if !has_extension(file, &["tex"])
         && let Some(main) = main_file::main_files(dir).into_iter().next()
     {
         return main;
@@ -764,6 +772,14 @@ mod tests {
             find_root(&ch, "\\section{x}"),
             dir.path().join("thesis.tex")
         );
+
+        // A document named in capitals (from an old system) is one too.
+        let dir = project(&[
+            ("THESIS.TEX", "\\documentclass{book}\\input{ch}"),
+            ("ch.tex", ""),
+        ]);
+        let ch = dir.path().join("ch.tex");
+        assert_eq!(find_root(&ch, ""), dir.path().join("THESIS.TEX"));
 
         // Three folders up is too far.
         let dir = project(&[
