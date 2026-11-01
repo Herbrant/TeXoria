@@ -21,10 +21,8 @@ env:
   TEXORIA_REQUIRE_TEX: 1
   # The app's tests run the fake engine and agent built with tex-compile's and tex-agent's.
   TEXORIA_REQUIRE_FAKES: 1
-  # Smaller builds and caches (all caches share 10 GB, and an evicted one costs a full rebuild):
-  # file and line numbers are enough for a test's backtrace, and coverage does not use debuginfo.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  # Every run builds the workspace from scratch: incremental data would only be written.
+  # Every run builds the workspace from scratch: incremental data would only be written (and
+  # would grow the caches, which all share 10 GB). The dev profile's debuginfo is in Cargo.toml.
   CARGO_INCREMENTAL: 0
 
 jobs:

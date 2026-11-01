@@ -36,6 +36,18 @@ cargo test --workspace
 [Testing](testing.md) explains the helpers, the tests that need TeX, PDFium or Git, coverage,
 property tests and fuzzing.
 
+## Disk space
+
+From scratch on macOS, `target/` takes about 4.2 GB for the commands above, 1.9 GB more for a
+release build and 2.8 GB for coverage (`target/llvm-cov-target`). Nearly all of it is GPUI, which
+`cargo test` builds a second time with its `test-support` feature. The dev profile keeps file and
+line numbers for the workspace and no debuginfo for the dependencies (they are optimized anyway):
+`CARGO_PROFILE_DEV_DEBUG=true` gives the workspace a debugger's variables, at about 15% more.
+
+Cargo never deletes what it built before: every Rust update, dependency bump or change of
+features or flags adds a full copy of the artifacts next to the old ones, and `target/` grows to
+tens of GB. Run `cargo clean` after `rustup update` or a `cargo update`.
+
 ## Packaging
 
 Packages are built with [cargo-packager](https://github.com/crabnebula-dev/cargo-packager)
