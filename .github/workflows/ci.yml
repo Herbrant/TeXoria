@@ -72,9 +72,12 @@ jobs:
         uses: r-lib/actions/setup-tinytex@v2
       - name: Install TeX packages (macOS, Windows)
         if: runner.os != 'Linux'
-        # tlmgr is a .bat on Windows, which bash cannot run.
+        # tlmgr is a .bat on Windows, which bash cannot run. It refuses to install anything while
+        # the repository has a newer tlmgr than TinyTeX's.
         shell: pwsh
-        run: tlmgr install latexmk cm-super amsfonts
+        run: |
+          tlmgr update --self
+          tlmgr install latexmk cm-super amsfonts
 
       - name: Fetch PDFium
         run: ./scripts/fetch-pdfium.sh
