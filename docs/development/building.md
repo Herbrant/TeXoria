@@ -83,3 +83,18 @@ hand to get the packages as workflow artifacts.
 | `scripts/fetch-fonts.sh` | Refresh the bundled IBM Plex Mono |
 | `scripts/gen-dictionaries.sh <commit>` | Regenerate the spelling dictionary catalog and checksums |
 | `scripts/install.sh` | The end-user installer for macOS and Linux |
+| `scripts/build-website.sh` | Assemble the website into `target/website` (see below) |
+
+## Website
+
+The project's website, [herbrant.github.io/TeXoria](https://herbrant.github.io/TeXoria/), is
+the plain HTML/CSS/JS page in `website/`. `scripts/build-website.sh` copies it to
+`target/website` together with what it shares with the app (logo, screenshots, IBM Plex Mono,
+icons); preview it with:
+
+```sh
+./scripts/build-website.sh && python3 -m http.server -d target/website
+```
+
+`.github/workflows/pages.yml` publishes it to GitHub Pages on every push to `main` that changes
+it (or by hand). A change to the website alone does not run CI.

@@ -1,0 +1,47 @@
+name: Website
+
+# Publishes the website (website/, assembled by scripts/build-website.sh with the logo,
+# screenshots, font and icons it shares with the app) to GitHub Pages:
+# https://herbrant.github.io/TeXoria/
+on:
+  push:
+    branches: [main]
+    paths:
+      - website/**
+      - assets/**
+      - crates/texoria/assets/fonts/**
+      - crates/texoria/assets/icons/**
+      - scripts/build-website.sh
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/build-website.sh
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: target/website
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

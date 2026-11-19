@@ -15,6 +15,7 @@ A fast, native LaTeX editor for macOS, Windows and Linux, written in Rust on
 [![License](https://img.shields.io/badge/license-MIT-3E6A8C?style=flat-square&labelColor=2B2A27)](LICENSE)
 
 [**Download**](https://github.com/Herbrant/TeXoria/releases/latest) ·
+[Website](https://herbrant.github.io/TeXoria/) ·
 [Documentation](docs/README.md) ·
 [Contributing](CONTRIBUTING.md)
 

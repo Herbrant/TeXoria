@@ -26,6 +26,7 @@ cargo packager --release -p texoria --formats app && ./scripts/package-macos.sh 
 cargo packager --release -p texoria --formats nsis|appimage   # Windows installer / AppImage
 ./scripts/package-linux.sh           # Linux, after a release build: .tar.gz, .deb, .rpm (nfpm)
 ./scripts/gen-icons.sh               # assets/logo/*.svg → crates/texoria/packaging (macOS only)
+./scripts/build-website.sh && python3 -m http.server -d target/website   # preview the website
 ```
 
 CI (`.github/workflows/ci.yml`, on every release platform: macOS arm64/x64, Linux x64/arm64,
@@ -372,4 +373,12 @@ texoria ─┬─ tex-compile ── tex-log
 - User and developer documentation lives in `docs/` (index: `docs/README.md`); the README stays
   short and links to it. Update the relevant page when a user-visible behavior, setting or
   shortcut changes. The project is MIT-licensed.
+- The website (`website/`, plain HTML/CSS/JS, English only) is a landing page published to
+  GitHub Pages (`https://herbrant.github.io/TeXoria/`) by `.github/workflows/pages.yml` on every
+  push to `main` that touches it. `scripts/build-website.sh` copies into it what it shares with
+  the app instead of duplicating it: the logo, the screenshots, IBM Plex Mono and the Lucide
+  icons that `style.css` uses. Its colors are the two themes of
+  `crates/texoria/assets/themes.json` (`light-dark(Paper, Ink)`): keep them in step. It repeats
+  the README's features and installation: update both together. It hard-codes no version (the
+  download link comes from the GitHub API), so a release does not touch it.
 - Commit messages follow Conventional Commits (`type(scope): subject`).

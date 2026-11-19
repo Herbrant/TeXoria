@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TeXoria · Write LaTeX. See the PDF as you type.</title>
+  <meta name="description" content="A fast, native LaTeX editor for macOS, Windows and Linux, written in Rust. Live PDF preview, SyncTeX, completion, Git, Overleaf and coding agents built in.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#F4F2ED" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#211F1D" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://herbrant.github.io/TeXoria/">
+  <link rel="icon" href="logo/texoria-small.svg" type="image/svg+xml">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="TeXoria · Write LaTeX. See the PDF as you type.">
+  <meta property="og:description" content="A fast, native LaTeX editor for macOS, Windows and Linux, written in Rust.">
+  <meta property="og:url" content="https://herbrant.github.io/TeXoria/">
+  <meta property="og:image" content="https://herbrant.github.io/TeXoria/screenshot-paper.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preload" href="fonts/IBMPlexMono-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="style.css">
+  <!-- Applies the saved theme before the first paint (site.js does the rest). -->
+  <script>
+    try {
+      const theme = localStorage.getItem("texoria-theme");
+      if (theme === "paper" || theme === "ink") document.documentElement.dataset.theme = theme;
+    } catch (_) {}
+    document.documentElement.classList.add("js");
+  </script>
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="titlebar">
+    <div class="wrap titlebar-inner">
+      <a class="brand" href="#top">
+        <img src="logo/texoria-small.svg" alt="" width="28" height="28">
+        <span>TeXoria</span>
+      </a>
+      <nav aria-label="Main">
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/README.md">Docs</a>
+        <a href="https://github.com/Herbrant/TeXoria">GitHub</a>
+      </nav>
+      <button class="icon-button" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+        <span class="icon icon-sun" aria-hidden="true"></span>
+        <span class="icon icon-moon" aria-hidden="true"></span>
+      </button>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="wrap">
+        <img class="hero-logo" src="logo/texoria.svg" alt="TeXoria logo" width="112" height="112">
+        <h1>Write LaTeX.<br>See the PDF as you type.</h1>
+        <p class="lead">
+          A fast, native LaTeX editor for macOS, Windows and Linux, written in Rust on
+          <a href="https://www.gpui.rs">GPUI</a>, the GPU-accelerated UI framework behind Zed.
+        </p>
+        <div class="actions">
+          <a class="button primary" id="download" href="https://github.com/Herbrant/TeXoria/releases/latest">
+            <span class="icon icon-download" aria-hidden="true"></span>
+            <span id="download-label">Download</span>
+          </a>
+          <a class="button secondary" href="https://github.com/Herbrant/TeXoria/blob/main/docs/getting-started.md">
+            <span class="icon icon-book-open" aria-hidden="true"></span>
+            Documentation
+          </a>
+        </div>
+        <p class="hint" id="download-hint">
+          Free and open source · macOS, Windows and Linux ·
+          <a href="#install">all installation options</a>
+        </p>
+      </div>
+      <div class="wrap wide">
+        <picture class="screenshot">
+          <source id="screenshot-dark" srcset="screenshot-ink.png" media="(prefers-color-scheme: dark)">
+          <img src="screenshot-paper.png" width="1552" height="1013"
+               alt="TeXoria: LaTeX source on the left, live PDF preview on the right">
+        </picture>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="wrap">
+        <p class="eyebrow">Features</p>
+        <h2>Everything a LaTeX document needs, in one window</h2>
+        <ul class="features">
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-eye"></span></span>
+            <h3>Live preview</h3>
+            <p>The PDF updates as you type, without ever blocking the editor.</p>
+          </li>
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-columns-2"></span></span>
+            <h3>Two-way SyncTeX</h3>
+            <p>Jump from the source to the matching spot in the PDF, and back.</p>
+          </li>
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-play"></span></span>
+            <h3>Works out of the box</h3>
+            <p>Uses your TeX Live, MacTeX or MiKTeX through latexmk, or the bundled Tectonic
+              when there is none.</p>
+          </li>
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-pencil"></span></span>
+            <h3>Smart completion</h3>
+            <p>For commands, environments, <code>\ref</code> labels, <code>\cite</code> keys and
+              packages.</p>
+          </li>
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-list-checks"></span></span>
+            <h3>Outline, files and diagnostics</h3>
+            <p>Navigate multi-file projects and catch undefined references, missing files and
+              duplicate labels as you type.</p>
+          </li>
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-languages"></span></span>
+            <h3>Spell checking</h3>
+            <p>In about 90 languages, detected automatically for each file.</p>
+          </li>
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-git-branch"></span></span>
+            <h3>Git built in</h3>
+            <p>Diffs, commits, history, branches and merge conflicts, using your own
+              <code>git</code>.</p>
+          </li>
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-cloud-download"></span></span>
+            <h3>Overleaf, offline</h3>
+            <p>Clone a project, work without a connection, <em>Sync</em> when you are back.</p>
+          </li>
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-sparkles"></span></span>
+            <h3>Coding agents</h3>
+            <p>Claude Code, Codex, Gemini CLI, Copilot and others write, rewrite and fix your
+              document, and you review what they changed.</p>
+          </li>
+          <li>
+            <span class="badge" aria-hidden="true"><span class="icon icon-circle-check"></span></span>
+            <h3>Safe by default</h3>
+            <p>A project's <code>latexmkrc</code> and Git configuration never run until you
+              trust it.</p>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="wrap split">
+        <div class="split-text">
+          <p class="eyebrow">Live preview</p>
+          <h2>The source on one side, the page on the other</h2>
+          <p>
+            Every pause in your typing starts a build in the background: the editor never waits,
+            and the old pages stay on screen until the new ones are ready, so nothing flashes.
+          </p>
+          <p>
+            Click a word in the PDF to land on its line, or jump from the cursor to the page.
+            Errors and warnings from the log appear right where they belong in the source.
+          </p>
+          <a class="more" href="https://github.com/Herbrant/TeXoria/blob/main/docs/preview.md">
+            Build and preview <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="window" role="img" aria-label="A LaTeX document in the editor next to its typeset page">
+          <div class="window-bar">
+            <span class="tab active">main.tex</span>
+            <span class="tab">refs.bib</span>
+          </div>
+          <div class="window-body">
+<pre class="editor"><code><span class="ln">1</span><span class="k">\documentclass</span><span class="b">{</span><span class="s">article</span><span class="b">}</span>
+<span class="ln">2</span><span class="k">\usepackage</span><span class="b">{</span><span class="s">amsmath</span><span class="b">}</span>
+<span class="ln">3</span><span class="c">% the PDF follows as you type</span>
+<span class="ln">4</span><span class="k">\title</span><span class="b">{</span>TeXoria Sample<span class="b">}</span>
+<span class="ln">5</span><span class="k">\author</span><span class="b">{</span>Ada Lovelace<span class="b">}</span>
+<span class="ln">6</span>
+<span class="ln">7</span><span class="k">\begin</span><span class="b">{</span><span class="t">document</span><span class="b">}</span>
+<span class="ln">8</span><span class="f">\maketitle</span>
+<span class="ln">9</span>
+<span class="ln">10</span><span class="k">\section</span><span class="ti">{Introduction}</span>
+<span class="ln">11</span><span class="k">\label</span><span class="b">{</span><span class="l">sec:intro</span><span class="b">}</span>
+<span class="active"><span class="ln">12</span>Hello from TeXoria.<span class="caret"></span></span>
+<span class="ln">13</span><span class="k">\begin</span><span class="b">{</span><span class="t">equation</span><span class="b">}</span>
+<span class="ln">14</span><span class="e">  e^{i</span><span class="f">\pi</span><span class="e">} + 1 = 0</span>
+<span class="ln">15</span><span class="k">\end</span><span class="b">{</span><span class="t">equation</span><span class="b">}</span>
+<span class="ln">16</span>As shown by <span class="k">\cite</span><span class="b">{</span><span class="ss">knuth1984</span><span class="b">}</span>.
+<span class="ln">17</span><span class="k">\end</span><span class="b">{</span><span class="t">document</span><span class="b">}</span></code></pre>
+            <div class="pdf">
+              <div class="page">
+                <p class="page-title">TeXoria Sample</p>
+                <p class="page-author">Ada Lovelace</p>
+                <p class="page-section"><span>1</span> Introduction</p>
+                <p class="page-text"><mark>Hello from TeXoria.</mark></p>
+                <p class="page-math"><i>e</i><sup><i>iπ</i></sup> + 1 = 0 <span>(1)</span></p>
+                <p class="page-text">As shown by [1].</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="install">
+      <div class="wrap">
+        <p class="eyebrow">Install</p>
+        <h2>Get TeXoria</h2>
+        <p class="section-lead">
+          Every package bundles Tectonic, so you can build right away without a TeX distribution.
+          TeXoria then updates itself, checking each release's signature first.
+        </p>
+
+        <div class="tabs" role="tablist" aria-label="Platform">
+          <button type="button" role="tab" id="tab-macos" aria-controls="panel-macos" aria-selected="true">macOS</button>
+          <button type="button" role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="false" tabindex="-1">Linux</button>
+          <button type="button" role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="false" tabindex="-1">Windows</button>
+        </div>
+
+        <div class="panel" id="panel-macos" role="tabpanel" aria-labelledby="tab-macos">
+          <h3 class="panel-title">macOS</h3>
+          <p>In one command, into <code>/Applications</code>, no root needed:</p>
+          <div class="command"><code>curl -fsSL https://raw.githubusercontent.com/Herbrant/TeXoria/main/scripts/install.sh | sh</code><button class="copy" type="button">Copy</button></div>
+          <p>Or with Homebrew:</p>
+          <div class="command"><code>brew tap herbrant/tap &amp;&amp; brew trust --cask herbrant/tap/texoria &amp;&amp; brew install --cask texoria</code><button class="copy" type="button">Copy</button></div>
+          <p class="note">
+            The <code>.dmg</code> for Apple silicon and Intel is on the
+            <a href="https://github.com/Herbrant/TeXoria/releases/latest">releases page</a>.
+            The app is not signed with an Apple Developer ID: if you copy it from the disk image
+            yourself, run <code>xattr -dr com.apple.quarantine /Applications/TeXoria.app</code> once.
+            macOS 10.15 or later.
+          </p>
+        </div>
+
+        <div class="panel" id="panel-linux" role="tabpanel" aria-labelledby="tab-linux">
+          <h3 class="panel-title">Linux</h3>
+          <p>In one command, into <code>~/.local</code>, no root needed:</p>
+          <div class="command"><code>curl -fsSL https://raw.githubusercontent.com/Herbrant/TeXoria/main/scripts/install.sh | sh</code><button class="copy" type="button">Copy</button></div>
+          <p>Or with your package manager:</p>
+          <table>
+            <tbody>
+              <tr><th scope="row">Arch Linux (AUR)</th><td><code>yay -S texoria-bin</code></td></tr>
+              <tr><th scope="row">Debian, Ubuntu</th><td><code>sudo apt install ./texoria_&lt;version&gt;_amd64.deb</code></td></tr>
+              <tr><th scope="row">Fedora, openSUSE</th><td><code>sudo dnf install ./texoria-&lt;version&gt;-1.x86_64.rpm</code></td></tr>
+            </tbody>
+          </table>
+          <p class="note">
+            <code>.deb</code>, <code>.rpm</code>, AppImage and <code>.tar.gz</code> packages for
+            x86_64 and aarch64 are on the
+            <a href="https://github.com/Herbrant/TeXoria/releases/latest">releases page</a>.
+            Needs glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 or newer).
+          </p>
+        </div>
+
+        <div class="panel" id="panel-windows" role="tabpanel" aria-labelledby="tab-windows">
+          <h3 class="panel-title">Windows</h3>
+          <p>
+            Download and run the installer,
+            <code>texoria-&lt;version&gt;-windows-x86_64-setup.exe</code>, from the
+            <a href="https://github.com/Herbrant/TeXoria/releases/latest">latest release</a>.
+          </p>
+          <p class="note">
+            The installer is not signed with a code-signing certificate, so SmartScreen may ask you
+            to confirm: choose <em>More info</em>, then <em>Run anyway</em>.
+          </p>
+        </div>
+
+        <p class="more-line">
+          <a class="more" href="https://github.com/Herbrant/TeXoria/blob/main/docs/installation.md">
+            Installation guide: updating, uninstalling, verifying downloads <span aria-hidden="true">→</span></a>
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <div class="wrap footer-grid">
+      <div>
+        <a class="brand" href="#top">
+          <img src="logo/texoria-small.svg" alt="" width="24" height="24">
+          <span>TeXoria</span>
+        </a>
+        <p>
+          Released under the
+          <a href="https://github.com/Herbrant/TeXoria/blob/main/LICENSE">MIT License</a>.
+        </p>
+      </div>
+      <nav aria-label="Documentation">
+        <h2>Documentation</h2>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/getting-started.md">Getting started</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/writing.md">Writing</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/preview.md">Build and preview</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/keyboard-shortcuts.md">Keyboard shortcuts</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/troubleshooting.md">Troubleshooting</a>
+      </nav>
+      <nav aria-label="Integrations">
+        <h2>Integrations</h2>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/git.md">Git</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/overleaf.md">Overleaf</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/agents.md">Coding agents</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/docs/settings.md">Settings</a>
+      </nav>
+      <nav aria-label="Project">
+        <h2>Project</h2>
+        <a href="https://github.com/Herbrant/TeXoria">Source code</a>
+        <a href="https://github.com/Herbrant/TeXoria/releases">Releases</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/CONTRIBUTING.md">Contributing</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/SECURITY.md">Security</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
