@@ -1,6 +1,7 @@
 # Minimum line coverage (%) of each crate's src/, checked by scripts/coverage-check.sh on every
 # CI runner. Raise a crate's minimum when its tests improve; never lower it to make CI pass.
 pdf-view	97
+site-docs	96
 synctex	98
 tex-agent	95
 tex-cite	96

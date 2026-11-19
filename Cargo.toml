@@ -28,6 +28,8 @@ which = "8"
 tempfile = "3"
 # Already pulled in by gpui-kit's diff viewer.
 similar = "2.7"
+# Website (site-docs): Markdown to HTML.
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 # Not on crates.io for tree-sitter 0.25+ (the published 0.1.0 needs tree-sitter 0.22).
 tree-sitter-bibtex = { git = "https://github.com/latex-lsp/tree-sitter-bibtex", rev = "8d04ed27b3bc7929f14b7df9236797dab9f3fa66" }
 

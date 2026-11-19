@@ -1,13 +1,16 @@
 name: Website
 
 # Publishes the website (website/, assembled by scripts/build-website.sh with the logo,
-# screenshots, font and icons it shares with the app) to GitHub Pages:
+# screenshots, font and icons it shares with the app, and docs/ as HTML pages built by
+# crates/site-docs) to GitHub Pages:
 # https://herbrant.github.io/TeXoria/
 on:
   push:
     branches: [main]
     paths:
       - website/**
+      - docs/**
+      - crates/site-docs/**
       - assets/**
       - crates/texoria/assets/fonts/**
       - crates/texoria/assets/icons/**
@@ -27,6 +30,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      # site-docs is small: built from scratch, without a cache.
+      - uses: dtolnay/rust-toolchain@stable
       - run: scripts/build-website.sh
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

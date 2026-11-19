@@ -108,6 +108,7 @@ texoria ─┬─ tex-compile ── tex-log
 ```
 
 `tex-sys` is a leaf crate that most of them use (not drawn): what they share about the system.
+`site-docs` is not part of the app: it builds the website's documentation (see Conventions).
 
 - **tex-sys** (no workspace dependency): `process` starts a child in a group of its own
   (`new_session` for git and agents, `own_group` for engines, texdoc and LanguageTool) without a
@@ -380,5 +381,12 @@ texoria ─┬─ tex-compile ── tex-log
   icons that `style.css` uses. Its colors are the two themes of
   `crates/texoria/assets/themes.json` (`light-dark(Paper, Ink)`): keep them in step. It repeats
   the README's features and installation: update both together. It hard-codes no version (the
-  download link comes from the GitHub API), so a release does not touch it.
+  download link comes from the GitHub API), so a release does not touch it. It also publishes
+  `docs/` (`docs/*.html`): `crates/site-docs` (pulldown-cmark) turns each Markdown file into a
+  page through `website/doc-template.html`, whose header and footer repeat `index.html`'s. The
+  Markdown stays the only source and must keep reading well on GitHub: `docs/README.md`'s lists
+  of links (one `## Section` each) are the sidebar, so every page must be listed there; links
+  between pages are relative `.md` paths (become `.html`), others go to GitHub; headings get
+  GitHub's ids; a link to a missing file or heading fails the build and `cargo test -p
+  site-docs`, which builds the real `docs/`.
 - Commit messages follow Conventional Commits (`type(scope): subject`).

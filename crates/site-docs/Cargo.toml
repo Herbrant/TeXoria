@@ -1,0 +1,16 @@
+# Builds the website's documentation pages from docs/ (scripts/build-website.sh); not part of
+# the app.
+[package]
+name = "site-docs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+pulldown-cmark.workspace = true
+
+[dev-dependencies]
+test-support.workspace = true
+tempfile.workspace = true

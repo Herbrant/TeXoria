@@ -34,6 +34,9 @@ processes and their trees, paths and the `PATH`, verified downloads.
 | [`tex-update`](../../crates/tex-update) | Updates: latest release, signed checksums, download and install |
 | [`tex-sys`](../../crates/tex-sys) | Child processes, paths and the `PATH`, verified downloads |
 
+Two crates are not part of the app: `test-support`, the tests' shared helpers, and `site-docs`,
+which turns `docs/` into the website's pages (see [Website](building.md#website)).
+
 ## Build
 
 `tex_compile::engine::detect()` returns the engines best first: the system latexmk (pdfLaTeX,

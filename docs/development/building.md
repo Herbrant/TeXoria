@@ -83,18 +83,29 @@ hand to get the packages as workflow artifacts.
 | `scripts/fetch-fonts.sh` | Refresh the bundled IBM Plex Mono |
 | `scripts/gen-dictionaries.sh <commit>` | Regenerate the spelling dictionary catalog and checksums |
 | `scripts/install.sh` | The end-user installer for macOS and Linux |
-| `scripts/build-website.sh` | Assemble the website into `target/website` (see below) |
+| `scripts/build-website.sh` | Assemble the website and the documentation into `target/website` (see below) |
 
 ## Website
 
 The project's website, [herbrant.github.io/TeXoria](https://herbrant.github.io/TeXoria/), is
-the plain HTML/CSS/JS page in `website/`. `scripts/build-website.sh` copies it to
-`target/website` together with what it shares with the app (logo, screenshots, IBM Plex Mono,
-icons); preview it with:
+the plain HTML/CSS/JS page in `website/` plus this documentation. `scripts/build-website.sh`
+copies the page to `target/website` together with what it shares with the app (logo,
+screenshots, IBM Plex Mono, icons), and `crates/site-docs` turns every Markdown file of `docs/`
+into a page of `target/website/docs` through `website/doc-template.html`; preview it with:
 
 ```sh
 ./scripts/build-website.sh && python3 -m http.server -d target/website
 ```
 
-`.github/workflows/pages.yml` publishes it to GitHub Pages on every push to `main` that changes
-it (or by hand). A change to the website alone does not run CI.
+The Markdown stays the only source, so write the documentation as usual, for GitHub:
+
+- `docs/README.md` is the index, and its lists of links (one `## Section` each) are the
+  sidebar, in the same order: a new page must be listed there.
+- Link pages with relative paths (`writing.md#vim-mode`): on the website they lead to the HTML
+  page, and headings get the same ids as on GitHub. Links to other files of the repository
+  (`../CHANGELOG.md`) go to GitHub.
+- A link to a file or heading that does not exist fails the build, and the test
+  `cargo test -p site-docs` builds `docs/` too, so CI catches it.
+
+`.github/workflows/pages.yml` publishes the website to GitHub Pages on every push to `main`
+that changes it or `docs/` (or by hand). A change to `website/` alone does not run CI.

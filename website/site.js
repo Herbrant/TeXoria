@@ -1,6 +1,7 @@
-// TeXoria's website: theme switch, download link for the visitor's system, install tabs and
-// copy buttons. Without JavaScript the page still works: the theme follows the system, the
-// download button opens the latest release and every install panel is shown.
+// TeXoria's website: theme switch, download link for the visitor's system, install tabs, copy
+// buttons and the documentation's menu. Without JavaScript the page still works: the theme
+// follows the system, the download button opens the latest release and every install panel is
+// shown.
 "use strict";
 
 const REPO = "Herbrant/TeXoria";
@@ -134,6 +135,17 @@ function setUpCopyButtons() {
   }
 }
 
+// The documentation's sidebar is a menu on narrow screens, closed until opened (without
+// JavaScript it stays open).
+function setUpDocsMenu() {
+  const menu = document.querySelector(".docs-menu");
+  if (!menu) return;
+  const narrow = window.matchMedia("(max-width: 860px)");
+  const update = () => (menu.open = !narrow.matches);
+  update();
+  narrow.addEventListener("change", update);
+}
+
 const system = detectSystem();
 if (root.dataset.theme) applyTheme(root.dataset.theme);
 document.getElementById("theme-toggle").addEventListener("click", () => {
@@ -141,4 +153,5 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
 });
 setUpTabs(system);
 setUpCopyButtons();
+setUpDocsMenu();
 setUpDownload(system);

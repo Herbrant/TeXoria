@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<!-- The template of the documentation pages, which crates/site-docs fills from docs/*.md
+     (scripts/build-website.sh). {{root}} is the way back to the site's root. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{title}} · TeXoria</title>
+  <meta name="description" content="{{description}}">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#F4F2ED" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#211F1D" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://herbrant.github.io/TeXoria/{{path}}">
+  <link rel="icon" href="{{root}}logo/texoria-small.svg" type="image/svg+xml">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="{{title}} · TeXoria">
+  <meta property="og:description" content="{{description}}">
+  <meta property="og:url" content="https://herbrant.github.io/TeXoria/{{path}}">
+  <meta property="og:image" content="https://herbrant.github.io/TeXoria/screenshot-paper.png">
+  <link rel="preload" href="{{root}}fonts/IBMPlexMono-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="{{root}}style.css">
+  <!-- Applies the saved theme before the first paint (site.js does the rest). -->
+  <script>
+    try {
+      const theme = localStorage.getItem("texoria-theme");
+      if (theme === "paper" || theme === "ink") document.documentElement.dataset.theme = theme;
+    } catch (_) {}
+    document.documentElement.classList.add("js");
+  </script>
+  <script src="{{root}}site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="titlebar">
+    <div class="wrap wide titlebar-inner">
+      <a class="brand" href="{{root}}index.html">
+        <img src="{{root}}logo/texoria-small.svg" alt="" width="28" height="28">
+        <span>TeXoria</span>
+      </a>
+      <nav aria-label="Main">
+        <a href="{{root}}index.html#features">Features</a>
+        <a href="{{root}}index.html#install">Install</a>
+        <a class="extra" href="{{root}}docs/index.html" aria-current="true">Docs</a>
+        <a class="extra" href="https://github.com/Herbrant/TeXoria">GitHub</a>
+      </nav>
+      <button class="icon-button" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+        <span class="icon icon-sun" aria-hidden="true"></span>
+        <span class="icon icon-moon" aria-hidden="true"></span>
+      </button>
+    </div>
+  </header>
+
+  <div class="wrap wide docs">
+    <aside class="docs-sidebar">
+      <details class="docs-menu" open>
+        <summary>
+          <span class="icon icon-book-open" aria-hidden="true"></span>
+          Documentation
+          <span class="icon icon-chevron-down" aria-hidden="true"></span>
+        </summary>
+        <nav class="docs-nav" aria-label="Documentation">
+{{nav}}
+        </nav>
+      </details>
+    </aside>
+
+    <main id="main" class="docs-main">
+      <article class="prose">
+{{content}}
+      </article>
+      <p class="edit">
+        <a href="{{edit}}"><span class="icon icon-pencil" aria-hidden="true"></span>Edit this page on GitHub</a>
+      </p>
+      {{pager}}
+    </main>
+
+    <aside class="docs-aside">
+      {{toc}}
+    </aside>
+  </div>
+
+  <footer class="statusbar">
+    <div class="wrap wide footer-grid">
+      <div>
+        <a class="brand" href="{{root}}index.html">
+          <img src="{{root}}logo/texoria-small.svg" alt="" width="24" height="24">
+          <span>TeXoria</span>
+        </a>
+        <p>
+          Released under the
+          <a href="https://github.com/Herbrant/TeXoria/blob/main/LICENSE">MIT License</a>.
+        </p>
+      </div>
+      <nav aria-label="Documentation">
+        <h2>Documentation</h2>
+        <a href="{{root}}docs/getting-started.html">Getting started</a>
+        <a href="{{root}}docs/writing.html">Writing</a>
+        <a href="{{root}}docs/preview.html">Build and preview</a>
+        <a href="{{root}}docs/keyboard-shortcuts.html">Keyboard shortcuts</a>
+        <a href="{{root}}docs/troubleshooting.html">Troubleshooting</a>
+      </nav>
+      <nav aria-label="Integrations">
+        <h2>Integrations</h2>
+        <a href="{{root}}docs/git.html">Git</a>
+        <a href="{{root}}docs/overleaf.html">Overleaf</a>
+        <a href="{{root}}docs/agents.html">Coding agents</a>
+        <a href="{{root}}docs/settings.html">Settings</a>
+      </nav>
+      <nav aria-label="Project">
+        <h2>Project</h2>
+        <a href="https://github.com/Herbrant/TeXoria">Source code</a>
+        <a href="https://github.com/Herbrant/TeXoria/releases">Releases</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/CONTRIBUTING.md">Contributing</a>
+        <a href="https://github.com/Herbrant/TeXoria/blob/main/SECURITY.md">Security</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
