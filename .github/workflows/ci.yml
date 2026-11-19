@@ -1,9 +1,15 @@
 name: CI
 
+# The website alone (pages.yml) does not need the build and tests.
 on:
   push:
     branches: [main]
+    paths-ignore: &website
+      - website/**
+      - scripts/build-website.sh
+      - .github/workflows/pages.yml
   pull_request:
+    paths-ignore: *website
 
 permissions:
   contents: read
