@@ -598,7 +598,7 @@ mod tests {
         }
     }
 
-    /// The test program lives in `target/debug/deps`: never an installation
+    /// The test program lives under `target/debug`: never an installation
     /// that updates itself.
     #[test]
     fn detects_the_test_program() {

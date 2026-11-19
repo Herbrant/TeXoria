@@ -102,16 +102,21 @@ pub fn resolve<T: 'static>(cx: &mut TestAppContext, task: gpui_kit::Task<T>) -> 
     out.take().expect("the task is still pending")
 }
 
-/// A program another crate of the workspace builds for its tests, next to this test executable
-/// (`target/<profile>/deps/texoria-<hash>`; `cargo test --workspace` builds them all in the same
-/// folder). `None`, and the test passes trivially, when it was not built, unless
-/// `TEXORIA_REQUIRE_FAKES=1` (as in CI).
+/// A program another crate of the workspace builds for its tests, in `target/<profile>`
+/// (`cargo test --workspace` builds them all), a folder above this test executable: Cargo puts
+/// it in `target/<profile>/deps/texoria-<hash>`, or since Rust 1.100 in
+/// `target/<profile>/build/texoria/<hash>/out/texoria-<hash>`. `None`, and the test passes
+/// trivially, when it was not built, unless `TEXORIA_REQUIRE_FAKES=1` (as in CI).
 pub fn fake_program(name: &str, package: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
-    let path = exe.parent()?.parent()?.join(file);
-    if path.is_file() {
-        return Some(path);
+    let found = exe
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join(&file))
+        .find(|p| p.is_file());
+    if found.is_some() {
+        return found;
     }
     let why = format!("{name} not built (cargo build -p {package} --bin {name})");
     test_support::skip("FAKES", &why);
