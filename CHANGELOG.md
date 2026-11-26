@@ -3,6 +3,29 @@
 Notable changes to TeXoria, newest first. Each release's section is also its GitHub release notes
 (`scripts/release-notes.sh`), so every release must have one before it is tagged.
 
+## [0.8.0] - 2026-11-26
+
+### Added
+
+- **More than one project at a time**: *File → New Window* (⌘⇧N, Ctrl+Shift+N elsewhere; on
+  macOS also in the Dock icon's menu) opens another window on the welcome screen. A project is
+  open in one window only: opening it again brings its window to the front. A `.tex` file opened
+  from the Finder goes to its project's window, else to a window still on the welcome screen,
+  else to a new one. The settings are shared, and a change made in one window applies to all of
+  them; closing a window closes its PDF and Settings windows, not the other projects.
+  ([86c7efe](https://github.com/Herbrant/TeXoria/commit/86c7efe))
+- TeXoria has a website, <https://herbrant.github.io/TeXoria/>, with the documentation.
+  ([0341a06](https://github.com/Herbrant/TeXoria/commit/0341a06), [51ab92e](https://github.com/Herbrant/TeXoria/commit/51ab92e))
+
+### Build and documentation
+
+- Faster development builds (no debug info for the dependencies), CI that skips the build for
+  website-only changes and updates `tlmgr` before installing TeX packages, and tests that find
+  their fake programs with Cargo's new build folder layout.
+  ([2cbf73a](https://github.com/Herbrant/TeXoria/commit/2cbf73a), [82793af](https://github.com/Herbrant/TeXoria/commit/82793af), [ee01171](https://github.com/Herbrant/TeXoria/commit/ee01171), [cf39ca0](https://github.com/Herbrant/TeXoria/commit/cf39ca0))
+
+**Full changelog**: [v0.7.0...v0.8.0](https://github.com/Herbrant/TeXoria/compare/v0.7.0...v0.8.0)
+
 ## [0.7.0] - 2026-10-21
 
 ### Added
