@@ -11,9 +11,20 @@ use gpui_kit::{
 use crate::settings::Settings;
 use crate::workspace::{Startup, Workspace};
 
-/// Initialize the app in `cx` like `main` does.
+/// The app was initialized: a test opening a second window must not register the app's
+/// actions twice (a `NewWindow` would open two).
+struct Initialized;
+
+impl gpui_kit::Global for Initialized {}
+
+/// Initialize the app in `cx` like `main` does (once).
 pub fn init(cx: &mut TestAppContext) {
-    cx.update(crate::init);
+    cx.update(|cx| {
+        if !cx.has_global::<Initialized>() {
+            crate::init(cx);
+            cx.set_global(Initialized);
+        }
+    });
 }
 
 /// What a test workspace starts from: default settings, no engine, no PDFium, and no tool
@@ -44,6 +55,14 @@ pub fn open(
     });
     cx.run_until_parked();
     (window, workspace)
+}
+
+/// Close `window` (without asking its workspace): a project open in it may then open in
+/// another one, instead of bringing it forward.
+pub fn close(cx: &mut TestAppContext, window: impl Into<AnyWindowHandle>) {
+    cx.update_window(window.into(), |_, window, _| window.remove_window())
+        .unwrap();
+    cx.run_until_parked();
 }
 
 /// A copy of `tests/fixtures/<name>` in a temporary folder (tests must not write into the

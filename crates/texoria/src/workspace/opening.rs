@@ -11,7 +11,7 @@ impl Workspace {
             self.state = CompileState::Failed(format!("{} does not exist", file.display()).into());
             if let Some(ix) = self.settings.recent.iter().position(|p| *p == file) {
                 self.settings.recent.remove(ix);
-                self.settings.save();
+                self.save_settings(cx);
             }
             cx.notify();
             return;
@@ -44,6 +44,21 @@ impl Workspace {
         let root = tex_project::find_root(&file, &text);
         let root = crate::paths::canonical(&root);
         let new_project = self.root.as_ref() != Some(&root);
+        // Open in another window: that one comes forward with the file. Two windows on a
+        // project would build it in the same folder and save over each other's edits.
+        if new_project
+            && let Some((other, workspace)) = crate::windows::showing(&root, cx.entity_id(), cx)
+        {
+            cx.defer(move |cx| {
+                other
+                    .update(cx, |_, window, cx| {
+                        workspace.update(cx, |w, cx| w.open_path(file, window, cx));
+                        window.activate_window();
+                    })
+                    .ok();
+            });
+            return;
+        }
         let session = new_project
             .then(|| self.settings.session(&root).cloned())
             .flatten();
@@ -82,7 +97,7 @@ impl Workspace {
     }
 
     /// Remember the project's open tabs (saved with the settings).
-    pub(super) fn remember_session(&mut self) {
+    pub(super) fn remember_session(&mut self, cx: &mut Context<Self>) {
         let Some(root) = self.root.clone() else {
             return;
         };
@@ -105,7 +120,7 @@ impl Workspace {
             export: previous.export,
         };
         if self.settings.set_session(session) {
-            self.settings.save();
+            self.save_settings(cx);
         }
     }
 
@@ -127,7 +142,7 @@ impl Workspace {
             self.run_checks(Vec::new(), cx);
             self.show_old_pdf = self.settings.recent.contains(&root);
             self.settings.push_recent(root.clone());
-            self.settings.save();
+            self.save_settings(cx);
             // The previous project's run is irrelevant now.
             if let Some(c) = &self.compiler {
                 c.cancel();
@@ -169,7 +184,7 @@ impl Workspace {
                 v.reset();
             }
             self.active = ix;
-            self.remember_session();
+            self.remember_session(cx);
             cx.notify();
             return Some(ix);
         }
@@ -267,7 +282,7 @@ impl Workspace {
         self.active = self.buffers.len() - 1;
         // The project indexed this file from disk: the issues match its text.
         self.underline_issues(self.active, cx);
-        self.remember_session();
+        self.remember_session(cx);
         self.spellcheck(self.active, Duration::ZERO, cx);
         self.grammar_check(self.active, Duration::ZERO, cx);
         self.apply_diagnostics(cx);

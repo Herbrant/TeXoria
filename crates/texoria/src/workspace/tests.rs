@@ -157,6 +157,7 @@ fn a_clone_opens_on_the_main_file_the_user_picks(cx: &mut TestAppContext) {
     });
 
     // Only one: opened at once.
+    testing::close(cx, window);
     let (window, workspace) = testing::open(cx, None, testing::startup());
     with(cx, window, &workspace, |ws, window, cx| {
         ws.choose_main_file(dir.clone(), vec![methods.clone()], window, cx)

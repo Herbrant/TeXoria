@@ -218,7 +218,7 @@ impl Workspace {
         }
         if changed {
             self.active = self.active.min(self.buffers.len().saturating_sub(1));
-            self.remember_session();
+            self.remember_session(cx);
             self.reindex_all(cx);
             self.apply_diagnostics(cx);
             self.build(cx);
@@ -264,7 +264,7 @@ impl Workspace {
         if ix < self.active || self.active == self.buffers.len() {
             self.active -= 1;
         }
-        self.remember_session();
+        self.remember_session(cx);
         cx.notify();
     }
 }

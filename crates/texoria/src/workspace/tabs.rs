@@ -96,7 +96,7 @@ impl Workspace {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.active = i;
                         this.diff_active = false;
-                        this.remember_session();
+                        this.remember_session(cx);
                         cx.notify();
                     }))
             }))

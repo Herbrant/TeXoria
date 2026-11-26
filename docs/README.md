@@ -3,7 +3,7 @@
 ## User guide
 
 - [Installation](installation.md): every platform, updating and uninstalling
-- [Getting started](getting-started.md): open a project, the window, where the PDF goes
+- [Getting started](getting-started.md): open a project, more than one window, the window, where the PDF goes
 - [Writing](writing.md): completion, outline, files, diagnostics, spell checking
 - [Build and preview](preview.md): live preview, SyncTeX, engines
 - [Git](git.md): source control built into the editor

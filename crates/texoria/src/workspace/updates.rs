@@ -60,7 +60,7 @@ impl Workspace {
             }
             UpdaterEvent::UpToDate => {
                 self.settings.last_update_check = Some(updater::now());
-                self.settings.save();
+                self.save_settings(cx);
             }
             UpdaterEvent::Installed(relaunch) => {
                 // The new version opens the same project.

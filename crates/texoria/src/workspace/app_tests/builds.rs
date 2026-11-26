@@ -404,6 +404,7 @@ fn only_pdfs_texoria_built_are_shown_or_exported(cx: &mut TestAppContext) {
 
     // Opened before: it is.
     let root = app.path("main.tex");
+    testing::close(cx, app.window);
     let mut startup = quiet();
     startup.settings.recent = vec![root.clone()];
     let (_, ws) = testing::open(cx, Some(root), startup);

@@ -41,7 +41,7 @@ impl Workspace {
             return;
         };
         self.settings.allow_rc(job.work_dir().to_path_buf());
-        self.settings.save();
+        self.save_settings(cx);
         self.untrusted_rc = false;
         self.build(cx);
     }

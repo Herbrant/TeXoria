@@ -312,21 +312,32 @@ texoria ─┬─ tex-compile ── tex-log
     to `tex_vim` and stops them when Vim takes them; the block cursor is a fill
     `RangeDecoration` (the editor has no cursor shapes).
   - Actions/keybindings/menus are declared in `main.rs` (`secondary-*` = ⌘ on macOS, Ctrl elsewhere).
-    On macOS the app outlives its window: `reopen` (the Dock icon) opens the last project in a
-    new one. Closing the main window also closes the Settings and PDF windows. The Finder sends
-    the documents it opens as URLs (`on_open_urls`, `open_document`), not as arguments. The
+    On macOS the app outlives its windows: `reopen` (the Dock icon) opens the last project in a
+    new one. Closing a main window also closes its own Settings and PDF windows (not the other
+    projects'). The Finder sends the documents it opens as URLs (`on_open_urls`,
+    `windows::open_document`), not as arguments. The
     `.tex` type is declared per system: `packaging/macos/Info.plist` (merged by cargo-packager;
     `org.tug.tex` is imported for Macs without a TeX distribution), the `.desktop` file's
     `MimeType`, and the NSIS `preinstall-section` in `Cargo.toml` (cargo-packager's own
     `file-associations` are not used: its uninstaller leaves them).
+  - `windows.rs`: one main window (one `Workspace`) per project, `NewWindow` (⌘⇧N, File menu,
+    macOS Dock menu) opens one on the start page. Workspaces register themselves in a global
+    (`windows::workspaces`, front window first). A project is open in one window only:
+    `open_path` brings the window already showing its root forward instead (two would build in
+    one folder). A document from outside goes to its project's window, else a start page, else
+    a new window. Each workspace keeps its copy of the settings: every save goes through
+    `Workspace::save_settings`, which hands them to the others (`adopt_settings`, which applies
+    what changed without saving), or the next window to save would write its stale copy over
+    them. A `languagetool-server` TeXoria started is shared by the windows and stops with the
+    last one using it. `windows::set_startup` lets tests give new windows their `Startup`.
   - The app icon's sources are `assets/logo/texoria.svg` (and `texoria-small.svg` for ≤ 48 px);
     the rasterized PNG/`.icns`/`.ico` in `crates/texoria/packaging` are committed. `build.rs`
     embeds the `.ico` as Windows resource ID 1, which is where GPUI loads the window icon from.
   - Settings are TOML in the OS config dir (`directories::ProjectDirs("app","TeXoria","TeXoria")`).
     `Workspace` owns them; `settings_window.rs` is the Settings window (⌘,, a second window built
     on gpui-kit's `setting` component) and writes every change through
-    `Workspace::update_settings`, which saves and applies only what changed (engine, timeouts,
-    soft wrap of open tabs, Git options, trust, theme). Its setters update the main window, so
+    `Workspace::update_settings`, which saves (and shares, see `windows.rs`) and applies only
+    what changed (engine, timeouts, soft wrap of open tabs, Git options, trust, theme). Its setters update the main window, so
     they must never run from inside it. It shows a copy of what it reads (`Shown`), refreshed by
     observers: it must not read the workspace while it draws (see `preview_window.rs`).
     Themes ("Paper" light, "Ink" dark) are in `assets/themes.json`; icons/fonts are embedded via

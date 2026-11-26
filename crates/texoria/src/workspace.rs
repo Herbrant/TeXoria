@@ -230,10 +230,6 @@ impl Startup {
 }
 
 impl Workspace {
-    pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::with_startup(path, Startup::detect(), window, cx)
-    }
-
     pub fn with_startup(
         path: Option<PathBuf>,
         startup: Startup,
@@ -325,13 +321,17 @@ impl Workspace {
                 })
                 .unwrap_or(true);
             if close {
-                weak.update(cx, |this, cx| this.remember_preview_window(cx))
-                    .ok();
-                // The Settings and preview windows belong to this one. Left open,
-                // they would keep the app running elsewhere than on macOS, and there
-                // keep its Dock icon from opening a new window.
+                // The Settings and preview windows belong to this one (the other projects'
+                // windows stay). Left open, they would keep the app running elsewhere than
+                // on macOS, and there keep its Dock icon from opening a new window.
+                let owned = weak
+                    .update(cx, |this, cx| {
+                        this.remember_preview_window(cx);
+                        [this.settings_window, this.preview_window]
+                    })
+                    .unwrap_or_default();
                 let main = window.window_handle();
-                for other in cx.windows().into_iter().filter(|w| *w != main) {
+                for other in owned.into_iter().flatten().filter(|w| *w != main) {
                     other.update(cx, |_, w, _| w.remove_window()).ok();
                 }
             }
@@ -366,6 +366,7 @@ impl Workspace {
         });
         let tool_task = cx.forward(tool_calls, |this, call, cx| this.on_tool_call(call, cx));
 
+        crate::windows::register(window.window_handle(), cx.entity().downgrade(), cx);
         let spell = Spell::new(&settings.spell_words);
         let mut this = Workspace {
             settings,
@@ -441,6 +442,9 @@ impl Workspace {
                 "No TeX engine found. Install TeX Live or MiKTeX, or place tectonic next to TeXoria.".into(),
             );
         }
+        // The window's shortcuts and menu actions reach the workspace from its first frame,
+        // start page included (opening a file moves the focus to its editor).
+        window.focus(&this.focus, cx);
         if let Some(p) = path {
             this.open_path(p, window, cx);
         }
@@ -471,7 +475,12 @@ impl Workspace {
         Some(name.to_string_lossy().into_owned())
     }
 
-    fn project_dir(&self) -> Option<PathBuf> {
+    /// The project's root file, once one is open.
+    pub(crate) fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
+    pub(crate) fn project_dir(&self) -> Option<PathBuf> {
         self.root
             .as_ref()
             .and_then(|r| r.parent())

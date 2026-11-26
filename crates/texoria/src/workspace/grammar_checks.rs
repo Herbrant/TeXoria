@@ -22,6 +22,10 @@ impl Workspace {
             return;
         }
         let server = Arc::new(tex_spell::grammar::Server::new(&url));
+        // A server another window started: it must not stop while this one uses it.
+        if let Some(port) = tex_spell::grammar::local_port(&url) {
+            self.grammar.share(port);
+        }
         self.grammar.server = Some(server.clone());
         self.grammar.state = ServerState::Connecting;
         let start = self.settings.languagetool_start;

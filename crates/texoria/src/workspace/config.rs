@@ -12,8 +12,38 @@ impl Workspace {
     ) {
         let old = self.settings.clone();
         change(&mut self.settings);
-        self.settings.save();
+        self.save_settings(cx);
+        self.apply_settings(&old, window, cx);
+    }
 
+    /// Save the settings, and hand them to the other windows, which take them as theirs:
+    /// otherwise the next one to save would write its older copy over these.
+    pub(super) fn save_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings.save();
+        crate::windows::share_settings(cx.entity_id(), &self.settings, cx);
+    }
+
+    /// Take the settings another window saved, and bring what is running in line.
+    pub fn adopt_settings(
+        &mut self,
+        settings: Settings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut settings = Settings {
+            file: self.settings.file.take(),
+            ..settings
+        };
+        // The PDF's own window, while open here, follows its moves without saving them.
+        if self.preview_window.is_some() {
+            settings.preview_window = self.settings.preview_window.take();
+        }
+        let old = std::mem::replace(&mut self.settings, settings);
+        self.apply_settings(&old, window, cx);
+    }
+
+    /// Bring what is running in line with the settings, which were `old`.
+    fn apply_settings(&mut self, old: &Settings, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings.engine != old.engine
             && let Some(ix) = self
                 .settings
@@ -22,7 +52,7 @@ impl Workspace {
                 .and_then(|label| self.engines.iter().position(|e| &e.label() == label))
             && ix != self.engine_ix
         {
-            self.set_engine(ix, cx);
+            self.use_engine(ix, cx);
         }
         if self.settings.compile_timeout_secs != old.compile_timeout_secs
             && let Some(c) = &self.compiler
@@ -174,10 +204,15 @@ impl Workspace {
     }
 
     pub(super) fn set_engine(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.settings.engine = Some(self.engines[ix].label());
+        self.save_settings(cx);
+        self.use_engine(ix, cx);
+    }
+
+    /// Build with the engine `ix` from now on (the settings unchanged).
+    fn use_engine(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.engine_ix = ix;
         let engine = self.engines[ix].clone();
-        self.settings.engine = Some(engine.label());
-        self.settings.save();
         if let Some(c) = &self.compiler {
             c.set_engine(engine);
         }
@@ -201,7 +236,7 @@ impl Workspace {
 
     pub(super) fn toggle_live(&mut self, cx: &mut Context<Self>) {
         self.settings.live_preview = !self.settings.live_preview;
-        self.settings.save();
+        self.save_settings(cx);
         cx.notify();
     }
 }

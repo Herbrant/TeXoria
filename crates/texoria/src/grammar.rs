@@ -8,7 +8,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -55,9 +55,26 @@ pub struct Grammar {
     /// Findings by chunk (hash of its text, language and rules), with
     /// ranges relative to the chunk.
     pub cache: Arc<Mutex<HashMap<u64, Vec<Problem>>>>,
-    /// A server TeXoria started, stopped with it.
-    child: Option<Child>,
+    /// A server TeXoria started (in this window or another), stopped with the last window
+    /// that uses it.
+    child: Option<Arc<Started>>,
 }
+
+/// A `languagetool-server` TeXoria started on `port`: stopped once no window holds it.
+struct Started {
+    port: u16,
+    child: Child,
+}
+
+impl Drop for Started {
+    fn drop(&mut self) {
+        // `languagetool-server` is a script that starts Java: stop both.
+        tex_sys::process::kill_tree(&mut self.child);
+    }
+}
+
+/// The servers TeXoria started, for the other windows to share.
+static STARTED: Mutex<Vec<Weak<Started>>> = Mutex::new(Vec::new());
 
 impl Default for Grammar {
     fn default() -> Self {
@@ -71,18 +88,31 @@ impl Default for Grammar {
 }
 
 impl Grammar {
-    /// Stop the server TeXoria started, if any.
+    /// Let go of the server TeXoria started, if any: it stops unless another window uses it.
     pub fn stop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            // `languagetool-server` is a script that starts Java: stop both.
-            tex_sys::process::kill_tree(&mut child);
-        }
+        self.child = None;
         self.server = None;
         self.state = ServerState::Off;
     }
 
-    /// Start `languagetool-server` on `port`, if it is installed.
+    /// Hold the server another window started on `port`, if there is one, so that it keeps
+    /// running while this window uses it.
+    pub fn share(&mut self, port: u16) -> bool {
+        let mut started = STARTED.lock().unwrap_or_else(|e| e.into_inner());
+        started.retain(|s| s.strong_count() > 0);
+        self.child = started
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find(|s| s.port == port);
+        self.child.is_some()
+    }
+
+    /// Start `languagetool-server` on `port`, if it is installed (or take the one another
+    /// window started there, still on its way).
     pub fn spawn(&mut self, port: u16) -> Result<(), String> {
+        if self.share(port) {
+            return Ok(());
+        }
         let program = tex_agent::find_program("languagetool-server").ok_or_else(|| {
             "LanguageTool is not installed (no languagetool-server program)".to_string()
         })?;
@@ -104,7 +134,12 @@ impl Grammar {
             .spawn()
             .map_err(|e| format!("Cannot start languagetool-server: {e}"))?;
         log::info!("started languagetool-server on port {port}");
-        self.child = Some(child);
+        let started = Arc::new(Started { port, child });
+        STARTED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(Arc::downgrade(&started));
+        self.child = Some(started);
         Ok(())
     }
 
@@ -356,7 +391,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn stopping_the_server_stops_what_it_started() {
+    fn the_server_stops_with_the_last_window_using_it() {
         let dir = tempfile::tempdir().unwrap();
         let pid_file = dir.path().join("java.pid");
         // Like `languagetool-server`: a script that runs the server as its child.
@@ -391,8 +426,14 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         };
         assert!(alive(&pid));
+        // Another window shares it: it runs until both let go.
+        let mut other = Grammar::default();
+        assert!(other.share(0));
+        assert!(!Grammar::default().share(1));
         grammar.stop();
         assert!(!grammar.started_server());
+        assert!(alive(&pid));
+        other.stop();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while alive(&pid) {
             assert!(std::time::Instant::now() < deadline, "the server survived");

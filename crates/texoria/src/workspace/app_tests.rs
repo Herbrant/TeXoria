@@ -4,6 +4,7 @@
 mod agents;
 mod builds;
 mod editing;
+mod many_windows;
 mod pdf;
 mod preview;
 mod tools;

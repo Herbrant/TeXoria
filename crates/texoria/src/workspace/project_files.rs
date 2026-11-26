@@ -108,7 +108,7 @@ impl Workspace {
                     }
                 }
                 self.settings.move_spell_languages(&from, &to);
-                self.settings.save();
+                self.save_settings(cx);
                 if let Some(root) = self.root.as_deref().and_then(moved) {
                     self.set_root(root, cx);
                 }
@@ -128,7 +128,7 @@ impl Workspace {
         self.files.update(cx, |f, cx| f.refresh(cx));
         self.git.update(cx, |g, cx| g.refresh(cx));
         self.reindex_all(cx);
-        self.remember_session();
+        self.remember_session(cx);
     }
 
     /// Let Git run in the project (its configuration can run programs).
@@ -141,7 +141,7 @@ impl Workspace {
             return;
         };
         self.settings.trust(top);
-        self.settings.save();
+        self.save_settings(cx);
         self.sync_git(cx);
         cx.notify();
     }

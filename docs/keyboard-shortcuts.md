@@ -2,6 +2,7 @@
 
 | Action | macOS | Windows, Linux |
 |---|---|---|
+| New window | ⌘⇧N | Ctrl+Shift+N |
 | Open a document | ⌘O | Ctrl+O |
 | Save | ⌘S | Ctrl+S |
 | Export the PDF | ⇧⌘S | Ctrl+Shift+S |

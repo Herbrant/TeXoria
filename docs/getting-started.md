@@ -16,8 +16,9 @@ you opened a specific file of it).
 
 The installed app also opens `.tex` files from the Finder, Explorer or your file manager: it
 is listed under *Open With*, and you can make it their default app there. On macOS a file
-opened while TeXoria runs takes the place of the open project, as with *Open a document…*.
-Windows installs make TeXoria the app of `.tex` files only when they had none.
+opened while TeXoria runs goes to the window of its project if one shows it, else to a window
+still on the welcome screen, else to a new window. Windows installs make TeXoria the app of
+`.tex` files only when they had none.
 
 From a terminal, pass the file as the only argument:
 
@@ -28,6 +29,16 @@ texoria path/to/thesis/thesis.tex                              # Linux
 
 `texoria --help` lists the options, `texoria --version` prints the version. A file whose name
 starts with `-` goes after `--` (`texoria -- -draft.tex`).
+
+## More than one project
+
+Each window shows one project. *File → New Window* (⌘⇧N on macOS, Ctrl+Shift+N elsewhere;
+on macOS also in the Dock icon's menu) opens another one on the welcome screen, where you
+open, clone or pick a recent project. In a window that already shows a project, *Open a
+document…* replaces it. A project is only ever open in one window: opening it again brings
+its window to the front. The settings are the same in every window, and a change made in one
+(the theme, the text size, a trusted project…) applies to all of them. Closing a window
+closes its PDF and Settings windows, not the other projects.
 
 ## The window
 

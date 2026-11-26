@@ -31,6 +31,7 @@ mod ui;
 mod underlines;
 mod updater;
 mod vim;
+mod windows;
 mod workspace;
 
 #[cfg(test)]
@@ -41,7 +42,6 @@ use std::path::PathBuf;
 use gpui_kit::*;
 
 use crate::settings::Settings;
-use crate::workspace::Workspace;
 
 #[cfg(target_os = "macos")]
 #[global_allocator]
@@ -50,6 +50,7 @@ static ALLOCATOR: memory::Allocator = memory::Allocator;
 actions!(
     texoria,
     [
+        NewWindow,
         Open,
         Save,
         Build,
@@ -96,6 +97,7 @@ actions!(
 
 fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("secondary-shift-n", NewWindow, None),
         KeyBinding::new("secondary-o", Open, None),
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-shift-s", ExportPdf, None),
@@ -163,6 +165,8 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Quit TeXoria", Quit),
         ]),
         Menu::new("File").items([
+            MenuItem::action("New Window", NewWindow),
+            MenuItem::separator(),
             MenuItem::action("Open…", Open),
             MenuItem::action("Save", Save),
             MenuItem::action("Export PDF…", ExportPdf),
@@ -237,6 +241,10 @@ fn set_menus(cx: &mut App) {
             MenuItem::action("Open from Overleaf…", OpenFromOverleaf),
         ]),
     ]);
+    // Right-clicking the Dock icon. (Windows' jump list would start another copy of the app
+    // with an option of GPUI's, which TeXoria does not pass on to the running one.)
+    #[cfg(target_os = "macos")]
+    cx.set_dock_menu(vec![MenuItem::action("New Window", NewWindow)]);
 }
 
 /// Set up the app: components, fonts, themes, the LaTeX language, key bindings and menus.
@@ -250,6 +258,9 @@ fn init(cx: &mut App) {
     bind_keys(cx);
     set_menus(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
+    // The window the action came from is being updated meanwhile: the new one copies its
+    // place once it is done. Also handled with no window open (macOS).
+    cx.on_action(|_: &NewWindow, cx| cx.defer(|cx| windows::open_new(None, cx)));
 }
 
 fn main() {
@@ -284,67 +295,28 @@ fn main() {
     });
     app.run(move |cx| {
         init(cx);
-        open_main_window(open_requests.try_recv().ok().or(path), cx);
+        windows::open_new(open_requests.try_recv().ok().or(path), cx);
         cx.spawn(async move |cx| {
             while let Ok(path) = open_requests.recv().await {
-                cx.update(|cx| open_document(path, cx));
+                cx.update(|cx| windows::open_document(path, cx));
             }
         })
         .detach();
     });
 }
 
-/// Open `path` in the main window, or in a new one if there is none.
-fn open_document(path: PathBuf, cx: &mut App) {
-    let Some((window, workspace)) = main_window(cx) else {
-        return open_main_window(Some(path), cx);
-    };
-    window
-        .update(cx, |_, window, cx| {
-            workspace.update(cx, |w, cx| w.open_path(path, window, cx));
-            window.activate_window();
-        })
-        .ok();
-}
-
-/// The window showing the workspace (not the PDF's own window), and the workspace.
-fn main_window(cx: &App) -> Option<(AnyWindowHandle, Entity<Workspace>)> {
-    cx.windows().into_iter().find_map(|w| {
-        let root = w.downcast::<gpui_kit::base::Root>()?;
-        let view = root.read(cx).ok()?.view().clone();
-        Some((w, view.downcast::<Workspace>().ok()?))
-    })
-}
-
-/// Open the main window on `path` (a `.tex` file, or none for the start page).
-fn open_main_window(path: Option<PathBuf>, cx: &mut App) {
-    // The title bar moves the window and handles double clicks itself
-    // (otherwise macOS does both too, and delays clicks on its buttons).
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
-        window_min_size: Some(size(px(720.), px(480.))),
-        // Matches the packaged `texoria.desktop`, so Linux shells pick up its icon.
-        app_id: Some("texoria".into()),
-        ..component::TitleBar::window_options()
-    };
-    gpui_kit::open_window(options, cx, move |window, cx| {
-        cx.new(|cx| Workspace::new(path, window, cx))
-    })
-    .expect("failed to open window");
-    cx.activate(true);
-}
-
 /// The app was opened again (its Dock icon clicked) with no window on screen: show the
 /// minimized one, or open the last project in a new one.
 fn reopen(cx: &mut App) {
-    // The main window rather than the preview's.
-    let main = main_window(cx)
-        .map(|(w, _)| w)
+    // A project's window rather than a preview's.
+    let main = windows::workspaces(cx)
+        .first()
+        .map(|(w, _)| *w)
         .or(cx.windows().first().copied());
     if let Some(window) = main {
         window.update(cx, |_, w, _| w.activate_window()).ok();
         return;
     }
     let last = Settings::load().recent.into_iter().next();
-    open_main_window(last.filter(|p| p.exists()), cx);
+    windows::open_new(last.filter(|p| p.exists()), cx);
 }

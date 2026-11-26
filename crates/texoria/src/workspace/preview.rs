@@ -44,7 +44,7 @@ impl Workspace {
                     });
                     session.export = Some(dest.clone());
                     if this.settings.set_session(session) {
-                        this.settings.save();
+                        this.save_settings(cx);
                     }
                     let name = crate::paths::file_name(&dest);
                     window.push_notification(
@@ -102,6 +102,7 @@ impl Workspace {
                         closing
                             .update(cx, |w, cx| {
                                 w.settings.preview_window = Some(placement);
+                                w.save_settings(cx);
                                 w.dock_preview(cx)
                             })
                             .ok();
@@ -194,7 +195,7 @@ impl Workspace {
             self.settings.preview_window = Some(placement);
         }
         if self.preview_detached {
-            self.settings.save();
+            self.save_settings(cx);
         }
     }
 

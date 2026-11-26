@@ -115,6 +115,8 @@ in `.git/config`; Overleaf tokens are only sent over HTTPS and live in the syste
 
 - `workspace.rs` is the main window: sidebar (outline, files, source control or agent), editor
   tabs, PDF pane and status bar. Its methods are split by concern into `workspace/*.rs`.
+  There is one per project; `windows.rs` opens them, routes the documents opened from outside
+  and keeps their settings in step.
 - `dialogs.rs`, `ui.rs`, `tasks.rs`, `underlines.rs` and `text.rs` hold what the views share:
   dialogs, interface pieces, background work, wavy underlines and text helpers.
 - `git_panel.rs`, `diff_view.rs` and `overleaf.rs` implement source control.
