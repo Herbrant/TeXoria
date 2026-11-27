@@ -18,6 +18,22 @@ a premium feature: the project's owner needs a paid plan. Git must be installed.
 The token is kept in the system keychain, and only once Overleaf has accepted it. Tokens expire
 after a year: when Overleaf rejects one, TeXoria asks for a new one.
 
+### Where the token is
+
+TeXoria keeps one token per Overleaf server, and never deletes one by itself. To see or remove
+it, look for this entry:
+
+| System | Where | Entry |
+|---|---|---|
+| macOS | *Keychain Access*, login keychain | Internet password named after the server (`https://git.overleaf.com`), account `git` |
+| Linux | *Passwords and Keys* (Seahorse), KWallet… | `TeXoria Overleaf token (https://git.overleaf.com)` |
+| Windows | *Credential Manager* → *Windows Credentials* → *Generic Credentials* | `TeXoria Overleaf token (https://git.overleaf.com)`, user `git` |
+
+Up to version 0.8.0, TeXoria named the entry `zed-github-account` on Linux and
+`zed:url=https://git.overleaf.com` on Windows; it moves the token to the new entry the first
+time it reads it. If the system keychain is not available, TeXoria keeps the token in memory
+until it quits.
+
 ## Sync
 
 Edit as usual, with or without a connection. *Sync* in the Source Control panel (or *Git* →

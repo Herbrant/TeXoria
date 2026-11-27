@@ -44,6 +44,14 @@ similar.workspace = true
 # Format Document.
 tex-fmt = { version = "0.5.7", default-features = false }
 
+# Overleaf tokens in the system keychain, in entries named after TeXoria (GPUI's are named after
+# Zed). Same versions and features as gpui's own.
+[target.'cfg(target_os = "linux")'.dependencies]
+oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+
 [dev-dependencies]
 # Headless windows for the UI tests (`#[gpui::test]`). gpui-kit's own `test-support` feature
 # would also resolve its optional `gpui-fast` engine, whose exact pins conflict with gpui's.

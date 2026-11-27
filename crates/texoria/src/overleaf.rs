@@ -1,5 +1,7 @@
 //! Overleaf projects through Overleaf's Git integration. Git signs in with an
-//! authentication token, kept in the system keychain (one per server).
+//! authentication token, kept in the system keychain (one per server, see [`keychain`]).
+
+mod keychain;
 
 use std::collections::HashMap;
 
@@ -37,13 +39,11 @@ pub fn load_token(server: &str, cx: &mut App) -> Task<Option<String>> {
     if let Some(token) = cx.try_global::<Tokens>().and_then(|t| t.0.get(server)) {
         return Task::ready(token.clone());
     }
-    let read = cx.read_credentials(server);
+    let read = keychain::read(server, cx);
     let server = server.to_string();
     cx.spawn(async move |cx| {
         let token = match read.await {
-            Ok(found) => found
-                .and_then(|(_, secret)| String::from_utf8(secret).ok())
-                .filter(|t| overleaf::valid_token(t)),
+            Ok(found) => found.filter(|t| overleaf::valid_token(t)),
             Err(e) => {
                 log::warn!("reading the token for {server}: {e:#}");
                 None
@@ -66,7 +66,7 @@ pub fn save_token(server: &str, token: &str, window: &mut Window, cx: &mut App) 
     cx.default_global::<Tokens>()
         .0
         .insert(server.to_string(), Some(token.to_string()));
-    let write = cx.write_credentials(server, overleaf::USERNAME, token.as_bytes());
+    let write = keychain::write(server, token, cx);
     let server = server.to_string();
     window
         .spawn(cx, async move |cx| {

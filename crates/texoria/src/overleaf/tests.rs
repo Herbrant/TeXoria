@@ -80,3 +80,88 @@ fn saved_tokens_are_read_back(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(notes, 0);
 }
+
+/// Stores for the keychain, the first one where tokens go, the second where an older version
+/// put them.
+fn keychain(cx: &mut TestAppContext, current: &keychain::Memory, legacy: &keychain::Memory) {
+    let keychain = keychain::Keychain {
+        current: std::rc::Rc::new(current.clone()),
+        legacy: Some(std::rc::Rc::new(legacy.clone())),
+    };
+    cx.update(|cx| cx.set_global(keychain));
+}
+
+fn stored(store: &keychain::Memory) -> Vec<(String, String)> {
+    let mut all: Vec<_> = store.tokens.borrow().clone().into_iter().collect();
+    all.sort();
+    all
+}
+
+#[gpui::test]
+fn tokens_move_out_of_gpuis_entries(cx: &mut TestAppContext) {
+    window(cx);
+    let (current, legacy) = (keychain::Memory::default(), keychain::Memory::default());
+    legacy.tokens.borrow_mut().extend([
+        (SERVER.to_string(), "olp_old0token".to_string()),
+        (
+            "https://latex.example.org".to_string(),
+            "not a token".to_string(),
+        ),
+    ]);
+    keychain(cx, &current, &legacy);
+
+    assert_eq!(load(cx, SERVER).as_deref(), Some("olp_old0token"));
+    assert_eq!(
+        stored(&current),
+        [(SERVER.to_string(), "olp_old0token".to_string())]
+    );
+    // What is not a token stays where it was.
+    assert_eq!(load(cx, "https://latex.example.org"), None);
+    assert_eq!(
+        stored(&legacy),
+        [(
+            "https://latex.example.org".to_string(),
+            "not a token".to_string()
+        )]
+    );
+}
+
+#[gpui::test]
+fn a_token_in_both_places_is_read_from_texorias(cx: &mut TestAppContext) {
+    window(cx);
+    let (current, legacy) = (keychain::Memory::default(), keychain::Memory::default());
+    current
+        .tokens
+        .borrow_mut()
+        .insert(SERVER.to_string(), "olp_new0token".to_string());
+    legacy
+        .tokens
+        .borrow_mut()
+        .insert(SERVER.to_string(), "olp_old0token".to_string());
+    keychain(cx, &current, &legacy);
+
+    assert_eq!(load(cx, SERVER).as_deref(), Some("olp_new0token"));
+    assert_eq!(stored(&legacy).len(), 1);
+}
+
+#[gpui::test]
+fn without_a_keychain_tokens_last_until_quitting(cx: &mut TestAppContext) {
+    let window = window(cx);
+    let failing = keychain::Memory {
+        failing: true,
+        ..Default::default()
+    };
+    keychain(cx, &failing, &failing);
+
+    assert_eq!(load(cx, SERVER), None);
+    cx.update_window(window, |_, window, cx| {
+        save_token(SERVER, "olp_first0token", window, cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(load(cx, SERVER).as_deref(), Some("olp_first0token"));
+    let notes = cx
+        .update_window(window, |_, window, cx| window.notifications(cx).len())
+        .unwrap();
+    assert_eq!(notes, 1);
+}

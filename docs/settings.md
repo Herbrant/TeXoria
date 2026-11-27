@@ -73,4 +73,5 @@ keeps the file as it was in `settings.toml.bak`, next to it. Downloaded spelling
 | Windows | `%APPDATA%\TeXoria\TeXoria\config\` | `%LOCALAPPDATA%\TeXoria\TeXoria\cache\dictionaries\` |
 
 Overleaf tokens are not in the settings: they are in the system keychain (Keychain on macOS,
-Credential Manager on Windows, the Secret Service on Linux).
+Credential Manager on Windows, the Secret Service on Linux), see
+[where the token is](overleaf.md#where-the-token-is).

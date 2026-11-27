@@ -226,9 +226,11 @@ texoria ─┬─ tex-compile ── tex-log
     Operations that rewrite files (pull, switch, discard, abort) trigger
     `Workspace::reload_from_disk`, which also runs on window activation: clean buffers whose file
     changed are reloaded, tabs of deleted files close.
-  - `overleaf.rs` keeps Overleaf tokens in the system keychain through GPUI's
-    `{read,write}_credentials` (keyed by server URL, cached in a global, memory-only if the
-    keychain fails). A typed token is saved only once Overleaf accepted it, and a rejected one is
+  - `overleaf.rs` keeps Overleaf tokens in the system keychain (keyed by server URL, cached in a
+    global, memory-only if the keychain fails). `overleaf/keychain.rs` writes entries named
+    after TeXoria on Linux (oo7) and Windows (Credential Manager), and moves there the tokens
+    found under GPUI's `zed-…` names (0.8.0 and earlier); macOS keeps GPUI's
+    `{read,write}_credentials`. Tests get an in-memory `keychain::Memory`, never the real one. A typed token is saved only once Overleaf accepted it, and a rejected one is
     never deleted (the refusal may concern one project only). The Git panel detects an Overleaf
     remote on refresh, passes the token as a `Credential`, offers `GitOp::Sync`, and asks for a
     new token on `Error::Auth`. Before a Sync that adds or deletes files it shows them
